@@ -1,0 +1,50 @@
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
+package org.openhab.core.persistence.dto;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+
+import io.swagger.v3.oas.annotations.media.Schema;
+
+/**
+ * The {@link PersistenceServiceConfigurationDTO} is used for transferring persistence service configurations
+ *
+ * @author Jan N. Klug - Initial contribution
+ * @author Mark Herwege - Make default strategy to be only a configuration suggestion
+ */
+@Schema(name = "PersistenceServiceConfiguration")
+@NonNullByDefault
+public class PersistenceServiceConfigurationDTO {
+    public String serviceId = "";
+    public Collection<PersistenceItemConfigurationDTO> configs = List.of();
+    public Map<String, String> aliases = Map.of();
+    /**
+     * @deprecated This field is kept to enable migration from previous version storage.
+     *             It should not be removed as this would make automatic upgrading persistence configurations from an
+     *             older version impossible.
+     */
+    @Deprecated
+    public @Nullable Collection<String> defaults;
+    public Collection<PersistenceCronStrategyDTO> cronStrategies = List.of();
+    public Collection<PersistenceFilterDTO> thresholdFilters = List.of();
+    public Collection<PersistenceFilterDTO> timeFilters = List.of();
+    public Collection<PersistenceFilterDTO> equalsFilters = List.of();
+    public Collection<PersistenceFilterDTO> includeFilters = List.of();
+
+    public boolean editable = false;
+}

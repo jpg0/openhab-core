@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -164,7 +164,7 @@ public class NumberExtensions {
         BigDecimal leftValue = numberToBigDecimal(left);
         BigDecimal rightValue = numberToBigDecimal(right);
         if (leftValue == null) {
-            return (rightValue != null) ? false : true;
+            return rightValue == null;
         } else if (rightValue == null) {
             return true;
         } else {
@@ -175,22 +175,22 @@ public class NumberExtensions {
     // Comparison operators between types and numbers
 
     public static boolean operator_equals(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_equals((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_equals(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) == 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) == 0;
         } else {
             return type == x; // both might be null, then we should return true
         }
     }
 
     public static boolean operator_notEquals(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_notEquals((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_notEquals(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) != 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) != 0;
         } else {
             return type != x; // both might be null, then we should return
                               // false, otherwise true
@@ -198,44 +198,44 @@ public class NumberExtensions {
     }
 
     public static boolean operator_greaterThan(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_greaterThan((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_greaterThan(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) > 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) > 0;
         } else {
             return false;
         }
     }
 
     public static boolean operator_greaterEqualsThan(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_greaterEqualsThan((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_greaterEqualsThan(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) >= 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) >= 0;
         } else {
             return false;
         }
     }
 
     public static boolean operator_lessThan(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_lessThan((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_lessThan(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) < 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) < 0;
         } else {
             return false;
         }
     }
 
     public static boolean operator_lessEqualsThan(Type type, Number x) {
-        if (type instanceof QuantityType && x instanceof QuantityType) {
-            return operator_lessEqualsThan((QuantityType<?>) type, (QuantityType<?>) x);
+        if (type instanceof QuantityType qtype && x instanceof QuantityType qx) {
+            return operator_lessEqualsThan(qtype, qx);
         }
-        if (type != null && type instanceof DecimalType && x != null) {
-            return ((DecimalType) type).toBigDecimal().compareTo(numberToBigDecimal(x)) <= 0;
+        if (type instanceof DecimalType decimalType && x != null) {
+            return decimalType.toBigDecimal().compareTo(numberToBigDecimal(x)) <= 0;
         } else {
             return false;
         }
@@ -372,13 +372,26 @@ public class NumberExtensions {
      * @return the given number as BigDecimal or null if number is null
      */
     public static BigDecimal numberToBigDecimal(Number number) {
-        if (number instanceof QuantityType) {
-            QuantityType<?> state = ((QuantityType<?>) number)
-                    .toUnit(((QuantityType<?>) number).getUnit().getSystemUnit());
+        if (number instanceof QuantityType quantity) {
+            QuantityType<?> state = quantity.toInvertibleUnit(quantity.getUnit().getSystemUnit());
             if (state != null) {
                 return state.toBigDecimal();
             }
             return null;
+        }
+        if (number instanceof DecimalType dtype) {
+            return dtype.toBigDecimal();
+        }
+        if (number instanceof BigDecimal decimal) {
+            return decimal;
+        }
+        if (number instanceof Long value) {
+            // use valueOf to hit the internal cache
+            return BigDecimal.valueOf(value);
+        }
+        if (number instanceof Integer value) {
+            // use valueOf to hit the internal cache
+            return BigDecimal.valueOf(value);
         }
         if (number != null) {
             return new BigDecimal(number.toString());
@@ -388,12 +401,11 @@ public class NumberExtensions {
     }
 
     private static boolean oneIsQuantity(Number left, Number right) {
-        return (left instanceof QuantityType && !isAbstractUnitOne((QuantityType<?>) left))
-                || (right instanceof QuantityType && !isAbstractUnitOne((QuantityType<?>) right));
+        return (left instanceof QuantityType leftQuantity && !isAbstractUnitOne(leftQuantity))
+                || (right instanceof QuantityType rightQuantity && !isAbstractUnitOne(rightQuantity));
     }
 
     private static boolean isAbstractUnitOne(QuantityType<?> left) {
         return Units.ONE.equals(left.getUnit());
     }
-
 }

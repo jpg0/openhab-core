@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,7 +17,6 @@ import java.time.Instant;
 import java.time.temporal.TemporalAdjuster;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeoutException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -79,7 +78,7 @@ public interface Scheduler {
     }
 
     /**
-     * Return a {@link ScheduledCompletableFuture} that fails with a {@link TimeoutException}
+     * Return a {@link ScheduledCompletableFuture} that fails with a {@link java.util.concurrent.TimeoutException}
      * when the given {@link CompletableFuture} is not resolved before the given timeout. If the
      * given {@link CompletableFuture} fails or is resolved before the timeout then the returned
      * {@link ScheduledCompletableFuture} will be treated accordingly. The cancellation does not influence
@@ -107,11 +106,24 @@ public interface Scheduler {
     /**
      * Schedules the callable once or repeating using the temporalAdjuster to determine the
      * time the callable should run. Runs until the job is cancelled or if the temporalAdjuster
-     * method {@link SchedulerTemporalAdjuster#isDone()) returns true.
+     * method {@link SchedulerTemporalAdjuster#isDone} returns true.
      *
      * @param callable Provides the result
      * @param temporalAdjuster the temperalAdjuster to return the time the callable should run
      * @return A {@link ScheduledCompletableFuture}
      */
     <T> ScheduledCompletableFuture<T> schedule(SchedulerRunnable callable, TemporalAdjuster temporalAdjuster);
+
+    /**
+     * Schedules the callable once or repeating using the temporalAdjuster to determine the
+     * time the callable should run. Runs until the job is cancelled or if the temporalAdjuster
+     * method {@link SchedulerTemporalAdjuster#isDone} returns true.
+     *
+     * @param callable Provides the result
+     * @param identifier an optional identifier for this job
+     * @param temporalAdjuster the temperalAdjuster to return the time the callable should run
+     * @return A {@link ScheduledCompletableFuture}
+     */
+    <T> ScheduledCompletableFuture<T> schedule(SchedulerRunnable callable, @Nullable String identifier,
+            TemporalAdjuster temporalAdjuster);
 }

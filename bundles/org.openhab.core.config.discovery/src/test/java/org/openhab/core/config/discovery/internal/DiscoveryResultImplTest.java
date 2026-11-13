@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,34 +15,42 @@ package org.openhab.core.config.discovery.internal;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.config.discovery.DiscoveryResult;
+import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.DiscoveryResultFlag;
+import org.openhab.core.test.java.JavaTest;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
 
 /**
  * The {@link DiscoveryResultImplTest} checks if any invalid input parameters
- * and the synchronization of {@link DiscoveryResult}s work in a correct way.
+ * and the synchronization of {@link org.openhab.core.config.discovery.DiscoveryResult}s
+ * work in a correct way.
  *
  * @author Michael Grammling - Initial contribution
  * @author Thomas Höfer - Added representation
  * @author Wouter Born - Migrate tests from Groovy to Java
+ * @author Mark Herwege - Added property normalization tests
  */
 @NonNullByDefault
-public class DiscoveryResultImplTest {
+public class DiscoveryResultImplTest extends JavaTest {
 
     private static final int DEFAULT_TTL = 60;
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testInvalidConstructorForThingType() {
         assertThrows(IllegalArgumentException.class,
                 () -> new DiscoveryResultImpl(null, new ThingUID("aa"), null, null, null, null, DEFAULT_TTL));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testInvalidConstructorForTTL() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
@@ -50,6 +58,7 @@ public class DiscoveryResultImplTest {
                 new ThingUID(thingTypeUID, "thingId"), null, null, null, null, -2));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testValidConstructor() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
@@ -67,12 +76,12 @@ public class DiscoveryResultImplTest {
         assertNull(discoveryResult.getRepresentationProperty());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testInvalidSynchronize() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
 
-        Map<String, Object> discoveryResultSourceMap = new HashMap<>();
-        discoveryResultSourceMap.put("ipAddress", "127.0.0.1");
+        Map<String, Object> discoveryResultSourceMap = Map.of("ipAddress", "127.0.0.1");
 
         DiscoveryResultImpl discoveryResult = new DiscoveryResultImpl(thingTypeUID,
                 new ThingUID(thingTypeUID, "thingId"), null, discoveryResultSourceMap, "ipAddress", "TARGET",
@@ -87,12 +96,12 @@ public class DiscoveryResultImplTest {
         assertEquals(DiscoveryResultFlag.IGNORED, discoveryResult.getFlag());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testIrrelevantSynchronize() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
 
-        Map<String, Object> discoveryResultSourceMap = new HashMap<>();
-        discoveryResultSourceMap.put("ipAddress", "127.0.0.1");
+        Map<String, Object> discoveryResultSourceMap = Map.of("ipAddress", "127.0.0.1");
 
         DiscoveryResultImpl discoveryResult = new DiscoveryResultImpl(thingTypeUID,
                 new ThingUID(thingTypeUID, "thingId"), null, discoveryResultSourceMap, "ipAddress", "TARGET",
@@ -110,21 +119,21 @@ public class DiscoveryResultImplTest {
         assertEquals(DiscoveryResultFlag.IGNORED, discoveryResult.getFlag());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testSynchronize() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
 
-        Map<String, Object> discoveryResultSourceMap = new HashMap<>();
-        discoveryResultSourceMap.put("ipAddress", "127.0.0.1");
+        Map<String, Object> discoveryResultSourceMap = Map.of("ipAddress", "127.0.0.1");
 
         DiscoveryResultImpl discoveryResult = new DiscoveryResultImpl(thingTypeUID,
                 new ThingUID(thingTypeUID, "thingId"), null, discoveryResultSourceMap, "ipAddress", "TARGET",
                 DEFAULT_TTL);
         discoveryResult.setFlag(DiscoveryResultFlag.IGNORED);
 
-        Map<String, Object> discoveryResultMap = new HashMap<>();
-        discoveryResultMap.put("ipAddress", "192.168.178.1");
-        discoveryResultMap.put("macAddress", "AA:BB:CC:DD:EE:FF");
+        Map<String, Object> discoveryResultMap = Map.of( //
+                "ipAddress", "192.168.178.1", //
+                "macAddress", "AA:BB:CC:DD:EE:FF");
 
         DiscoveryResultImpl discoveryResultSource = new DiscoveryResultImpl(thingTypeUID,
                 new ThingUID(thingTypeUID, "thingId"), null, discoveryResultMap, "macAddress", "SOURCE", DEFAULT_TTL);
@@ -139,6 +148,7 @@ public class DiscoveryResultImplTest {
         assertEquals(DiscoveryResultFlag.IGNORED, discoveryResult.getFlag());
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void testThingTypeCompatibility() {
         ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
@@ -146,5 +156,91 @@ public class DiscoveryResultImplTest {
                 null, "nothing", "label", DEFAULT_TTL);
         assertNotNull(discoveryResult.getThingTypeUID());
         assertEquals(discoveryResult.getThingTypeUID(), thingTypeUID);
+    }
+
+    @Test
+    public void testNormalizeHandlesNullValues() {
+        Map<String, @Nullable Object> properties = new HashMap<>();
+        properties.put("address", null);
+        properties.put("vendor", null);
+        properties.put("host", "192.168.1.10");
+        DiscoveryResult discoveryResult = createDiscoveryResult(properties);
+
+        setupInterceptedLogger(DiscoveryResultImpl.class, LogLevel.WARN);
+        try {
+            assertDoesNotThrow(
+                    () -> discoveryResult.normalizePropertiesOnConfigDescription(List.of("address", "host")));
+
+            assertLogMessage(DiscoveryResultImpl.class, LogLevel.WARN,
+                    "Discovery result 'bindingId:thingType:thingId' has property 'address' with null value");
+        } finally {
+            stopInterceptedLogger(DiscoveryResultImpl.class);
+        }
+
+        Map<String, Object> normalized = discoveryResult.getProperties();
+        assertTrue(normalized.containsKey("address"), "Null configuration value must be kept");
+        assertNull(normalized.get("address"));
+        assertEquals("null", normalized.get("vendor"), "Null non-configuration value must be converted to string");
+        assertEquals("192.168.1.10", normalized.get("host"));
+        assertEquals(3, normalized.size());
+    }
+
+    @Test
+    public void testNormalizeDoesNotLogWithoutNullConfigurationValues() {
+        Map<String, @Nullable Object> properties = new HashMap<>();
+        properties.put("host", "192.168.1.10");
+        properties.put("vendor", null);
+        DiscoveryResult discoveryResult = createDiscoveryResult(properties);
+
+        setupInterceptedLogger(DiscoveryResultImpl.class, LogLevel.WARN);
+        try {
+            discoveryResult.normalizePropertiesOnConfigDescription(List.of("host"));
+
+            assertNoLogMessage(DiscoveryResultImpl.class);
+        } finally {
+            stopInterceptedLogger(DiscoveryResultImpl.class);
+        }
+    }
+
+    @Test
+    public void testNormalizeKeepsConfigurationValueTypes() {
+        Map<String, @Nullable Object> properties = new HashMap<>();
+        properties.put("port", 8080);
+        properties.put("enabled", true);
+        properties.put("host", "192.168.1.10");
+        DiscoveryResult discoveryResult = createDiscoveryResult(properties);
+
+        discoveryResult.normalizePropertiesOnConfigDescription(List.of("port", "enabled", "host"));
+
+        Map<String, Object> normalized = discoveryResult.getProperties();
+        assertEquals(Integer.valueOf(8080), normalized.get("port"));
+        assertEquals(Boolean.TRUE, normalized.get("enabled"));
+        assertEquals("192.168.1.10", normalized.get("host"));
+    }
+
+    @Test
+    public void testNormalizeConvertsNonConfigurationValuesToString() {
+        Map<String, @Nullable Object> properties = new HashMap<>();
+        properties.put("txPower", 4);
+        properties.put("connected", false);
+        properties.put("vendor", "ACME");
+        properties.put("port", 8080);
+        DiscoveryResult discoveryResult = createDiscoveryResult(properties);
+
+        discoveryResult.normalizePropertiesOnConfigDescription(List.of("port"));
+
+        Map<String, Object> normalized = discoveryResult.getProperties();
+        assertEquals("4", normalized.get("txPower"));
+        assertEquals("false", normalized.get("connected"));
+        assertEquals("ACME", normalized.get("vendor"));
+        assertEquals(Integer.valueOf(8080), normalized.get("port"));
+    }
+
+    @SuppressWarnings({ "unchecked", "null" })
+    private DiscoveryResult createDiscoveryResult(Map<String, @Nullable Object> properties) {
+        // bindings can pass null property values, which the null annotations on the builder do not express
+        ThingTypeUID thingTypeUID = new ThingTypeUID("bindingId", "thingType");
+        return DiscoveryResultBuilder.create(new ThingUID(thingTypeUID, "thingId"))
+                .withProperties((Map<String, Object>) (Map<String, ?>) properties).withTTL(DEFAULT_TTL).build();
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -60,11 +60,12 @@ public class MetadataCommandDescriptionProvider implements CommandDescriptionPro
         if (metadata != null) {
             try {
                 CommandDescriptionImpl commandDescription = new CommandDescriptionImpl();
-                if (metadata.getConfiguration().containsKey("options")) {
-                    Stream.of(metadata.getConfiguration().get("options").toString().split(",")).forEach(o -> {
+                Object options = metadata.getConfiguration().get("options");
+                if (options != null) {
+                    Stream.of(options.toString().split(",")).forEach(o -> {
                         if (o.contains("=")) {
-                            commandDescription.addCommandOption(
-                                    new CommandOption(o.split("=")[0].trim(), o.split("=")[1].trim()));
+                            var pair = parseValueLabelPair(o.trim());
+                            commandDescription.addCommandOption(new CommandOption(pair[0], pair[1]));
                         } else {
                             commandDescription.addCommandOption(new CommandOption(o.trim(), null));
                         }
@@ -79,5 +80,20 @@ public class MetadataCommandDescriptionProvider implements CommandDescriptionPro
         }
 
         return null;
+    }
+
+    public static String[] parseValueLabelPair(String text) {
+        String value;
+        String label;
+        if (text.startsWith("\"") && text.contains("\"=\"") && text.endsWith("\"")) {
+            String[] parts = text.split("\"=\"");
+            value = parts[0].substring(1);
+            label = parts[1].substring(0, parts[1].length() - 1);
+        } else {
+            String[] parts = text.split("=");
+            value = parts[0];
+            label = parts[1];
+        }
+        return new String[] { value.trim(), label.trim() };
     }
 }

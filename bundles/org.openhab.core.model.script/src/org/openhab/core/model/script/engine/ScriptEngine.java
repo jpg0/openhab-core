@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -29,17 +29,7 @@ public interface ScriptEngine {
      * @return Script object, which can be executed
      * @throws ScriptParsingException
      */
-    public Script newScriptFromString(final String scriptAsString) throws ScriptParsingException;
-
-    /**
-     * Executes a script that is passed as a string
-     *
-     * @param scriptAsString
-     * @return the return value of the script
-     * @throws ScriptParsingException
-     * @throws ScriptExecutionException
-     */
-    public Object executeScript(final String scriptAsString) throws ScriptParsingException, ScriptExecutionException;
+    Script newScriptFromString(final String scriptAsString) throws ScriptParsingException;
 
     /**
      * Wraps an Xbase XExpression in a Script instance
@@ -47,5 +37,5 @@ public interface ScriptEngine {
      * @param expression the XExpression
      * @return the Script instance containing the expression
      */
-    public Script newScriptFromXExpression(final XExpression expression);
+    Script newScriptFromXExpression(final XExpression expression);
 }

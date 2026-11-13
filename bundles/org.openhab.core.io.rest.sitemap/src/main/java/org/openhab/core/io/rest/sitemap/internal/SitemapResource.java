@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,27 +12,35 @@
  */
 package org.openhab.core.io.rest.sitemap.internal;
 
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import javax.annotation.security.RolesAllowed;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import javax.ws.rs.DefaultValue;
+import javax.ws.rs.Consumes;
+import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
 import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
@@ -49,13 +57,13 @@ import javax.ws.rs.sse.OutboundSseEvent;
 import javax.ws.rs.sse.Sse;
 import javax.ws.rs.sse.SseEventSink;
 
-import org.eclipse.emf.common.util.EList;
-import org.eclipse.emf.ecore.EObject;
-import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.auth.Role;
 import org.openhab.core.common.ThreadPoolManager;
+import org.openhab.core.events.Event;
+import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.io.rest.JSONResponse;
 import org.openhab.core.io.rest.LocaleService;
 import org.openhab.core.io.rest.RESTConstants;
@@ -67,34 +75,45 @@ import org.openhab.core.io.rest.sitemap.SitemapSubscriptionService.SitemapSubscr
 import org.openhab.core.items.GenericItem;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
-import org.openhab.core.items.StateChangeListener;
+import org.openhab.core.items.events.GroupItemStateChangedEvent;
+import org.openhab.core.items.events.ItemEvent;
+import org.openhab.core.items.events.ItemStateChangedEvent;
 import org.openhab.core.library.CoreItemFactory;
-import org.openhab.core.model.sitemap.SitemapProvider;
-import org.openhab.core.model.sitemap.sitemap.Chart;
-import org.openhab.core.model.sitemap.sitemap.ColorArray;
-import org.openhab.core.model.sitemap.sitemap.Frame;
-import org.openhab.core.model.sitemap.sitemap.Image;
-import org.openhab.core.model.sitemap.sitemap.LinkableWidget;
-import org.openhab.core.model.sitemap.sitemap.List;
-import org.openhab.core.model.sitemap.sitemap.Mapping;
-import org.openhab.core.model.sitemap.sitemap.Mapview;
-import org.openhab.core.model.sitemap.sitemap.Selection;
-import org.openhab.core.model.sitemap.sitemap.Setpoint;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.Slider;
-import org.openhab.core.model.sitemap.sitemap.Switch;
-import org.openhab.core.model.sitemap.sitemap.Video;
-import org.openhab.core.model.sitemap.sitemap.VisibilityRule;
-import org.openhab.core.model.sitemap.sitemap.Webview;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.library.types.HSBType;
+import org.openhab.core.sitemap.Button;
+import org.openhab.core.sitemap.Buttongrid;
+import org.openhab.core.sitemap.Chart;
+import org.openhab.core.sitemap.Colortemperaturepicker;
+import org.openhab.core.sitemap.Condition;
+import org.openhab.core.sitemap.Frame;
+import org.openhab.core.sitemap.Image;
+import org.openhab.core.sitemap.Input;
+import org.openhab.core.sitemap.LinkableWidget;
+import org.openhab.core.sitemap.Mapview;
+import org.openhab.core.sitemap.Parent;
+import org.openhab.core.sitemap.Rule;
+import org.openhab.core.sitemap.Selection;
+import org.openhab.core.sitemap.Setpoint;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Slider;
+import org.openhab.core.sitemap.Switch;
+import org.openhab.core.sitemap.Video;
+import org.openhab.core.sitemap.Webview;
+import org.openhab.core.sitemap.Widget;
+import org.openhab.core.sitemap.dto.MappingDTO;
+import org.openhab.core.sitemap.dto.SitemapDTOMapper;
+import org.openhab.core.sitemap.dto.SitemapDefinitionDTO;
+import org.openhab.core.sitemap.registry.ManagedSitemapProvider;
+import org.openhab.core.sitemap.registry.SitemapFactory;
+import org.openhab.core.sitemap.registry.SitemapRegistry;
 import org.openhab.core.types.State;
 import org.openhab.core.ui.items.ItemUIRegistry;
+import org.openhab.core.ui.items.ItemUIRegistry.WidgetLabelSource;
+import org.openhab.core.util.ColorUtil;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
-import org.osgi.service.component.annotations.ReferenceCardinality;
-import org.osgi.service.component.annotations.ReferencePolicy;
 import org.osgi.service.jaxrs.whiteboard.JaxrsWhiteboardConstants;
 import org.osgi.service.jaxrs.whiteboard.propertytypes.JSONRequired;
 import org.osgi.service.jaxrs.whiteboard.propertytypes.JaxrsApplicationSelect;
@@ -103,14 +122,13 @@ import org.osgi.service.jaxrs.whiteboard.propertytypes.JaxrsResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.MapMaker;
-
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
@@ -123,8 +141,20 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Yordan Zhelev - Added Swagger annotations
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Laurent Garnier - Added support for icon color
+ * @author Mark Herwege - Added pattern and unit fields
+ * @author Laurent Garnier - Added support for new sitemap element Buttongrid
+ * @author Laurent Garnier - Added icon field for mappings used for switch element
+ * @author Laurent Garnier - Support added for multiple AND conditions in labelcolor/valuecolor/visibility
+ * @author Laurent Garnier - New widget icon parameter based on conditional rules
+ * @author Laurent Garnier - Added releaseCmd field for mappings used for switch element
+ * @author Laurent Garnier - Added support for Buttongrid as container for Button elements
+ * @author Laurent Garnier - Added support for new sitemap element Colortemperaturepicker
+ * @author Mark Herwege - Implement sitemap registry, remove Guava dependency
+ * @author Mark Herwege - Implement sitemap definition endpoints
+ * @author Mark Herwege - Add support for confirmation dialog for commands
  */
-@Component(service = RESTResource.class)
+@Component(service = { RESTResource.class, EventSubscriber.class })
 @JaxrsResource
 @JaxrsName(SitemapResource.PATH_SITEMAPS)
 @JaxrsApplicationSelect("(" + JaxrsWhiteboardConstants.JAX_RS_NAME + "=" + RESTConstants.JAX_RS_NAME + ")")
@@ -134,17 +164,21 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @Tag(name = SitemapResource.PATH_SITEMAPS)
 @NonNullByDefault
 public class SitemapResource
-        implements RESTResource, SitemapSubscriptionCallback, SseBroadcaster.Listener<SseSinkInfo> {
+        implements RESTResource, SitemapSubscriptionCallback, SseBroadcaster.Listener<SseSinkInfo>, EventSubscriber {
 
     private final Logger logger = LoggerFactory.getLogger(SitemapResource.class);
 
     public static final String PATH_SITEMAPS = "sitemaps";
     private static final String SEGMENT_EVENTS = "events";
     private static final String X_ACCEL_BUFFERING_HEADER = "X-Accel-Buffering";
+    private static final String X_ATMOSPHERE_TRANSPORT_HEADER = "X-Atmosphere-Transport";
 
     private static final long TIMEOUT_IN_MS = 30000;
 
-    private SseBroadcaster<@NonNull SseSinkInfo> broadcaster;
+    private final ScheduledExecutorService scheduler = ThreadPoolManager
+            .getScheduledPool(ThreadPoolManager.THREAD_POOL_NAME_COMMON);
+
+    private SseBroadcaster<SseSinkInfo> broadcaster;
 
     @Context
     @NonNullByDefault({})
@@ -163,25 +197,33 @@ public class SitemapResource
     Sse sse;
 
     private final ItemUIRegistry itemUIRegistry;
+    private final SitemapFactory sitemapFactory;
+    private final SitemapRegistry sitemapRegistry;
+    private final ManagedSitemapProvider managedSitemapProvider;
     private final SitemapSubscriptionService subscriptions;
     private final LocaleService localeService;
+    private final TimeZoneProvider timeZoneProvider;
 
-    private final java.util.List<SitemapProvider> sitemapProviders = new ArrayList<>();
-
-    private final Map<String, SseSinkInfo> knownSubscriptions = new MapMaker().weakValues().makeMap();
-
-    private final ScheduledExecutorService scheduler = ThreadPoolManager
-            .getScheduledPool(ThreadPoolManager.THREAD_POOL_NAME_COMMON);
+    private final WeakValueConcurrentHashMap<String, SseSinkInfo> knownSubscriptions = new WeakValueConcurrentHashMap<>();
 
     private @Nullable ScheduledFuture<?> cleanSubscriptionsJob;
+    private Set<BlockingStateChangeListener> stateChangeListeners = new CopyOnWriteArraySet<>();
 
     @Activate
     public SitemapResource( //
             final @Reference ItemUIRegistry itemUIRegistry, //
+            final @Reference SitemapFactory sitemapFactory, //
+            final @Reference SitemapRegistry sitemapRegistry, //
+            final @Reference ManagedSitemapProvider managedSitemapProvider, //
             final @Reference LocaleService localeService, //
+            final @Reference TimeZoneProvider timeZoneProvider, //
             final @Reference SitemapSubscriptionService subscriptions) {
         this.itemUIRegistry = itemUIRegistry;
+        this.sitemapFactory = sitemapFactory;
+        this.sitemapRegistry = sitemapRegistry;
+        this.managedSitemapProvider = managedSitemapProvider;
         this.localeService = localeService;
+        this.timeZoneProvider = timeZoneProvider;
         this.subscriptions = subscriptions;
 
         broadcaster = new SseBroadcaster<>();
@@ -211,13 +253,119 @@ public class SitemapResource
         broadcaster.close();
     }
 
-    @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
-    public void addSitemapProvider(SitemapProvider provider) {
-        sitemapProviders.add(provider);
+    @GET
+    @Path("/*/definition")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "getSitemapDefinitions", summary = "Get all available sitemap definitions.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = EnrichedSitemapDefinitionDTO.class)))) })
+    public Response getSitemapsDefinition() {
+        logger.debug("Received HTTP GET request from IP {} at '{}'", request.getRemoteAddr(), uriInfo.getPath());
+        Collection<EnrichedSitemapDefinitionDTO> responseObject = sitemapRegistry.getAll().stream()
+                .map(SitemapDTOMapper::map).map(this::setIsEditable).toList();
+        return Response.ok(responseObject).build();
     }
 
-    public void removeSitemapProvider(SitemapProvider provider) {
-        sitemapProviders.remove(provider);
+    @GET
+    @Path("/{sitemapname: [a-zA-Z_0-9]+}/definition")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "getSitemapDefinitionByName", summary = "Get sitemap definition by name.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedSitemapDefinitionDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Sitemap not found") })
+    public Response getSitemapDefinition(@Context HttpHeaders headers,
+            @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapname) {
+        logger.debug("Received HTTP GET request from IP {} at '{}'.", request.getRemoteAddr(), uriInfo.getPath());
+        Sitemap sitemap = getSitemap(sitemapname);
+        if (sitemap == null) {
+            return Response.status(Status.NOT_FOUND).build();
+        }
+        EnrichedSitemapDefinitionDTO responseObject = setIsEditable(SitemapDTOMapper.map(sitemap));
+        return Response.ok(responseObject).build();
+    }
+
+    private EnrichedSitemapDefinitionDTO setIsEditable(SitemapDefinitionDTO dto) {
+        EnrichedSitemapDefinitionDTO enrichedDto = new EnrichedSitemapDefinitionDTO(dto);
+        enrichedDto.editable = managedSitemapProvider.get(dto.name) != null;
+        return enrichedDto;
+    }
+
+    /**
+     * Create or Update a sitemap.
+     *
+     * @param sitemapname the sitemap name
+     * @param sitemap data.
+     * @return Response configured to represent the sitemap depending on the status
+     */
+    @PUT
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/{sitemapname: [a-zA-Z_0-9]+}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "addOrUpdateSitemapInRegistry", summary = "Adds a new sitemap to the registry or updates the existing sitemap.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "Sitemap updated.", content = @Content(schema = @Schema(implementation = SitemapDefinitionDTO.class))),
+                    @ApiResponse(responseCode = "201", description = "Sitemap created.", content = @Content(schema = @Schema(implementation = SitemapDefinitionDTO.class))),
+                    @ApiResponse(responseCode = "400", description = "Payload invalid."),
+                    @ApiResponse(responseCode = "405", description = "Sitemap not editable.") })
+    public Response createOrUpdateSitemap(final @Context HttpHeaders httpHeaders,
+            @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapName,
+            @Parameter(description = "sitemap data", required = true) @Nullable SitemapDefinitionDTO sitemapDTO) {
+        // If we didn't get a sitemap, then return!
+        if (sitemapDTO == null) {
+            return JSONResponse.createErrorResponse(Status.BAD_REQUEST, "Sitemap payload is required.");
+        } else if (sitemapDTO.name == null) {
+            logger.warn("Received HTTP PUT request at '{}' with a missing sitemap name in the payload.",
+                    uriInfo.getPath());
+            return JSONResponse.createErrorResponse(Status.BAD_REQUEST, "Sitemap name in payload must not be null.");
+        } else if (!sitemapName.equals(sitemapDTO.name)) {
+            logger.warn(
+                    "Received HTTP PUT request at '{}' with a sitemap name '{}' that does not match the one in the url.",
+                    uriInfo.getPath(), sitemapDTO.name);
+            return JSONResponse.createErrorResponse(Status.BAD_REQUEST,
+                    "Sitemap name in payload must match sitemap name in URL.");
+        }
+
+        try {
+            Sitemap sitemap = SitemapDTOMapper.map(sitemapDTO, sitemapFactory);
+
+            // Save the sitemap
+            if (getSitemap(sitemapName) == null) {
+                // sitemap does not yet exist, create it
+                managedSitemapProvider.add(sitemap);
+                return JSONResponse.createResponse(Status.CREATED, sitemapDTO, null);
+            } else if (managedSitemapProvider.get(sitemapName) != null) {
+                // sitemap already exists as a managed sitemap, update it
+                managedSitemapProvider.update(sitemap);
+                return JSONResponse.createResponse(Status.OK, SitemapDTOMapper.map(sitemap), null);
+            } else {
+                // Sitemap exists but cannot be updated
+                logger.warn("Cannot update existing sitemap '{}', because is not managed.", sitemapName);
+                return JSONResponse.createErrorResponse(Status.METHOD_NOT_ALLOWED,
+                        "Cannot update unmanaged sitemap " + sitemapName);
+            }
+        } catch (IllegalArgumentException e) {
+            logger.warn("Received HTTP PUT request at '{}' with an invalid sitemap: {}", uriInfo.getPath(),
+                    e.getMessage());
+            return JSONResponse.createErrorResponse(Status.BAD_REQUEST, "Sitemap invalid: " + e.getMessage());
+        }
+    }
+
+    @DELETE
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/{sitemapname: [a-zA-Z_0-9]+}")
+    @Operation(operationId = "removeSitemapFromRegistry", summary = "Removes a sitemap from the registry.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK"),
+                    @ApiResponse(responseCode = "404", description = "Sitemap not found."),
+                    @ApiResponse(responseCode = "405", description = "Sitemap not editable.") })
+    public Response removeSitemap(
+            @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapName) {
+        if (getSitemap(sitemapName) == null) {
+            return Response.status(Status.NOT_FOUND).build();
+        }
+        if (managedSitemapProvider.remove(sitemapName) == null) {
+            return JSONResponse.createErrorResponse(Status.METHOD_NOT_ALLOWED,
+                    "Cannot delete unmanaged sitemap " + sitemapName);
+        }
+        return Response.ok(null, MediaType.TEXT_PLAIN).build();
     }
 
     @GET
@@ -238,25 +386,65 @@ public class SitemapResource
     public Response getSitemapData(@Context HttpHeaders headers,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
             @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapname,
-            @QueryParam("type") String type, @QueryParam("jsoncallback") @DefaultValue("callback") String callback,
             @QueryParam("includeHidden") @Parameter(description = "include hidden widgets") boolean includeHiddenWidgets) {
         final Locale locale = localeService.getLocale(language);
-        logger.debug("Received HTTP GET request from IP {} at '{}' for media type '{}'.", request.getRemoteAddr(),
-                uriInfo.getPath(), type);
+        logger.debug("Received HTTP GET request from IP {} at '{}'.", request.getRemoteAddr(), uriInfo.getPath());
+        URI uri = uriInfo.getBaseUriBuilder().build();
+        SitemapDTO responseObject = getSitemapBean(sitemapname, uri, locale, includeHiddenWidgets, false);
+        return Response.ok(responseObject).build();
+    }
+
+    /**
+     *
+     * Subscribe to a whole sitemap (all pages at once).
+     * This is not a recommended option as it incurs high traffic
+     * and might pose a high load on the server, depending on the sitemap size.
+     * No built-in openhab UI should use this functionality.
+     *
+     */
+    @GET
+    @Path("/{sitemapname: [a-zA-Z_0-9]+}/*")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "pollDataForSitemap", summary = "Polls the data for a whole sitemap. Not recommended due to potentially high traffic.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = SitemapDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Sitemap with requested name does not exist"),
+            @ApiResponse(responseCode = "400", description = "Invalid subscription id has been provided.") })
+    public Response getSitemapData(@Context HttpHeaders headers,
+            @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
+            @HeaderParam(X_ATMOSPHERE_TRANSPORT_HEADER) @Parameter(description = "X-Atmosphere-Transport for long polling") @Nullable String xAtmosphereTransport,
+            @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapname,
+            @QueryParam("subscriptionid") @Parameter(description = "subscriptionid") @Nullable String subscriptionId,
+            @QueryParam("includeHidden") @Parameter(description = "include hidden widgets") boolean includeHiddenWidgets) {
+        final Locale locale = localeService.getLocale(language);
+        logger.debug("Received HTTP GET request from IP {} at '{}'", request.getRemoteAddr(), uriInfo.getPath());
+
+        if (subscriptionId != null) {
+            try {
+                subscriptions.updateSubscriptionLocation(subscriptionId, sitemapname, null);
+            } catch (IllegalArgumentException e) {
+                return JSONResponse.createErrorResponse(Response.Status.BAD_REQUEST, e.getMessage());
+            }
+        }
+
+        boolean timeout = false;
+        if (xAtmosphereTransport != null) {
+            timeout = blockUntilChangeOccurs(sitemapname, null);
+        }
         SitemapDTO responseObject = getSitemapBean(sitemapname, uriInfo.getBaseUriBuilder().build(), locale,
-                includeHiddenWidgets);
+                includeHiddenWidgets, timeout);
         return Response.ok(responseObject).build();
     }
 
     @GET
     @Path("/{sitemapname: [a-zA-Z_0-9]+}/{pageid: [a-zA-Z_0-9]+}")
     @Produces(MediaType.APPLICATION_JSON)
-    @Operation(operationId = "pollDataForSitemap", summary = "Polls the data for a sitemap.", responses = {
+    @Operation(operationId = "pollDataForPage", summary = "Polls the data for one page of a sitemap.", responses = {
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = PageDTO.class))),
             @ApiResponse(responseCode = "404", description = "Sitemap with requested name does not exist or page does not exist, or page refers to a non-linkable widget"),
             @ApiResponse(responseCode = "400", description = "Invalid subscription id has been provided.") })
     public Response getPageData(@Context HttpHeaders headers,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
+            @HeaderParam(X_ATMOSPHERE_TRANSPORT_HEADER) @Parameter(description = "X-Atmosphere-Transport for long polling") @Nullable String xAtmosphereTransport,
             @PathParam("sitemapname") @Parameter(description = "sitemap name") String sitemapname,
             @PathParam("pageid") @Parameter(description = "page id") String pageId,
             @QueryParam("subscriptionid") @Parameter(description = "subscriptionid") @Nullable String subscriptionId,
@@ -266,20 +454,20 @@ public class SitemapResource
 
         if (subscriptionId != null) {
             try {
-                subscriptions.setPageId(subscriptionId, sitemapname, pageId);
+                subscriptions.updateSubscriptionLocation(subscriptionId, sitemapname, pageId);
             } catch (IllegalArgumentException e) {
                 return JSONResponse.createErrorResponse(Response.Status.BAD_REQUEST, e.getMessage());
             }
         }
 
         boolean timeout = false;
-        if (headers.getRequestHeader("X-Atmosphere-Transport") != null) {
+        if (xAtmosphereTransport != null) {
             // Make the REST-API pseudo-compatible with openHAB 1.x
             // The client asks Atmosphere for server push functionality,
             // so we do a simply listening for changes on the appropriate items
             // The blocking has a timeout of 30 seconds. If this timeout is reached,
             // we notice this information in the response object.
-            timeout = blockUnlessChangeOccurs(sitemapname, pageId);
+            timeout = blockUntilChangeOccurs(sitemapname, pageId);
         }
         PageDTO responseObject = getPageBean(sitemapname, pageId, uriInfo.getBaseUriBuilder().build(), locale, timeout,
                 includeHiddenWidgets);
@@ -298,6 +486,8 @@ public class SitemapResource
             @ApiResponse(responseCode = "201", description = "Subscription created."),
             @ApiResponse(responseCode = "503", description = "Subscriptions limit reached.") })
     public Object createEventSubscription() {
+        logger.debug("Received HTTP POST request from IP {} at '{}'", request.getRemoteAddr(), uriInfo.getPath());
+
         String subscriptionId = subscriptions.createSubscription(this);
         if (subscriptionId == null) {
             return JSONResponse.createResponse(Status.SERVICE_UNAVAILABLE, null,
@@ -315,33 +505,60 @@ public class SitemapResource
     }
 
     /**
-     * Subscribes the connecting client to the stream of sitemap events.
      *
-     * @return {@link EventOutput} object associated with the incoming
-     *         connection.
+     * Subscribe to a whole sitemap (all pages at once).
+     * This is not a recommended option as it incurs high SSE traffic
+     * and might pose a high load on the server, depending on the sitemap size.
+     * No built-in openhab UI should use this functionality.
+     *
+     */
+    @GET
+    @Path(SEGMENT_EVENTS + "/{subscriptionid: [a-zA-Z_0-9-]+}/*")
+    @Produces(MediaType.SERVER_SENT_EVENTS)
+    @Operation(operationId = "getSitemapEvents", summary = "Get sitemap events for a whole sitemap. Not recommended due to potentially high traffic.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(mediaType = MediaType.SERVER_SENT_EVENTS, schema = @Schema(implementation = SitemapEvent.class))),
+            @ApiResponse(responseCode = "400", description = "Missing sitemap parameter, or sitemap not linked successfully to the subscription."),
+            @ApiResponse(responseCode = "404", description = "Subscription not found.") })
+    public void getSitemapEvents(@Context final SseEventSink sseEventSink, @Context final HttpServletResponse response,
+            @PathParam("subscriptionid") @Parameter(description = "subscription id") String subscriptionId,
+            @QueryParam("sitemap") @Parameter(description = "sitemap name") @Nullable String sitemapname) {
+        getSitemapEvents(sseEventSink, response, subscriptionId, sitemapname, null, true);
+    }
+
+    /**
+     * Subscribes the connecting client to the stream of sitemap events.
      */
     @GET
     @Path(SEGMENT_EVENTS + "/{subscriptionid: [a-zA-Z_0-9-]+}")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @Operation(operationId = "getSitemapEvents", summary = "Get sitemap events.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK"),
-            @ApiResponse(responseCode = "400", description = "Page not linked to the subscription."),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(mediaType = MediaType.SERVER_SENT_EVENTS, schema = @Schema(implementation = SitemapEvent.class))),
+            @ApiResponse(responseCode = "400", description = "Missing sitemap or page parameter, or page not linked successfully to the subscription."),
             @ApiResponse(responseCode = "404", description = "Subscription not found.") })
     public void getSitemapEvents(@Context final SseEventSink sseEventSink, @Context final HttpServletResponse response,
             @PathParam("subscriptionid") @Parameter(description = "subscription id") String subscriptionId,
             @QueryParam("sitemap") @Parameter(description = "sitemap name") @Nullable String sitemapname,
             @QueryParam("pageid") @Parameter(description = "page id") @Nullable String pageId) {
+        getSitemapEvents(sseEventSink, response, subscriptionId, sitemapname, pageId, false);
+        logger.debug("Received HTTP GET request from IP {} at '{}' for sitemap {} and page {}", request.getRemoteAddr(),
+                uriInfo.getPath(), sitemapname, pageId);
+    }
+
+    private void getSitemapEvents(SseEventSink sseEventSink, HttpServletResponse response, String subscriptionId,
+            @Nullable String sitemapname, @Nullable String pageId, boolean subscribeToWholeSitemap) {
+        // Clean up stale subscriptions
         final SseSinkInfo sinkInfo = knownSubscriptions.get(subscriptionId);
         if (sinkInfo == null) {
             logger.debug("Subscription id {} does not exist.", subscriptionId);
             response.setStatus(Status.NOT_FOUND.getStatusCode());
             return;
         }
-        if (sitemapname != null && pageId != null) {
-            subscriptions.setPageId(subscriptionId, sitemapname, pageId);
+        if (sitemapname != null && (subscribeToWholeSitemap || pageId != null)) {
+            subscriptions.updateSubscriptionLocation(subscriptionId, sitemapname, pageId);
         }
-        if (subscriptions.getSitemapName(subscriptionId) == null || subscriptions.getPageId(subscriptionId) == null) {
-            logger.debug("Subscription id {} is not yet linked to a sitemap/page.", subscriptionId);
+        if (subscriptions.getSitemapName(subscriptionId) == null
+                || (subscriptions.getPageId(subscriptionId) == null && !subscribeToWholeSitemap)) {
+            logger.debug("Subscription id {} is not yet linked to a sitemap (or sitemap and page).", subscriptionId);
             response.setStatus(Status.BAD_REQUEST.getStatusCode());
             return;
         }
@@ -361,22 +578,22 @@ public class SitemapResource
         Sitemap sitemap = getSitemap(sitemapName);
         if (sitemap != null) {
             if (pageId.equals(sitemap.getName())) {
-                EList<Widget> children = itemUIRegistry.getChildren(sitemap);
+                List<Widget> children = itemUIRegistry.getChildren(sitemap);
                 return createPageBean(sitemapName, sitemap.getLabel(), sitemap.getIcon(), sitemap.getName(), children,
                         false, isLeaf(children), uri, locale, timeout, includeHidden);
             } else {
                 Widget pageWidget = itemUIRegistry.getWidget(sitemap, pageId);
-                if (pageWidget instanceof LinkableWidget) {
-                    EList<Widget> children = itemUIRegistry.getChildren((LinkableWidget) pageWidget);
+                if (pageWidget instanceof LinkableWidget widget) {
+                    List<Widget> children = itemUIRegistry.getChildren(widget);
                     PageDTO pageBean = createPageBean(sitemapName, itemUIRegistry.getLabel(pageWidget),
                             itemUIRegistry.getCategory(pageWidget), pageId, children, false, isLeaf(children), uri,
                             locale, timeout, includeHidden);
-                    EObject parentPage = pageWidget.eContainer();
-                    while (parentPage instanceof Frame) {
-                        parentPage = parentPage.eContainer();
+                    Parent parentPage = widget.getParent();
+                    while (parentPage instanceof Frame frameParent) {
+                        parentPage = frameParent.getParent();
                     }
-                    if (parentPage instanceof Widget) {
-                        String parentId = itemUIRegistry.getWidgetId((Widget) parentPage);
+                    if (parentPage instanceof Widget parentPageWidget) {
+                        String parentId = itemUIRegistry.getWidgetId(parentPageWidget);
                         pageBean.parent = getPageBean(sitemapName, parentId, uri, locale, timeout, includeHidden);
                         pageBean.parent.widgets = null;
                         pageBean.parent.parent = null;
@@ -408,36 +625,25 @@ public class SitemapResource
 
     public Collection<SitemapDTO> getSitemapBeans(URI uri) {
         Collection<SitemapDTO> beans = new LinkedList<>();
-        Set<String> names = new HashSet<>();
         logger.debug("Received HTTP GET request at '{}'.", UriBuilder.fromUri(uri).build().toASCIIString());
-        for (SitemapProvider provider : sitemapProviders) {
-            for (String modelName : provider.getSitemapNames()) {
-                Sitemap sitemap = provider.getSitemap(modelName);
-                if (sitemap != null) {
-                    if (!names.contains(modelName)) {
-                        names.add(modelName);
-                        SitemapDTO bean = new SitemapDTO();
-                        bean.name = modelName;
-                        bean.icon = sitemap.getIcon();
-                        bean.label = sitemap.getLabel();
-                        bean.link = UriBuilder.fromUri(uri).path(bean.name).build().toASCIIString();
-                        bean.homepage = new PageDTO();
-                        bean.homepage.link = bean.link + "/" + sitemap.getName();
-                        beans.add(bean);
-                    } else {
-                        logger.warn("Found duplicate sitemap name '{}' - ignoring it. Please check your configuration.",
-                                modelName);
-                    }
-                }
-            }
+        for (Sitemap sitemap : sitemapRegistry.getAll()) {
+            SitemapDTO bean = new SitemapDTO();
+            bean.name = sitemap.getName();
+            bean.icon = sitemap.getIcon();
+            bean.label = sitemap.getLabel();
+            bean.link = UriBuilder.fromUri(uri).path(bean.name).build().toASCIIString();
+            bean.homepage = new PageDTO();
+            bean.homepage.link = bean.link + "/" + sitemap.getName();
+            beans.add(bean);
         }
         return beans;
     }
 
-    private SitemapDTO getSitemapBean(String sitemapname, URI uri, Locale locale, boolean includeHiddenWidgets) {
+    private SitemapDTO getSitemapBean(String sitemapname, URI uri, Locale locale, boolean includeHiddenWidgets,
+            boolean timeout) {
         Sitemap sitemap = getSitemap(sitemapname);
         if (sitemap != null) {
-            return createSitemapBean(sitemapname, sitemap, uri, locale, includeHiddenWidgets);
+            return createSitemapBean(sitemapname, sitemap, uri, locale, includeHiddenWidgets, timeout);
         } else {
             logger.info("Received HTTP GET request at '{}' for the unknown sitemap '{}'.", uriInfo.getPath(),
                     sitemapname);
@@ -446,7 +652,7 @@ public class SitemapResource
     }
 
     private SitemapDTO createSitemapBean(String sitemapName, Sitemap sitemap, URI uri, Locale locale,
-            boolean includeHiddenWidgets) {
+            boolean includeHiddenWidgets, boolean timeout) {
         SitemapDTO bean = new SitemapDTO();
 
         bean.name = sitemapName;
@@ -455,13 +661,13 @@ public class SitemapResource
 
         bean.link = UriBuilder.fromUri(uri).path(SitemapResource.PATH_SITEMAPS).path(bean.name).build().toASCIIString();
         bean.homepage = createPageBean(sitemap.getName(), sitemap.getLabel(), sitemap.getIcon(), sitemap.getName(),
-                itemUIRegistry.getChildren(sitemap), true, false, uri, locale, false, includeHiddenWidgets);
+                itemUIRegistry.getChildren(sitemap), true, false, uri, locale, timeout, includeHiddenWidgets);
         return bean;
     }
 
     private PageDTO createPageBean(String sitemapName, @Nullable String title, @Nullable String icon, String pageId,
-            @Nullable EList<Widget> children, boolean drillDown, boolean isLeaf, URI uri, Locale locale,
-            boolean timeout, boolean includeHiddenWidgets) {
+            @Nullable List<Widget> children, boolean drillDown, boolean isLeaf, URI uri, Locale locale, boolean timeout,
+            boolean includeHiddenWidgets) {
         PageDTO bean = new PageDTO();
         bean.timeout = timeout;
         bean.id = pageId;
@@ -492,16 +698,19 @@ public class SitemapResource
         }
 
         WidgetDTO bean = new WidgetDTO();
-        if (widget.getItem() != null) {
+        State itemState = null;
+        String itemName = widget.getItem();
+        if (itemName != null) {
             try {
-                Item item = itemUIRegistry.getItem(widget.getItem());
-                String widgetTypeName = widget.eClass().getInstanceTypeName()
-                        .substring(widget.eClass().getInstanceTypeName().lastIndexOf(".") + 1);
+                Item item = itemUIRegistry.getItem(itemName);
+                itemState = item.getState();
+                String widgetTypeName = widget.getWidgetType();
                 boolean isMapview = "mapview".equalsIgnoreCase(widgetTypeName);
                 Predicate<Item> itemFilter = (i -> CoreItemFactory.LOCATION.equals(i.getType()));
                 bean.item = EnrichedItemDTOMapper.map(item, isMapview, itemFilter,
-                        UriBuilder.fromUri(uri).path("items/{itemName}"), locale);
-                bean.state = itemUIRegistry.getState(widget).toFullString();
+                        UriBuilder.fromUri(uri).path("items/{itemName}"), locale, timeZoneProvider.getTimeZone());
+                State widgetState = itemUIRegistry.getState(widget);
+                bean.state = widgetState != null ? widgetState.toFullString() : null;
                 // In case the widget state is identical to the item state, its value is set to null.
                 if (bean.state != null && bean.state.equals(bean.item.state)) {
                     bean.state = null;
@@ -512,15 +721,20 @@ public class SitemapResource
         }
         bean.widgetId = widgetId;
         bean.icon = itemUIRegistry.getCategory(widget);
-        bean.labelcolor = itemUIRegistry.getLabelColor(widget);
-        bean.valuecolor = itemUIRegistry.getValueColor(widget);
+        bean.staticIcon = widget.isStaticIcon() || !widget.getIconRules().isEmpty();
+        bean.labelcolor = convertItemValueColor(itemUIRegistry.getLabelColor(widget), itemState);
+        bean.valuecolor = convertItemValueColor(itemUIRegistry.getValueColor(widget), itemState);
+        bean.iconcolor = convertItemValueColor(itemUIRegistry.getIconColor(widget), itemState);
         bean.label = itemUIRegistry.getLabel(widget);
-        bean.type = widget.eClass().getName();
+        bean.labelSource = itemUIRegistry.getLabelSource(widget).toString();
+        bean.pattern = itemUIRegistry.getFormatPattern(widget);
+        bean.unit = itemUIRegistry.getUnitForWidget(widget);
+        bean.type = widget.getWidgetType();
         bean.visibility = itemUIRegistry.getVisiblity(widget);
-        if (widget instanceof LinkableWidget) {
-            LinkableWidget linkableWidget = (LinkableWidget) widget;
-            EList<Widget> children = itemUIRegistry.getChildren(linkableWidget);
-            if (widget instanceof Frame) {
+        bean.commandConfirmMessage = itemUIRegistry.getCommandConfirmMessage(widget);
+        if (widget instanceof LinkableWidget linkableWidget) {
+            List<Widget> children = itemUIRegistry.getChildren(linkableWidget);
+            if (widget instanceof Frame || widget instanceof Buttongrid) {
                 for (Widget child : children) {
                     String wID = itemUIRegistry.getWidgetId(child);
                     WidgetDTO subWidget = createWidgetBean(sitemapName, child, drillDown, uri, wID, locale,
@@ -536,80 +750,106 @@ public class SitemapResource
                         isLeaf(children), uri, locale, false, evenIfHidden);
             }
         }
-        if (widget instanceof Switch) {
-            Switch switchWidget = (Switch) widget;
-            for (Mapping mapping : switchWidget.getMappings()) {
+        if (widget instanceof Switch switchWidget) {
+            bean.mappings.addAll(switchWidget.getMappings().stream().map(mapping -> {
+                MappingDTO mappingBean = new MappingDTO();
+                mappingBean.command = mapping.getCmd();
+                mappingBean.releaseCommand = mapping.getReleaseCmd();
+                mappingBean.label = mapping.getLabel();
+                mappingBean.icon = mapping.getIcon();
+                return mappingBean;
+            }).toList());
+        }
+        if (widget instanceof Selection selectionWidget) {
+            bean.mappings.addAll(selectionWidget.getMappings().stream().map(mapping -> {
                 MappingDTO mappingBean = new MappingDTO();
                 mappingBean.command = mapping.getCmd();
                 mappingBean.label = mapping.getLabel();
-                bean.mappings.add(mappingBean);
-            }
+                return mappingBean;
+            }).toList());
         }
-        if (widget instanceof Selection) {
-            Selection selectionWidget = (Selection) widget;
-            for (Mapping mapping : selectionWidget.getMappings()) {
-                MappingDTO mappingBean = new MappingDTO();
-                mappingBean.command = mapping.getCmd();
-                mappingBean.label = mapping.getLabel();
-                bean.mappings.add(mappingBean);
-            }
+        if (widget instanceof Input inputWidget) {
+            bean.inputHint = inputWidget.getInputHint();
         }
-        if (widget instanceof Slider) {
-            Slider sliderWidget = (Slider) widget;
-            bean.sendFrequency = sliderWidget.getFrequency();
+        if (widget instanceof Slider sliderWidget) {
             bean.switchSupport = sliderWidget.isSwitchEnabled();
+            bean.releaseOnly = sliderWidget.isReleaseOnly();
             bean.minValue = sliderWidget.getMinValue();
             bean.maxValue = sliderWidget.getMaxValue();
             bean.step = sliderWidget.getStep();
         }
-        if (widget instanceof List) {
-            List listWidget = (List) widget;
-            bean.separator = listWidget.getSeparator();
-        }
-        if (widget instanceof Image) {
+        if (widget instanceof Image imageWidget) {
             bean.url = buildProxyUrl(sitemapName, widget, uri);
-            Image imageWidget = (Image) widget;
             if (imageWidget.getRefresh() > 0) {
                 bean.refresh = imageWidget.getRefresh();
             }
         }
-        if (widget instanceof Video) {
-            Video videoWidget = (Video) widget;
+        if (widget instanceof Video videoWidget) {
             if (videoWidget.getEncoding() != null) {
                 bean.encoding = videoWidget.getEncoding();
             }
-            if (videoWidget.getEncoding() != null && videoWidget.getEncoding().toLowerCase().contains("hls")) {
+            String encoding = videoWidget.getEncoding();
+            if (encoding != null && encoding.toLowerCase().contains("hls")) {
                 bean.url = videoWidget.getUrl();
             } else {
                 bean.url = buildProxyUrl(sitemapName, videoWidget, uri);
             }
         }
-        if (widget instanceof Webview) {
-            Webview webViewWidget = (Webview) widget;
+        if (widget instanceof Webview webViewWidget) {
             bean.url = webViewWidget.getUrl();
             bean.height = webViewWidget.getHeight();
         }
-        if (widget instanceof Mapview) {
-            Mapview mapViewWidget = (Mapview) widget;
+        if (widget instanceof Mapview mapViewWidget) {
             bean.height = mapViewWidget.getHeight();
         }
-        if (widget instanceof Chart) {
-            Chart chartWidget = (Chart) widget;
+        if (widget instanceof Chart chartWidget) {
             bean.service = chartWidget.getService();
             bean.period = chartWidget.getPeriod();
-            bean.legend = chartWidget.getLegend();
-            bean.forceAsItem = chartWidget.getForceAsItem();
+            bean.legend = chartWidget.hasLegend();
+            bean.forceAsItem = chartWidget.forceAsItem();
+            bean.yAxisDecimalPattern = chartWidget.getYAxisDecimalPattern();
+            bean.interpolation = chartWidget.getInterpolation();
             if (chartWidget.getRefresh() > 0) {
                 bean.refresh = chartWidget.getRefresh();
             }
         }
-        if (widget instanceof Setpoint) {
-            Setpoint setpointWidget = (Setpoint) widget;
+        if (widget instanceof Setpoint setpointWidget) {
             bean.minValue = setpointWidget.getMinValue();
             bean.maxValue = setpointWidget.getMaxValue();
             bean.step = setpointWidget.getStep();
         }
+        if (widget instanceof Colortemperaturepicker colortemperaturepickerWidget) {
+            bean.minValue = colortemperaturepickerWidget.getMinValue();
+            bean.maxValue = colortemperaturepickerWidget.getMaxValue();
+        }
+        if (widget instanceof Button buttonWidget) {
+            // Get the icon from the widget only
+            if (widget.getIcon() == null && widget.getIconRules().isEmpty()) {
+                bean.icon = null;
+                bean.staticIcon = null;
+            }
+            // Get the label from the widget only and fail back to the command if not set
+            bean.label = widget.getLabel() != null ? widget.getLabel() : buttonWidget.getCmd();
+            bean.labelSource = WidgetLabelSource.SITEMAP_WIDGET.toString();
+            bean.pattern = null;
+            bean.unit = null;
+            bean.row = buttonWidget.getRow();
+            bean.column = buttonWidget.getColumn();
+            bean.command = buttonWidget.getCmd();
+            bean.releaseCommand = buttonWidget.getReleaseCmd();
+            bean.stateless = buttonWidget.isStateless();
+        }
         return bean;
+    }
+
+    public static @Nullable String convertItemValueColor(@Nullable String color, @Nullable State itemState) {
+        if ("itemValue".equals(color)) {
+            if (itemState instanceof HSBType hsbState) {
+                return "#" + Integer.toHexString(ColorUtil.hsbTosRgb(hsbState)).substring(2);
+            }
+            return null;
+        }
+        return color;
     }
 
     private String buildProxyUrl(String sitemapName, Widget widget, URI uri) {
@@ -623,14 +863,17 @@ public class SitemapResource
         return sb.toString();
     }
 
-    private boolean isLeaf(EList<Widget> children) {
+    private boolean isLeaf(List<Widget> children) {
         for (Widget w : children) {
-            if (w instanceof Frame) {
-                if (isLeaf(((Frame) w).getChildren())) {
+            if (w instanceof Frame frame) {
+                if (isLeaf(frame.getWidgets())) {
                     return false;
                 }
-            } else if (w instanceof LinkableWidget) {
-                LinkableWidget linkableWidget = (LinkableWidget) w;
+            } else if (w instanceof Buttongrid grid) {
+                if (isLeaf(grid.getWidgets())) {
+                    return false;
+                }
+            } else if (w instanceof LinkableWidget linkableWidget) {
                 if (!itemUIRegistry.getChildren(linkableWidget).isEmpty()) {
                     return false;
                 }
@@ -640,52 +883,34 @@ public class SitemapResource
     }
 
     private @Nullable Sitemap getSitemap(String sitemapname) {
-        for (SitemapProvider provider : sitemapProviders) {
-            Sitemap sitemap = provider.getSitemap(sitemapname);
-            if (sitemap != null) {
-                return sitemap;
-            }
-        }
-
-        return null;
+        return sitemapRegistry.get(sitemapname);
     }
 
-    private boolean blockUnlessChangeOccurs(String sitemapname, String pageId) {
-        boolean timeout = false;
-        Sitemap sitemap = getSitemap(sitemapname);
-        if (sitemap != null) {
-            if (pageId.equals(sitemap.getName())) {
-                EList<Widget> children = itemUIRegistry.getChildren(sitemap);
-                timeout = waitForChanges(children);
-            } else {
-                Widget pageWidget = itemUIRegistry.getWidget(sitemap, pageId);
-                if (pageWidget instanceof LinkableWidget) {
-                    EList<Widget> children = itemUIRegistry.getChildren((LinkableWidget) pageWidget);
-                    timeout = waitForChanges(children);
-                }
-            }
+    private boolean blockUntilChangeOccurs(String sitemapname, @Nullable String pageId) {
+        List<Widget> widgets = subscriptions.collectWidgets(sitemapname, pageId);
+        if (widgets.isEmpty()) {
+            return false;
         }
-        return timeout;
+        return waitForChanges(widgets);
     }
 
     /**
      * This method only returns when a change has occurred to any item on the
      * page to display or if the timeout is reached
      *
-     * @param widgets
-     *            the widgets of the page to observe
+     * @param widgets the widgets of the page to observe
      * @return true if the timeout is reached
      */
-    private boolean waitForChanges(EList<Widget> widgets) {
+    private boolean waitForChanges(List<Widget> widgets) {
         long startTime = (new Date()).getTime();
         boolean timeout = false;
-        BlockingStateChangeListener listener = new BlockingStateChangeListener();
-        // let's get all items for these widgets
-        Set<GenericItem> items = getAllItems(widgets);
-        for (GenericItem item : items) {
-            item.addStateChangeListener(listener);
-        }
-        while (!listener.hasChangeOccurred() && !timeout) {
+        Set<String> items = getAllItems(widgets).stream().map(Item::getName).collect(Collectors.toSet());
+        BlockingStateChangeListener listener = new BlockingStateChangeListener(items);
+        stateChangeListeners.add(listener);
+
+        logger.debug("Waiting for changes on {} items from {} widgets", items.size(), widgets.size());
+
+        while (!listener.hasChanged() && !timeout) {
             timeout = (new Date()).getTime() - startTime > TIMEOUT_IN_MS;
             try {
                 Thread.sleep(300);
@@ -694,115 +919,91 @@ public class SitemapResource
                 break;
             }
         }
-        for (GenericItem item : items) {
-            item.removeStateChangeListener(listener);
-        }
+
+        stateChangeListeners.remove(listener);
         return timeout;
     }
 
     /**
      * Collects all items that are represented by a given list of widgets
      *
-     * @param widgets
-     *            the widget list to get the items for added to all bundles containing REST resources
+     * @param widgets the widget list to get the items for added to all bundles containing REST resources
      * @return all items that are represented by the list of widgets
      */
-    private Set<GenericItem> getAllItems(EList<Widget> widgets) {
+    private Set<GenericItem> getAllItems(List<Widget> widgets) {
         Set<GenericItem> items = new HashSet<>();
         for (Widget widget : widgets) {
             // We skip the chart widgets having a refresh argument
             boolean skipWidget = false;
-            if (widget instanceof Chart) {
-                Chart chartWidget = (Chart) widget;
+            if (widget instanceof Chart chartWidget) {
                 skipWidget = chartWidget.getRefresh() > 0;
             }
             String itemName = widget.getItem();
             if (!skipWidget && itemName != null) {
                 try {
                     Item item = itemUIRegistry.getItem(itemName);
-                    if (item instanceof GenericItem) {
-                        items.add((GenericItem) item);
+                    if (item instanceof GenericItem genericItem) {
+                        items.add(genericItem);
                     }
                 } catch (ItemNotFoundException e) {
                     // ignore
                 }
             }
             // Consider all items inside the frame
-            if (widget instanceof Frame) {
-                items.addAll(getAllItems(((Frame) widget).getChildren()));
+            if (widget instanceof Frame frame) {
+                items.addAll(getAllItems(frame.getWidgets()));
+            } else if (widget instanceof Buttongrid grid) {
+                items.addAll(getAllItems(grid.getWidgets()));
             }
-            // Consider items involved in any visibility, labelcolor and valuecolor condition
-            items.addAll(getItemsInVisibilityCond(widget.getVisibility()));
-            items.addAll(getItemsInColorCond(widget.getLabelColor()));
-            items.addAll(getItemsInColorCond(widget.getValueColor()));
+            // Consider items involved in any icon condition
+            items.addAll(getItemsInRuleConditions(widget.getIconRules()));
+            // Consider items involved in any visibility, labelcolor, valuecolor, iconcolor and confirm cmd rule
+            // condition
+            items.addAll(getItemsInRuleConditions(widget.getVisibility()));
+            items.addAll(getItemsInRuleConditions(widget.getLabelColor()));
+            items.addAll(getItemsInRuleConditions(widget.getValueColor()));
+            items.addAll(getItemsInRuleConditions(widget.getIconColor()));
+            items.addAll(getItemsInRuleConditions(widget.getConfirmCmdRules()));
         }
         return items;
     }
 
-    private Set<GenericItem> getItemsInVisibilityCond(EList<VisibilityRule> ruleList) {
+    private Set<GenericItem> getItemsInRuleConditions(List<Rule> ruleList) {
         Set<GenericItem> items = new HashSet<>();
-        for (VisibilityRule rule : ruleList) {
-            String itemName = rule.getItem();
-            if (itemName != null) {
-                try {
-                    Item item = itemUIRegistry.getItem(itemName);
-                    if (item instanceof GenericItem) {
-                        items.add((GenericItem) item);
+        for (Rule rule : ruleList) {
+            getItemsInConditions(rule.getConditions(), items);
+        }
+        return items;
+    }
+
+    private void getItemsInConditions(@Nullable List<Condition> conditions, Set<GenericItem> items) {
+        if (conditions != null) {
+            for (Condition condition : conditions) {
+                String itemName = condition.getItem();
+                if (itemName != null) {
+                    try {
+                        Item item = itemUIRegistry.getItem(itemName);
+                        if (item instanceof GenericItem genericItem) {
+                            items.add(genericItem);
+                        }
+                    } catch (ItemNotFoundException e) {
+                        // ignore
                     }
-                } catch (ItemNotFoundException e) {
-                    // ignore
                 }
             }
         }
-        return items;
     }
 
-    private Set<GenericItem> getItemsInColorCond(EList<ColorArray> colorList) {
-        Set<GenericItem> items = new HashSet<>();
-        for (ColorArray color : colorList) {
-            String itemName = color.getItem();
-            if (itemName != null) {
-                try {
-                    Item item = itemUIRegistry.getItem(itemName);
-                    if (item instanceof GenericItem) {
-                        items.add((GenericItem) item);
-                    }
-                } catch (ItemNotFoundException e) {
-                    // ignore
-                }
-            }
-        }
-        return items;
+    @Override
+    public Set<String> getSubscribedEventTypes() {
+        return Set.of(ItemStateChangedEvent.TYPE, GroupItemStateChangedEvent.TYPE);
     }
 
-    /**
-     * This is a state change listener, which is merely used to determine, if a
-     * state change has occurred on one of a list of items.
-     *
-     * @author Kai Kreuzer - Initial contribution
-     *
-     */
-    private static class BlockingStateChangeListener implements StateChangeListener {
-
-        private boolean changed = false;
-
-        @Override
-        public void stateChanged(Item item, State oldState, State newState) {
-            changed = true;
-        }
-
-        /**
-         * determines, whether a state change has occurred since its creation
-         *
-         * @return true, if a state has changed
-         */
-        public boolean hasChangeOccurred() {
-            return changed;
-        }
-
-        @Override
-        public void stateUpdated(Item item, State state) {
-            // ignore if the state did not change
+    @Override
+    public void receive(Event event) {
+        if (event instanceof ItemEvent itemEvent) {
+            String itemName = itemEvent.getItemName();
+            stateChangeListeners.forEach(l -> l.itemChanged(itemName));
         }
     }
 
@@ -820,11 +1021,11 @@ public class SitemapResource
             String sitemapName = event.sitemapName;
             String pageId = event.pageId;
             if (sitemapName != null && sitemapName.equals(subscriptions.getSitemapName(info.subscriptionId))
-                    && pageId != null && pageId.equals(subscriptions.getPageId(info.subscriptionId))) {
+                    && Objects.equals(pageId, subscriptions.getPageId(info.subscriptionId))) {
                 if (logger.isDebugEnabled()) {
-                    if (event instanceof SitemapWidgetEvent) {
-                        logger.debug("Sent sitemap event for widget {} to subscription {}.",
-                                ((SitemapWidgetEvent) event).widgetId, info.subscriptionId);
+                    if (event instanceof SitemapWidgetEvent widgetEvent) {
+                        logger.debug("Sent sitemap event for widget {} to subscription {}.", widgetEvent.widgetId,
+                                info.subscriptionId);
                     } else if (event instanceof ServerAliveEvent) {
                         logger.debug("Sent alive event to subscription {}.", info.subscriptionId);
                     }
@@ -847,5 +1048,70 @@ public class SitemapResource
         logger.debug("SSE connection for subscription {} has been closed.", info.subscriptionId);
         subscriptions.removeSubscription(info.subscriptionId);
         knownSubscriptions.remove(info.subscriptionId);
+    }
+
+    /**
+     * This is a replacement implementation for Google Guava <code>new MapMaker().weakValues().makeMap()</code>, to
+     * avoid pulling in a Guava dependency in this class.
+     *
+     * @param <K> key
+     * @param <V> value
+     */
+    private class WeakValueConcurrentHashMap<K, V> {
+        // Map from key → WeakReference to value
+        private final Map<K, WeakValueRef<K, V>> backingMap = new ConcurrentHashMap<>();
+        private final ReferenceQueue<V> refQueue = new ReferenceQueue<>();
+
+        // Custom WeakReference that remembers its key
+        private static class WeakValueRef<K, V> extends WeakReference<V> {
+            final K key;
+
+            WeakValueRef(K key, V value, ReferenceQueue<V> queue) {
+                super(value, queue);
+                this.key = key;
+            }
+        }
+
+        public void put(K key, V value) {
+            processQueue();
+            backingMap.put(key, new WeakValueRef<>(key, value, refQueue));
+        }
+
+        public @Nullable V get(K key) {
+            processQueue();
+            WeakValueRef<K, V> ref = backingMap.get(key);
+            return ref != null ? ref.get() : null;
+        }
+
+        public void remove(K key) {
+            processQueue();
+            backingMap.remove(key);
+        }
+
+        private void processQueue() {
+            WeakValueRef<K, V> ref;
+            while ((ref = (WeakValueRef<K, V>) refQueue.poll()) != null) {
+                backingMap.remove(ref.key, ref); // remove only if still mapped
+            }
+        }
+    }
+
+    private static class BlockingStateChangeListener {
+        private final Set<String> items;
+        private boolean changed = false;
+
+        public BlockingStateChangeListener(Set<String> items) {
+            this.items = items;
+        }
+
+        public void itemChanged(String item) {
+            if (items.contains(item)) {
+                changed = true;
+            }
+        }
+
+        public boolean hasChanged() {
+            return changed;
+        }
     }
 }

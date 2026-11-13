@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,40 +14,55 @@ package org.openhab.core.voice.internal;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.net.URI;
-import java.util.Collection;
 import java.util.Dictionary;
 import java.util.Hashtable;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.audio.AudioManager;
-import org.openhab.core.config.core.ParameterOption;
+import org.openhab.core.audio.AudioSource;
 import org.openhab.core.i18n.LocaleProvider;
 import org.openhab.core.i18n.TranslationProvider;
+import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.test.java.JavaOSGiTest;
-import org.openhab.core.voice.Voice;
 import org.openhab.core.voice.VoiceManager;
+import org.openhab.core.voice.dialog.DialogContext;
+import org.openhab.core.voice.dialog.DialogRegistration;
+import org.openhab.core.voice.dialog.trigger.ks.KSServiceStub;
+import org.openhab.core.voice.stt.STTServiceStub;
+import org.openhab.core.voice.text.HumanLanguageInterpreter;
+import org.openhab.core.voice.text.HumanLanguageInterpreterStub;
+import org.openhab.core.voice.text.InterpretationArguments;
 import org.openhab.core.voice.text.InterpretationException;
+import org.openhab.core.voice.text.UnrecoverableInterpretationException;
+import org.openhab.core.voice.text.conversation.ConversationRole;
+import org.openhab.core.voice.tts.TTSServiceStub;
+import org.openhab.core.voice.tts.Voice;
+import org.openhab.core.voice.tts.VoiceStub;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 
 /**
- * Tests for {@link org.openhab.core.voice.internal.VoiceManagerImpl}
+ * Tests for {@link VoiceManagerImpl}
  *
  * @author Mihaela Memova - Initial contribution
  * @author Velin Yordanov - migrated tests from groovy to java
  */
 @NonNullByDefault
 public class VoiceManagerImplTest extends JavaOSGiTest {
-    private static final URI VOICE_CONFIG_URI = URI.create("system:voice");
     private static final String CONFIG_DEFAULT_SINK = "defaultSink";
     private static final String CONFIG_DEFAULT_SOURCE = "defaultSource";
     private static final String CONFIG_DEFAULT_HLI = "defaultHLI";
@@ -72,16 +87,15 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
     @BeforeEach
     public void setUp() throws IOException {
+        registerVolatileStorageService();
         BundleContext context = bundleContext;
         ttsService = new TTSServiceStub(context);
         sink = new SinkStub();
         voice = new VoiceStub();
         source = new AudioSourceStub();
-
         registerService(sink);
         registerService(voice);
         registerService(source);
-
         ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
 
         audioManager = getService(AudioManager.class);
@@ -111,7 +125,7 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         Dictionary<String, Object> voiceConfig = new Hashtable<>();
         voiceConfig.put(CONFIG_DEFAULT_TTS, ttsService.getId());
-        configuration = configAdmin.getConfiguration(VoiceManagerImpl.CONFIGURATION_PID);
+        configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
         configuration.update(voiceConfig);
     }
 
@@ -146,16 +160,16 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
     public void interpretSomethingWithGivenHliIdWhenTheHliIsARegisteredService() throws InterpretationException {
         hliStub = new HumanLanguageInterpreterStub();
         registerService(hliStub);
-
-        String result = voiceManager.interpret("something", hliStub.getId());
+        String result = voiceManager.interpret("something",
+                new InterpretationArguments(hliStub.getId(), "", "", "", null));
         assertThat(result, is("Interpreted text"));
     }
 
     @Test
     public void interpretSomethingWithGivenHliIdEhenTheHliIsNotARegisteredService() throws InterpretationException {
         hliStub = new HumanLanguageInterpreterStub();
-
-        assertThrows(InterpretationException.class, () -> voiceManager.interpret("something", hliStub.getId()));
+        assertThrows(InterpretationException.class, () -> voiceManager.interpret("something",
+                new InterpretationArguments(hliStub.getId(), "", "", "", null)));
     }
 
     @Test
@@ -166,14 +180,89 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         Dictionary<String, Object> voiceConfig = new Hashtable<>();
         voiceConfig.put("defaultHLI", hliStub.getId());
         ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
-        Configuration configuration = configAdmin.getConfiguration(VoiceManagerImpl.CONFIGURATION_PID);
+        Configuration configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
         configuration.update(voiceConfig);
 
         // Wait some time to be sure that the configuration will be updated
         Thread.sleep(2000);
 
-        String result = voiceManager.interpret("something", null);
+        String result = voiceManager.interpret("something");
         assertThat(result, is("Interpreted text"));
+    }
+
+    @Test
+    public void interpretSomethingWithGivenMultipleHliIdsWhenFirstFails() throws InterpretationException {
+        hliStub = new HumanLanguageInterpreterStub("hli1");
+        registerService(hliStub);
+        hliStub.setExceptionExpected(true);
+        var anotherHLIStub = new HumanLanguageInterpreterStub("hli2");
+        registerService(anotherHLIStub);
+        String result = voiceManager.interpret("something", new InterpretationArguments(
+                String.join(",", List.of(hliStub.getId(), anotherHLIStub.getId())), "", "", "", null));
+        assertThat(result, is("Interpreted text"));
+        assertThat(hliStub.getQuestion(), is("something"));
+        assertThat(anotherHLIStub.getQuestion(), is("something"));
+    }
+
+    @Test
+    public void interpretSomethingWithGivenMultipleHliIdsWhenFirstThrowsUnrecoverableInterpretationException() {
+        hliStub = new HumanLanguageInterpreterStub("hli1");
+        registerService(hliStub);
+        hliStub.setUnrecoverableExceptionExpected(true);
+        var anotherHLIStub = new HumanLanguageInterpreterStub("hli2");
+        registerService(anotherHLIStub);
+
+        assertThrows(UnrecoverableInterpretationException.class,
+                () -> voiceManager.interpret("something", new InterpretationArguments(
+                        String.join(",", List.of(hliStub.getId(), anotherHLIStub.getId())), "", "", "", null)));
+
+        assertThat(hliStub.getQuestion(), is("something"));
+        assertThat(anotherHLIStub.getQuestion(), is(""));
+    }
+
+    @Test
+    public void interpretWithConversation() throws InterpretationException {
+        hliStub = new HumanLanguageInterpreterStub();
+        registerService(hliStub);
+        String convId = "conv-1";
+
+        String result = voiceManager.interpret("hello",
+                new InterpretationArguments(hliStub.getId(), convId, "", "", null));
+        assertThat(result, is("Interpreted text"));
+
+        // Verify conversation was updated
+        var conversationManager = getService(org.openhab.core.voice.text.conversation.ConversationManager.class);
+        assertNotNull(conversationManager, "ConversationManager service should be available");
+        var conversation = conversationManager.getConversation(convId);
+        assertThat(conversation.getMessages().size(), is(2));
+        assertThat(conversation.getMessages().get(0).role(), is(ConversationRole.USER));
+        assertThat(conversation.getMessages().get(0).content(), is("hello"));
+        assertThat(conversation.getMessages().get(1).role(), is(ConversationRole.OPENHAB));
+        assertThat(conversation.getMessages().get(1).content(), is("Interpreted text"));
+    }
+
+    @Test
+    public void testMultiTurnConversation() throws InterpretationException {
+        hliStub = new HumanLanguageInterpreterStub();
+        registerService(hliStub);
+        String convId = "multi-turn";
+
+        voiceManager.interpret("turn on light", new InterpretationArguments(hliStub.getId(), convId, "", "", null));
+        voiceManager.interpret("and close shutters",
+                new InterpretationArguments(hliStub.getId(), convId, "", "", null));
+
+        var conversationManager = getService(org.openhab.core.voice.text.conversation.ConversationManager.class);
+        assertNotNull(conversationManager, "ConversationManager service should be available");
+        var conversation = conversationManager.getConversation(convId);
+        assertThat(conversation.getMessages().size(), is(4));
+        assertThat(conversation.getMessages().get(0).role(), is(ConversationRole.USER));
+        assertThat(conversation.getMessages().get(0).content(), is("turn on light"));
+        assertThat(conversation.getMessages().get(1).role(), is(ConversationRole.OPENHAB));
+        assertThat(conversation.getMessages().get(1).content(), is("Interpreted text"));
+        assertThat(conversation.getMessages().get(2).role(), is(ConversationRole.USER));
+        assertThat(conversation.getMessages().get(2).content(), is("and close shutters"));
+        assertThat(conversation.getMessages().get(3).role(), is(ConversationRole.OPENHAB));
+        assertThat(conversation.getMessages().get(3).content(), is("Interpreted text"));
     }
 
     @Test
@@ -182,8 +271,10 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         ksService = new KSServiceStub();
         hliStub = new HumanLanguageInterpreterStub();
 
-        assertThrows(IllegalStateException.class, () -> voiceManager.startDialog(ksService, sttService, null, hliStub,
-                source, sink, Locale.ENGLISH, "word", null));
+        assertThrows(IllegalStateException.class,
+                () -> voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                        .withKS(ksService).withSTT(sttService).withTTS(null).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                        .withKeyword("word").build()));
 
         assertFalse(ksService.isWordSpotted());
         assertFalse(sink.getIsStreamProcessed());
@@ -200,8 +291,10 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         registerService(ttsService);
         registerService(hliStub);
 
-        assertThrows(IllegalStateException.class, () -> voiceManager.startDialog(ksService, sttService, ttsService,
-                hliStub, source, sink, Locale.FRENCH, "mot", null));
+        assertThrows(IllegalStateException.class,
+                () -> voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                        .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub)
+                        .withLocale(Locale.FRENCH).withKeyword("mot").build()));
 
         assertFalse(ksService.isWordSpotted());
         assertFalse(sink.getIsStreamProcessed());
@@ -218,8 +311,9 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         registerService(ttsService);
         registerService(hliStub);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertTrue(ksService.isWordSpotted());
         assertTrue(sttService.isRecognized());
@@ -246,7 +340,9 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         ksService.setExceptionExpected(true);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "", null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertFalse(ksService.isWordSpotted());
         assertFalse(sttService.isRecognized());
@@ -271,8 +367,9 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         ksService.setErrorExpected(true);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertFalse(ksService.isWordSpotted());
         assertFalse(sttService.isRecognized());
@@ -298,8 +395,9 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         sttService.setExceptionExpected(true);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertTrue(ksService.isWordSpotted());
         assertFalse(sttService.isRecognized());
@@ -324,14 +422,15 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         sttService.setErrorExpected(true);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertTrue(ksService.isWordSpotted());
         assertFalse(sttService.isRecognized());
         assertThat(hliStub.getQuestion(), is(""));
         assertThat(hliStub.getAnswer(), is(""));
-        assertThat(ttsService.getSynthesized(), is("Encountered error while recognizing text, STT error"));
+        assertThat(ttsService.getSynthesized(), is("STT error"));
         assertTrue(sink.getIsStreamProcessed());
 
         voiceManager.stopDialog(source);
@@ -350,14 +449,74 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
 
         hliStub.setExceptionExpected(true);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertTrue(ksService.isWordSpotted());
         assertTrue(sttService.isRecognized());
         assertThat(hliStub.getQuestion(), is("Recognized text"));
         assertThat(hliStub.getAnswer(), is(""));
         assertThat(ttsService.getSynthesized(), is("interpretation exception"));
+        assertTrue(sink.getIsStreamProcessed());
+
+        voiceManager.stopDialog(source);
+    }
+
+    @Test
+    public void startDialogWithMultipleHLIsWhenFirstFailsWithInterpretationException() {
+        sttService = new STTServiceStub();
+        ksService = new KSServiceStub();
+        hliStub = new HumanLanguageInterpreterStub("hli1");
+        var anotherHLIStub = new HumanLanguageInterpreterStub("hli2");
+
+        registerService(sttService);
+        registerService(ksService);
+        registerService(ttsService);
+        registerService(hliStub);
+        registerService(anotherHLIStub);
+
+        hliStub.setExceptionExpected(true);
+
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLIs(List.of(hliStub, anotherHLIStub))
+                .withLocale(Locale.ENGLISH).withKeyword("word").build());
+
+        assertTrue(ksService.isWordSpotted());
+        assertTrue(sttService.isRecognized());
+        assertThat(hliStub.getQuestion(), is("Recognized text"));
+        assertThat(anotherHLIStub.getQuestion(), is("Recognized text"));
+        assertThat(anotherHLIStub.getAnswer(), is("Interpreted text"));
+        assertThat(ttsService.getSynthesized(), is("Interpreted text"));
+        assertTrue(sink.getIsStreamProcessed());
+
+        voiceManager.stopDialog(source);
+    }
+
+    @Test
+    public void startDialogWithMultipleHLIsAndVerifyThatAnUnrecoverableInterpretationExceptionReturnsFast() {
+        sttService = new STTServiceStub();
+        ksService = new KSServiceStub();
+        hliStub = new HumanLanguageInterpreterStub("hli1");
+        var anotherHLIStub = new HumanLanguageInterpreterStub("hli2");
+
+        registerService(sttService);
+        registerService(ksService);
+        registerService(ttsService);
+        registerService(hliStub);
+        registerService(anotherHLIStub);
+
+        hliStub.setUnrecoverableExceptionExpected(true);
+
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLIs(List.of(hliStub, anotherHLIStub))
+                .withLocale(Locale.ENGLISH).withKeyword("word").build());
+
+        assertTrue(ksService.isWordSpotted());
+        assertTrue(sttService.isRecognized());
+        assertThat(hliStub.getQuestion(), is("Recognized text"));
+        assertThat(anotherHLIStub.getQuestion(), is(""));
+        assertThat(ttsService.getSynthesized(), is("unrecoverable interpretation exception"));
         assertTrue(sink.getIsStreamProcessed());
 
         voiceManager.stopDialog(source);
@@ -382,14 +541,16 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         config.put(CONFIG_DEFAULT_VOICE, voice.getUID());
 
         ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
-        Configuration configuration = configAdmin.getConfiguration(VoiceManagerImpl.CONFIGURATION_PID);
+        Configuration configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
         configuration.update(config);
 
         // Wait some time to be sure that the configuration will be updated
         Thread.sleep(2000);
 
-        voiceManager.startDialog();
+        DialogContext context = voiceManager.getDialogContextBuilder().build();
+        voiceManager.startDialog(context);
 
+        assertThat(voiceManager.getLastDialogContext(), is(context));
         assertTrue(ksService.isWordSpotted());
         assertTrue(sttService.isRecognized());
         assertThat(hliStub.getQuestion(), is("Recognized text"));
@@ -397,7 +558,7 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         assertThat(ttsService.getSynthesized(), is("Interpreted text"));
         assertTrue(sink.getIsStreamProcessed());
 
-        voiceManager.stopDialog(null);
+        voiceManager.stopDialog((AudioSource) null);
 
         assertTrue(ksService.isAborted());
     }
@@ -413,147 +574,22 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
         registerService(ttsService);
         registerService(hliStub);
 
-        voiceManager.startDialog(ksService, sttService, ttsService, hliStub, source, sink, Locale.ENGLISH, "word",
-                null);
+        voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub).withLocale(Locale.ENGLISH)
+                .withKeyword("word").build());
 
         assertTrue(ksService.isWordSpotted());
 
-        assertThrows(IllegalStateException.class, () -> voiceManager.startDialog(ksService, sttService, ttsService,
-                hliStub, source, sink, Locale.ENGLISH, "word", null));
+        assertThrows(IllegalStateException.class,
+                () -> voiceManager.startDialog(voiceManager.getDialogContextBuilder().withSource(source).withSink(sink)
+                        .withKS(ksService).withSTT(sttService).withTTS(ttsService).withHLI(hliStub)
+                        .withLocale(Locale.ENGLISH).withKeyword("word").build()));
 
         voiceManager.stopDialog(source);
 
         assertTrue(ksService.isAborted());
 
         assertThrows(IllegalStateException.class, () -> voiceManager.stopDialog(source));
-    }
-
-    @Test
-    public void getParameterOptionsForTheDefaultHli() {
-        hliStub = new HumanLanguageInterpreterStub();
-        registerService(hliStub);
-
-        boolean isHliStubInTheOptions = false;
-
-        Collection<ParameterOption> options = voiceManager.getParameterOptions(VOICE_CONFIG_URI, "defaultHLI", null,
-                null);
-
-        assertNotNull(options);
-
-        for (ParameterOption option : options) {
-            String optionValue = option.getValue();
-            String optionLabel = option.getLabel();
-            String hliStubId = hliStub.getId();
-            String hliLabel = hliStub.getLabel(null);
-            if (optionValue.equals(hliStubId) && optionLabel.equals(hliLabel)) {
-                isHliStubInTheOptions = true;
-            }
-        }
-
-        assertTrue(isHliStubInTheOptions);
-    }
-
-    @Test
-    public void getParameterOptionsForTheDefaultKs() {
-        ksService = new KSServiceStub();
-        registerService(ksService);
-
-        boolean isKSStubInTheOptions = false;
-
-        Collection<ParameterOption> options = voiceManager.getParameterOptions(VOICE_CONFIG_URI, "defaultKS", null,
-                null);
-
-        assertNotNull(options);
-
-        for (ParameterOption option : options) {
-            String optionValue = option.getValue();
-            String optionLabel = option.getLabel();
-            String ksStubId = ksService.getId();
-            String ksLabel = ksService.getLabel(null);
-            if (optionValue.equals(ksStubId) && optionLabel.equals(ksLabel)) {
-                isKSStubInTheOptions = true;
-            }
-        }
-
-        assertTrue(isKSStubInTheOptions);
-    }
-
-    @Test
-    public void getParameterOptionsForTheDefaultSTT() {
-        sttService = new STTServiceStub();
-        registerService(sttService);
-
-        boolean isSTTStubInTheOptions = false;
-
-        Collection<ParameterOption> options = voiceManager.getParameterOptions(VOICE_CONFIG_URI, "defaultSTT", null,
-                null);
-        assertNotNull(options);
-
-        for (ParameterOption option : options) {
-            String optionValue = option.getValue();
-            String optionLabel = option.getLabel();
-            String sttStubId = sttService.getId();
-            String sttLabel = sttService.getLabel(null);
-            if (optionValue.equals(sttStubId) && optionLabel.equals(sttLabel)) {
-                isSTTStubInTheOptions = true;
-            }
-        }
-
-        assertTrue(isSTTStubInTheOptions);
-    }
-
-    @Test
-    public void getParameterOptionsForTheDefaultTts() {
-        ttsService = new TTSServiceStub();
-        registerService(ttsService);
-
-        boolean isTTSStubInTheOptions = false;
-
-        Collection<ParameterOption> options = voiceManager.getParameterOptions(VOICE_CONFIG_URI, "defaultTTS", null,
-                null);
-
-        assertNotNull(options);
-
-        for (ParameterOption option : options) {
-            String optionValue = option.getValue();
-            String optionLabel = option.getLabel();
-            String ttsStubId = ttsService.getId();
-            String ttsLabel = ttsService.getLabel(null);
-            if (optionValue.equals(ttsStubId) && optionLabel.equals(ttsLabel)) {
-                isTTSStubInTheOptions = true;
-            }
-        }
-
-        assertTrue(isTTSStubInTheOptions);
-    }
-
-    @Test
-    public void getParameterOptionsForTheDefaultVoice() {
-        BundleContext context = bundleContext;
-        ttsService = new TTSServiceStub(context);
-        registerService(ttsService);
-        Locale locale = localeProvider.getLocale();
-
-        boolean isVoiceStubInTheOptions = false;
-
-        Collection<ParameterOption> options = voiceManager.getParameterOptions(VOICE_CONFIG_URI, "defaultVoice", null,
-                null);
-
-        assertNotNull(options);
-
-        for (ParameterOption option : options) {
-            String optionValue = option.getValue();
-            String optionLabel = option.getLabel();
-            String voiceStubId = voice.getUID();
-            String expectedLabel = String.format("%s - %s - %s", ttsService.getLabel(locale),
-                    voice.getLocale().getDisplayName(locale), voice.getLabel());
-
-            if (optionValue.equals(voiceStubId) && optionLabel.equals(expectedLabel)) {
-                isVoiceStubInTheOptions = true;
-            }
-        }
-
-        assertTrue(isVoiceStubInTheOptions);
     }
 
     @Test
@@ -566,5 +602,139 @@ public class VoiceManagerImplTest extends JavaOSGiTest {
     public void getPreferredVoiceOfEmptySet() {
         Voice voice = voiceManager.getPreferredVoice(Set.of());
         assertNull(voice);
+    }
+
+    @Test
+    public void registerDialog() throws IOException, InterruptedException {
+        // register services
+        sttService = new STTServiceStub();
+        ksService = new KSServiceStub();
+        hliStub = new HumanLanguageInterpreterStub();
+        registerService(sttService);
+        registerService(ksService);
+        registerService(ttsService);
+        registerService(hliStub);
+        // configure
+        Dictionary<String, Object> config = new Hashtable<>();
+        config.put(CONFIG_KEYWORD, "word");
+        config.put(CONFIG_DEFAULT_STT, sttService.getId());
+        config.put(CONFIG_DEFAULT_KS, ksService.getId());
+        config.put(CONFIG_DEFAULT_HLI, hliStub.getId());
+        config.put(CONFIG_DEFAULT_VOICE, voice.getUID());
+        ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
+        Configuration configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
+        configuration.update(config);
+        // Wait some time to be sure that the configuration will be updated
+        Thread.sleep(2000);
+        // Add a dialog registration
+        var dialogRegistration = new DialogRegistration(source.getId(), sink.getId());
+        dialogRegistration.conversationId = "registered-dialog-conversation";
+        voiceManager.registerDialog(dialogRegistration);
+        // Wait some time to be sure dialog build has been fired and check dialog has been started
+        Thread.sleep(6000);
+        // Assert registration is available and running
+        var registrations = voiceManager.getDialogRegistrations();
+        assertThat(registrations.size(), is(1));
+        assertTrue(registrations.stream().findAny().map(r -> r.running).orElse(false));
+        // Assert dialog has been stated
+        assertTrue(ksService.isWordSpotted());
+        assertTrue(sttService.isRecognized());
+        assertThat(hliStub.getQuestion(), is("Recognized text"));
+        assertThat(hliStub.getAnswer(), is("Interpreted text"));
+        assertThat(ttsService.getSynthesized(), is("Interpreted text"));
+        assertTrue(sink.getIsStreamProcessed());
+        var conversationManager = getService(org.openhab.core.voice.text.conversation.ConversationManager.class);
+        assertNotNull(conversationManager, "ConversationManager service should be available");
+        var conversation = conversationManager.getConversation("registered-dialog-conversation");
+        assertThat(conversation.getMessages().size(), is(2));
+        assertThat(conversation.getMessages().get(0).role(), is(ConversationRole.USER));
+        assertThat(conversation.getMessages().get(0).content(), is("Recognized text"));
+        assertThat(conversation.getMessages().get(1).role(), is(ConversationRole.OPENHAB));
+        assertThat(conversation.getMessages().get(1).content(), is("Interpreted text"));
+        // Remove the dialog registration
+        voiceManager.unregisterDialog(dialogRegistration);
+        // Assert dialog has been stopped
+        assertTrue(ksService.isAborted());
+    }
+
+    @Test
+    public void testSystemPromptEnrichment() throws Exception {
+        ItemRegistry itemRegistry = getService(ItemRegistry.class);
+        assertNotNull(itemRegistry);
+
+        // Add a test item
+        org.openhab.core.library.items.SwitchItem testItem = new org.openhab.core.library.items.SwitchItem(
+                "TestSwitch");
+        testItem.setLabel("Test Switch Label");
+
+        // Setup a custom HumanLanguageInterpreter to capture InterpreterContext
+        final String[] capturedPrompt = new String[1];
+        HumanLanguageInterpreter customHli = new HumanLanguageInterpreter() {
+            @Override
+            public String getId() {
+                return "customHli";
+            }
+
+            @Override
+            public String getLabel(@Nullable Locale locale) {
+                return "Custom HLI";
+            }
+
+            @Override
+            public String interpret(Locale locale, String text) throws InterpretationException {
+                return "Interpreted";
+            }
+
+            @Override
+            public String interpret(Locale locale, org.openhab.core.voice.text.InterpreterContext interpreterContext)
+                    throws InterpretationException {
+                capturedPrompt[0] = interpreterContext.systemPrompt();
+                return "Interpreted Context";
+            }
+
+            @Override
+            public @Nullable String getGrammar(Locale locale, String format) {
+                return null;
+            }
+
+            @Override
+            public Set<Locale> getSupportedLocales() {
+                return Set.of(Locale.ENGLISH);
+            }
+
+            @Override
+            public Set<String> getSupportedGrammarFormats() {
+                return Set.of();
+            }
+        };
+
+        try {
+            itemRegistry.add(testItem);
+            registerService(customHli);
+            // Configure VoiceManager configuration to use this HLI and have a base system prompt
+            Dictionary<String, Object> config = new Hashtable<>();
+            config.put("defaultHLI", "customHli");
+            config.put("systemPrompt", "You are an assistant.");
+            ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
+            Configuration configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
+            configuration.update(config);
+
+            // Wait until the configuration update is effective
+            waitForAssert(() -> {
+                try {
+                    voiceManager.interpret("hello", new InterpretationArguments("customHli", "", "", "", null));
+                } catch (InterpretationException e) {
+                    throw new AssertionError(e);
+                }
+                assertNotNull(capturedPrompt[0]);
+                assertTrue(capturedPrompt[0].contains("You are an assistant."));
+                assertTrue(capturedPrompt[0].contains("Available items:"));
+                assertTrue(capturedPrompt[0].contains("TestSwitch"));
+                assertTrue(capturedPrompt[0].contains("Test Switch Label"));
+            });
+        } finally {
+            // Clean up item and service
+            itemRegistry.remove("TestSwitch");
+        }
     }
 }

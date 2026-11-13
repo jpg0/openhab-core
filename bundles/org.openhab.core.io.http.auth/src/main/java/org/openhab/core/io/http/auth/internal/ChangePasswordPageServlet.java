@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,8 +13,10 @@
 package org.openhab.core.io.http.auth.internal;
 
 import java.io.IOException;
+import java.io.Serial;
 import java.util.Map;
 
+import javax.servlet.Servlet;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -29,12 +31,9 @@ import org.openhab.core.i18n.LocaleProvider;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
-import org.osgi.service.http.HttpService;
-import org.osgi.service.http.NamespaceException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.osgi.service.http.whiteboard.propertytypes.HttpWhiteboardServletName;
+import org.osgi.service.http.whiteboard.propertytypes.HttpWhiteboardServletPattern;
 
 /**
  * A servlet serving a page allowing users to change their password, after confirming their identity by signing in.
@@ -43,23 +42,20 @@ import org.slf4j.LoggerFactory;
  *
  */
 @NonNullByDefault
-@Component(immediate = true)
+@Component(immediate = true, service = Servlet.class)
+@HttpWhiteboardServletName(ChangePasswordPageServlet.SERVLET_PATH)
+@HttpWhiteboardServletPattern(ChangePasswordPageServlet.SERVLET_PATH + "/*")
 public class ChangePasswordPageServlet extends AbstractAuthPageServlet {
 
+    public static final String SERVLET_PATH = "/changePassword";
+
+    @Serial
     private static final long serialVersionUID = 5340598701104679843L;
 
-    private final Logger logger = LoggerFactory.getLogger(ChangePasswordPageServlet.class);
-
     @Activate
-    public ChangePasswordPageServlet(BundleContext bundleContext, @Reference HttpService httpService,
-            @Reference UserRegistry userRegistry, @Reference AuthenticationProvider authProvider,
-            @Reference LocaleProvider localeProvider) {
-        super(bundleContext, httpService, userRegistry, authProvider, localeProvider);
-        try {
-            httpService.registerServlet("/changePassword", this, null, null);
-        } catch (NamespaceException | ServletException e) {
-            logger.error("Error during change password page registration: {}", e.getMessage());
-        }
+    public ChangePasswordPageServlet(BundleContext bundleContext, @Reference UserRegistry userRegistry,
+            @Reference AuthenticationProvider authProvider, @Reference LocaleProvider localeProvider) {
+        super(bundleContext, userRegistry, authProvider, localeProvider);
     }
 
     @Override
@@ -161,10 +157,5 @@ public class ChangePasswordPageServlet extends AbstractAuthPageServlet {
         hiddenFormFields += "<input type=\"hidden\" name=\"csrf_token\" value=\"" + csrfToken + "\">";
 
         return hiddenFormFields;
-    }
-
-    @Deactivate
-    public void deactivate() {
-        httpService.unregister("/changePassword");
     }
 }

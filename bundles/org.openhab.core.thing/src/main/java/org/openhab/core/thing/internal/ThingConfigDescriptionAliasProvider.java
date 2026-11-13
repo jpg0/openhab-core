@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -66,14 +66,11 @@ public class ThingConfigDescriptionAliasProvider implements ConfigDescriptionAli
             return null;
         }
 
-        switch (uri.getScheme()) {
-            case "thing":
-                return getThingConfigDescriptionURI(uri);
-            case "channel":
-                return getChannelConfigDescriptionURI(uri);
-            default:
-                return null;
-        }
+        return switch (uri.getScheme()) {
+            case "thing" -> getThingConfigDescriptionURI(uri);
+            case "channel" -> getChannelConfigDescriptionURI(uri);
+            default -> null;
+        };
     }
 
     private @Nullable URI getThingConfigDescriptionURI(URI uri) {
@@ -88,10 +85,8 @@ public class ThingConfigDescriptionAliasProvider implements ConfigDescriptionAli
         if (thingType == null) {
             return null;
         }
-
         // Get the config description URI for this thing type
-        URI configURI = thingType.getConfigDescriptionURI();
-        return configURI;
+        return thingType.getConfigDescriptionURI();
     }
 
     private @Nullable URI getChannelConfigDescriptionURI(URI uri) {
@@ -108,7 +103,7 @@ public class ThingConfigDescriptionAliasProvider implements ConfigDescriptionAli
             return null;
         }
 
-        Channel channel = thing.getChannel(channelUID.getId());
+        Channel channel = thing.getChannel(channelUID);
         if (channel == null) {
             return null;
         }
@@ -117,9 +112,7 @@ public class ThingConfigDescriptionAliasProvider implements ConfigDescriptionAli
         if (channelType == null) {
             return null;
         }
-
         // Get the config description URI for this channel type
-        URI configURI = channelType.getConfigDescriptionURI();
-        return configURI;
+        return channelType.getConfigDescriptionURI();
     }
 }

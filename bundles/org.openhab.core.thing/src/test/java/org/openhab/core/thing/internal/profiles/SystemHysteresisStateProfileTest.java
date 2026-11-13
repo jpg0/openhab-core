@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,7 +18,6 @@ import static org.mockito.Mockito.*;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -77,7 +76,7 @@ public class SystemHysteresisStateProfileTest {
             this.commands = (List<Command>) sources;
             this.resultingCommands = new ArrayList<>(results.size());
             results.forEach(result -> {
-                resultingCommands.add(result instanceof Command ? (Command) result : null);
+                resultingCommands.add(result instanceof Command c ? c : null);
             });
             this.lower = lower;
             this.upper = upper;
@@ -85,7 +84,7 @@ public class SystemHysteresisStateProfileTest {
     }
 
     public static Collection<Object[]> parameters() {
-        return Arrays.asList(new Object[][] { //
+        return List.of(new Object[][] { //
                 // lower bound = upper bound = 10, one state update / command (PercentType)
                 { new ParameterSet(List.of(PercentType.HUNDRED), List.of(OnOffType.ON), BigDecimal.TEN, null) }, //
                 { new ParameterSet(List.of(PERCENT_TYPE_TWENTY_FIVE), List.of(OnOffType.ON), BigDecimal.TEN, null) }, //
@@ -186,11 +185,31 @@ public class SystemHysteresisStateProfileTest {
 
     @Test
     public void testInvertedParameter() {
-        final StateProfile profile = initProfile(BigDecimal.TEN, null, true);
+        final StateProfile profile = initProfile(BigDecimal.TEN, null, true, false);
         verifySendCommand(profile, PercentType.HUNDRED, OnOffType.OFF);
+        verifySendCommand(profile, PERCENT_TYPE_TEN, OnOffType.ON);
         verifySendCommand(profile, PercentType.ZERO, OnOffType.ON);
         verifySendUpdate(profile, PercentType.HUNDRED, OnOffType.OFF);
+        verifySendUpdate(profile, PERCENT_TYPE_TEN, OnOffType.ON);
         verifySendUpdate(profile, PercentType.ZERO, OnOffType.ON);
+    }
+
+    @Test
+    public void testInvertedParameterExcludeItemState() {
+        final StateProfile profile = initProfile(BigDecimal.TEN, null, true, true);
+        verifySendCommand(profile, PercentType.HUNDRED, OnOffType.OFF);
+        verifySendCommand(profile, PERCENT_TYPE_TEN, OnOffType.OFF);
+        verifySendCommand(profile, PercentType.ZERO, OnOffType.ON);
+        verifySendUpdate(profile, PercentType.HUNDRED, OnOffType.OFF);
+        verifySendUpdate(profile, PERCENT_TYPE_TEN, OnOffType.OFF);
+        verifySendUpdate(profile, PercentType.ZERO, OnOffType.ON);
+    }
+
+    @Test
+    public void testExcludeItemStateParameter() {
+        final StateProfile profile = initProfile(BigDecimal.TEN, null, false, true);
+        verifySendCommand(profile, PERCENT_TYPE_TEN, OnOffType.ON);
+        verifySendUpdate(profile, PERCENT_TYPE_TEN, OnOffType.ON);
     }
 
     @ParameterizedTest
@@ -212,14 +231,16 @@ public class SystemHysteresisStateProfileTest {
     }
 
     private StateProfile initProfile(@Nullable Object lower, @Nullable Object upper) {
-        return initProfile(lower, upper, false);
+        return initProfile(lower, upper, false, false);
     }
 
-    private StateProfile initProfile(@Nullable Object lower, @Nullable Object upper, boolean inverted) {
+    private StateProfile initProfile(@Nullable Object lower, @Nullable Object upper, boolean inverted,
+            boolean excludeItemState) {
         final Map<String, @Nullable Object> properties = new HashMap<>(2);
-        properties.put("lower", lower);
-        properties.put("upper", upper);
-        properties.put("inverted", inverted);
+        properties.put(SystemHysteresisStateProfile.LOWER_PARAM, lower);
+        properties.put(SystemHysteresisStateProfile.UPPER_PARAM, upper);
+        properties.put(SystemHysteresisStateProfile.INVERTED_PARAM, inverted);
+        properties.put(SystemHysteresisStateProfile.EXCLUDE_ITEM_STATE_PARAM, excludeItemState);
         when(mockContext.getConfiguration()).thenReturn(new Configuration(properties));
         return new SystemHysteresisStateProfile(mockCallback, mockContext);
     }

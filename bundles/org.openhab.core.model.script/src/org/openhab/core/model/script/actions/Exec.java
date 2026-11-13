@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -34,7 +34,6 @@ public class Exec {
      *
      * @param commandLine
      *            the command line to execute
-     * @see http://www.peterfriese.de/running-applescript-from-java/
      */
     public static void executeCommandLine(String... commandLine) {
         ExecUtil.executeCommandLine(commandLine);
@@ -56,5 +55,4 @@ public class Exec {
     public static String executeCommandLine(Duration timeout, String... commandLine) {
         return ExecUtil.executeCommandLineAndWaitResponse(timeout, commandLine);
     }
-
 }

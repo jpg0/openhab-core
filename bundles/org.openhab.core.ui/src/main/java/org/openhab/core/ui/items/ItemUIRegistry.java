@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,18 +12,19 @@
  */
 package org.openhab.core.ui.items;
 
+import java.util.List;
+
 import javax.measure.Unit;
 
-import org.eclipse.emf.common.util.EList;
-import org.eclipse.emf.ecore.EObject;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.QuantityType;
-import org.openhab.core.model.sitemap.sitemap.LinkableWidget;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.sitemap.LinkableWidget;
+import org.openhab.core.sitemap.Parent;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Widget;
 import org.openhab.core.types.State;
 
 /**
@@ -33,9 +34,25 @@ import org.openhab.core.types.State;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Chris Jackson - Initial contribution
+ * @author Laurent Garnier - new method getIconColor
+ * @author Mark Herwege - new method getFormatPattern
+ * @author Laurent Garnier - new method getConditionalIcon
+ * @author Danny Baumann - widget label source support
+ * @author Mark Herwege - Implement sitemap registry
+ * @author Mark Herwege - Add support for confirmation dialog for commands
  */
 @NonNullByDefault
 public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
+    enum WidgetLabelSource {
+        /** Label is taken from widget definition in sitemap */
+        SITEMAP_WIDGET,
+        /** Label is taken from the widget's backing item definition */
+        ITEM_LABEL,
+        /** Label equals the widget's backing item name */
+        ITEM_NAME,
+        /** No suitable label source could be determined */
+        NONE
+    }
 
     /**
      * Retrieves the label for a widget.
@@ -53,6 +70,14 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
      */
     @Nullable
     String getLabel(Widget w);
+
+    /**
+     * Retrieves the label source for a widget.
+     *
+     * @param w the widget to retrieve the label source for
+     * @return the source the widget label is taken from
+     */
+    WidgetLabelSource getLabelSource(Widget w);
 
     /**
      * Retrieves the category for a widget.
@@ -91,9 +116,12 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
      *
      * This constructs a string out of the position of the sitemap, so if this
      * widget is the third child of a page linked from the fifth widget on the
-     * home screen, its id would be "0503". If the widget is dynamically created
-     * and not available in the sitemap, the name of its associated item is used
-     * instead.
+     * home screen, its id would be "1_42". The initial "1" before the "_"
+     * defines how many digits are used to code each index. Each index is 0 based.
+     * So the id of the 15th child of a page linked from the fifth widget on the
+     * home screen would be "2_0414".
+     * If the widget is dynamically created and not available in the sitemap,
+     * the name of its associated item is used instead.
      *
      * @param w the widget to get the id for
      * @return an id for this widget
@@ -104,10 +132,10 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
      * this should be used instead of Sitemap.getChildren() as the default
      * widgets have to be resolved to a concrete widget type.
      *
-     * @param w the sitemap to retrieve the children for
+     * @param sitemap the sitemap to retrieve the children for
      * @return the children of the sitemap
      */
-    EList<Widget> getChildren(Sitemap sitemap);
+    List<Widget> getChildren(Sitemap sitemap);
 
     /**
      * this should be used instead of LinkableWidget.getChildren() as there
@@ -117,7 +145,7 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
      * @param w the widget to retrieve the children for
      * @return the (dynamically or statically defined) children of the widget
      */
-    EList<Widget> getChildren(LinkableWidget w);
+    List<Widget> getChildren(LinkableWidget w);
 
     /**
      * this should be used instead of Widget.eContainer() as as the concrete
@@ -127,7 +155,16 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
      * @return the parent of the widget
      */
     @Nullable
-    EObject getParent(Widget w);
+    Parent getParent(Widget w);
+
+    /**
+     * Gets the format pattern for the widget value, retrieved from widget label, item label or item state description
+     *
+     * @param w Widget
+     * @return String with the format pattern
+     */
+    @Nullable
+    String getFormatPattern(Widget w);
 
     /**
      * Gets the label color for the widget. Checks conditional statements to
@@ -150,12 +187,43 @@ public interface ItemUIRegistry extends ItemRegistry, ItemUIProvider {
     String getValueColor(Widget w);
 
     /**
+     * Gets the icon color for the widget. Checks conditional statements to
+     * find the color based on the item value
+     *
+     * @param w Widget
+     * @return String with the color
+     */
+    @Nullable
+    String getIconColor(Widget w);
+
+    /**
+     * Gets the icon for the widget. Checks conditional statements to
+     * find the icon based on the item value
+     *
+     * @param w Widget
+     * @return the icon reference or null in case no conditional statement is defined or no conditional statement is
+     *         fulfilled.
+     */
+    @Nullable
+    String getConditionalIcon(Widget w);
+
+    /**
      * Gets the widget visibility based on the item state
      *
      * @param w Widget
      * @return true if the item is visible
      */
     boolean getVisiblity(Widget w);
+
+    /**
+     * Gets the widget confirm cmd message property based on the item state
+     *
+     * @param w Widget
+     * @return message to show in the confirmation dialog or null if no message is defined and no confirmation dialog
+     *         should be shown
+     */
+    @Nullable
+    String getCommandConfirmMessage(Widget w);
 
     /**
      * Gets the item state

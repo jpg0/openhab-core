@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,6 +19,9 @@ import java.util.Locale;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -30,6 +33,21 @@ import org.openhab.core.library.unit.Units;
  */
 @NonNullByDefault
 public class PercentTypeTest {
+
+    @Nullable
+    private static Locale initialLocale;
+
+    @BeforeAll
+    public static void setUpClass() {
+        initialLocale = Locale.getDefault();
+    }
+
+    @AfterAll
+    @SuppressWarnings("PMD.SetDefaultLocale")
+    public static void tearDownClass() {
+        // Set the default locale to its initial value.
+        Locale.setDefault(initialLocale);
+    }
 
     /**
      * Locales having a different decimal and grouping separators to test string parsing and generation.
@@ -46,6 +64,7 @@ public class PercentTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testKnownInvalidConstructors(Locale locale) {
         Locale.setDefault(locale);
 
@@ -77,15 +96,21 @@ public class PercentTypeTest {
         PercentType.valueOf(value);
     }
 
+    @Test
+    public void testLowerCaseExponents() {
+        assertEquals(PercentType.valueOf("1e2"), PercentType.valueOf("1E2"));
+        assertEquals(PercentType.valueOf("1.1e1"), PercentType.valueOf("1.1E1"));
+    }
+
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testLocalizedStringConstruction(Locale defaultLocale) {
         Locale.setDefault(defaultLocale);
 
         // Construction for each locale should always return the same result regardless of the current default locale
         Stream.of(Locale.ENGLISH, Locale.GERMAN).forEach(locale -> {
             char ds = DecimalFormatSymbols.getInstance(locale).getDecimalSeparator();
-            char gs = DecimalFormatSymbols.getInstance(locale).getGroupingSeparator();
 
             assertEquals(new PercentType("0"), new PercentType("0", locale));
             assertEquals(new PercentType("0.000"), new PercentType(String.format("0%s000", ds), locale));
@@ -95,12 +120,13 @@ public class PercentTypeTest {
             assertEquals(new PercentType("1"), new PercentType("1", locale));
             assertEquals(new PercentType("12"), new PercentType("12", locale));
             assertEquals(new PercentType("12.56"), new PercentType(String.format("12%s56", ds), locale));
-            assertEquals(new PercentType("100"), new PercentType(String.format("100", gs, gs), locale));
+            assertEquals(new PercentType("100"), new PercentType("100", locale));
         });
     }
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void negativeNumber(Locale defaultLocale) {
         Locale.setDefault(defaultLocale);
 
@@ -114,6 +140,7 @@ public class PercentTypeTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void moreThan100(Locale defaultLocale) {
         Locale.setDefault(defaultLocale);
 

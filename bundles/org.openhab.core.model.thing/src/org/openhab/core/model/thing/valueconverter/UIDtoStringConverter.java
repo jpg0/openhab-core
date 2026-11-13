@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,14 +12,11 @@
  */
 package org.openhab.core.model.thing.valueconverter;
 
-import java.util.Arrays;
-import java.util.stream.Collectors;
-
-import org.openhab.core.thing.UID;
 import org.eclipse.xtext.conversion.IValueConverter;
 import org.eclipse.xtext.conversion.ValueConverterException;
 import org.eclipse.xtext.nodemodel.INode;
 import org.eclipse.xtext.util.Strings;
+import org.openhab.core.thing.UID;
 
 /**
  * A {@link UIDtoStringConverter} is used to create {@link UID} string
@@ -30,14 +27,14 @@ import org.eclipse.xtext.util.Strings;
  */
 public class UIDtoStringConverter implements IValueConverter<String> {
 
-    private static final String SEPERATOR = ":";
+    private static final String SEPARATOR = ":";
 
     @Override
     public String toValue(final String string, INode node) throws ValueConverterException {
         if (string == null) {
             return null;
         }
-        String[] ids = string.split(SEPERATOR);
+        String[] ids = string.split(SEPARATOR);
         for (int i = 0; i < ids.length; i++) {
             String id = ids[i];
             if (id != null && id.startsWith("\"") && id.endsWith("\"")) {
@@ -48,7 +45,7 @@ public class UIDtoStringConverter implements IValueConverter<String> {
                 }
             }
         }
-        return Arrays.stream(ids).collect(Collectors.joining(SEPERATOR));
+        return String.join(SEPARATOR, ids);
     }
 
     @Override
@@ -56,7 +53,7 @@ public class UIDtoStringConverter implements IValueConverter<String> {
         if (value == null) {
             throw new ValueConverterException("Value may not be null.", null, null);
         }
-        String[] ids = value.split(SEPERATOR);
+        String[] ids = value.split(SEPARATOR);
         for (int i = 0; i < ids.length; i++) {
             String id = ids[i];
             if (id != null && !id.matches("[A-Za-z0-9_]*")) {
@@ -65,7 +62,7 @@ public class UIDtoStringConverter implements IValueConverter<String> {
                 ids[i] = toEscapedString(id);
             }
         }
-        return Arrays.stream(ids).collect(Collectors.joining(SEPERATOR));
+        return String.join(SEPARATOR, ids);
     }
 
     protected String toEscapedString(String value) {

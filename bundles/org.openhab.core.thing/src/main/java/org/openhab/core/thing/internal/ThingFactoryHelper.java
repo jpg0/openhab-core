@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,6 +26,7 @@ import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingFactory;
 import org.openhab.core.thing.binding.builder.ChannelBuilder;
+import org.openhab.core.thing.type.AutoUpdatePolicy;
 import org.openhab.core.thing.type.ChannelDefinition;
 import org.openhab.core.thing.type.ChannelGroupDefinition;
 import org.openhab.core.thing.type.ChannelGroupType;
@@ -144,7 +145,7 @@ public class ThingFactoryHelper {
         return channelBuilder.withProperties(channelDefinition.getProperties()).build();
     }
 
-    static ChannelBuilder createChannelBuilder(ChannelUID channelUID, ChannelType channelType,
+    public static ChannelBuilder createChannelBuilder(ChannelUID channelUID, ChannelType channelType,
             ConfigDescriptionRegistry configDescriptionRegistry) {
         final ChannelBuilder channelBuilder = ChannelBuilder.create(channelUID, channelType.getItemType()) //
                 .withType(channelType.getUID()) //
@@ -168,13 +169,11 @@ public class ThingFactoryHelper {
         return channelBuilder;
     }
 
-    static ChannelBuilder createChannelBuilder(ChannelUID channelUID, ChannelDefinition channelDefinition,
+    public static ChannelBuilder createChannelBuilder(ChannelUID channelUID, ChannelDefinition channelDefinition,
             ConfigDescriptionRegistry configDescriptionRegistry) {
-        ChannelType channelType = withChannelTypeRegistry(channelTypeRegistry -> {
-            return (channelTypeRegistry != null)
-                    ? channelTypeRegistry.getChannelType(channelDefinition.getChannelTypeUID())
-                    : null;
-        });
+        ChannelType channelType = withChannelTypeRegistry(channelTypeRegistry -> (channelTypeRegistry != null)
+                ? channelTypeRegistry.getChannelType(channelDefinition.getChannelTypeUID())
+                : null);
         if (channelType == null) {
             logger.warn("Could not create channel '{}', because channel type '{}' could not be found.",
                     channelDefinition.getId(), channelDefinition.getChannelTypeUID());
@@ -186,12 +185,17 @@ public class ThingFactoryHelper {
             label = channelType.getLabel();
         }
 
+        AutoUpdatePolicy autoUpdatePolicy = channelDefinition.getAutoUpdatePolicy();
+        if (autoUpdatePolicy == null) {
+            autoUpdatePolicy = channelType.getAutoUpdatePolicy();
+        }
+
         final ChannelBuilder channelBuilder = ChannelBuilder.create(channelUID, channelType.getItemType()) //
                 .withType(channelType.getUID()) //
                 .withDefaultTags(channelType.getTags()) //
                 .withKind(channelType.getKind()) //
                 .withLabel(label) //
-                .withAutoUpdatePolicy(channelType.getAutoUpdatePolicy());
+                .withAutoUpdatePolicy(autoUpdatePolicy);
 
         String description = channelDefinition.getDescription();
         if (description == null) {

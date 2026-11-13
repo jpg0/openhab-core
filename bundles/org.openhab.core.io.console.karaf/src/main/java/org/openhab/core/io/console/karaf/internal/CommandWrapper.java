@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,10 +12,10 @@
  */
 package org.openhab.core.io.console.karaf.internal;
 
-import java.util.Arrays;
+import java.io.PrintStream;
 import java.util.List;
-import java.util.stream.Collectors;
 
+import org.apache.felix.service.command.Process;
 import org.apache.karaf.shell.api.action.Action;
 import org.apache.karaf.shell.api.action.lifecycle.Reference;
 import org.apache.karaf.shell.api.action.lifecycle.Service;
@@ -27,6 +27,7 @@ import org.apache.karaf.shell.api.console.Session;
 import org.openhab.core.io.console.Console;
 import org.openhab.core.io.console.ConsoleInterpreter;
 import org.openhab.core.io.console.extensions.ConsoleCommandExtension;
+import org.openhab.core.io.console.karaf.OSGiConsole;
 
 /**
  * This class wraps OH ConsoleCommandExtensions to commands for Apache Karaf
@@ -52,8 +53,8 @@ public class CommandWrapper implements Command, Action {
 
     /**
      * The constructor for the "help" instance of this class. This instance will be created by
-     * org.apache.karaf.shell.impl.action.command.ManagerImpl.instantiate(Class<? extends T>, Registry) and
-     * is used to print all usages from the `openhab` scope.
+     * {@code org.apache.karaf.shell.impl.action.command.ManagerImpl.instantiate(Class<? extends T>, Registry)} and
+     * is used to print all usages from the {@code openhab} scope.
      * The wrapped command is unused here because the karaf infrastructure will call the {@link #execute()} method.
      */
     public CommandWrapper() {
@@ -66,9 +67,9 @@ public class CommandWrapper implements Command, Action {
 
     @Override
     public Object execute(Session session, List<Object> argList) throws Exception {
-        String[] args = argList.stream().map(a -> a.toString()).collect(Collectors.toList()).toArray(new String[0]);
-
-        final Console console = new OSGiConsole(getScope());
+        String[] args = argList.stream().map(Object::toString).toArray(String[]::new);
+        PrintStream out = Process.Utils.current().out();
+        final Console console = new OSGiConsole(getScope(), out, session);
 
         if (args.length == 1 && "--help".equals(args[0])) {
             for (final String usage : command.getUsages()) {
@@ -81,8 +82,8 @@ public class CommandWrapper implements Command, Action {
     }
 
     @Override
-    public Completer getCompleter(boolean arg0) {
-        return null;
+    public Completer getCompleter(boolean scoped) {
+        return new CompleterWrapper(command, scoped);
     }
 
     @Override
@@ -114,7 +115,7 @@ public class CommandWrapper implements Command, Action {
         List<Command> commands = registry.getCommands();
         for (Command command : commands) {
             if (SCOPE.equals(command.getScope()) && command instanceof CommandWrapper) {
-                command.execute(null, Arrays.asList(new Object[] { "--help" }));
+                command.execute(null, List.of("--help"));
             }
         }
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,9 +12,7 @@
  */
 package org.openhab.core.automation.internal.module.handler;
 
-import java.util.Dictionary;
 import java.util.HashMap;
-import java.util.Hashtable;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,9 +25,15 @@ import org.openhab.core.automation.handler.TriggerHandlerCallback;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.events.TopicEventFilter;
+import org.openhab.core.events.TopicPrefixEventFilter;
+import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.events.GroupItemStateChangedEvent;
+import org.openhab.core.items.events.GroupStateUpdatedEvent;
+import org.openhab.core.items.events.ItemAddedEvent;
+import org.openhab.core.items.events.ItemRemovedEvent;
 import org.openhab.core.items.events.ItemStateChangedEvent;
-import org.openhab.core.items.events.ItemStateEvent;
+import org.openhab.core.items.events.ItemStateUpdatedEvent;
 import org.openhab.core.types.State;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceRegistration;
@@ -37,7 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This is an ModuleHandler implementation for Triggers which trigger the rule
+ * This is a ModuleHandler implementation for Triggers which trigger the rule
  * if an item state event occurs. The eventType and state value can be set with the
  * configuration.
  *
@@ -45,7 +49,7 @@ import org.slf4j.LoggerFactory;
  * @author Simon Merschjohann - Initial contribution
  */
 @NonNullByDefault
-public class ItemStateTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber, EventFilter {
+public class ItemStateTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber {
 
     public static final String UPDATE_MODULE_TYPE_ID = "core.ItemStateUpdateTrigger";
     public static final String CHANGE_MODULE_TYPE_ID = "core.ItemStateChangeTrigger";
@@ -59,26 +63,43 @@ public class ItemStateTriggerHandler extends BaseTriggerModuleHandler implements
     private final String itemName;
     private final @Nullable String state;
     private final String previousState;
+    private final String ruleUID;
     private Set<String> types;
     private final BundleContext bundleContext;
+    private final EventFilter eventFilter;
 
     private @Nullable ServiceRegistration<?> eventSubscriberRegistration;
 
-    public ItemStateTriggerHandler(Trigger module, BundleContext bundleContext) {
+    public ItemStateTriggerHandler(Trigger module, String ruleUID, BundleContext bundleContext,
+            ItemRegistry itemRegistry) {
         super(module);
         this.itemName = (String) module.getConfiguration().get(CFG_ITEMNAME);
+        boolean isWildcard = itemName.contains("?") || itemName.contains("*");
+        if (isWildcard) {
+            this.eventFilter = new TopicEventFilter(
+                    "^openhab/items/" + itemName.replace("?", ".?").replace("*", ".*?") + "/.*$");
+        } else {
+            this.eventFilter = new TopicPrefixEventFilter("openhab/items/" + itemName + "/");
+        }
         this.state = (String) module.getConfiguration().get(CFG_STATE);
         this.previousState = (String) module.getConfiguration().get(CFG_PREVIOUS_STATE);
+        this.ruleUID = ruleUID;
         if (UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
-            this.types = Set.of(ItemStateEvent.TYPE);
+            this.types = isWildcard ? Set.of(ItemStateUpdatedEvent.TYPE, GroupStateUpdatedEvent.TYPE)
+                    : Set.of(ItemStateUpdatedEvent.TYPE, GroupStateUpdatedEvent.TYPE, ItemAddedEvent.TYPE,
+                            ItemRemovedEvent.TYPE);
         } else {
-            this.types = Set.of(ItemStateChangedEvent.TYPE, GroupItemStateChangedEvent.TYPE);
+            this.types = isWildcard ? Set.of(ItemStateChangedEvent.TYPE, GroupItemStateChangedEvent.TYPE)
+                    : Set.of(ItemStateChangedEvent.TYPE, GroupItemStateChangedEvent.TYPE, ItemAddedEvent.TYPE,
+                            ItemRemovedEvent.TYPE);
         }
         this.bundleContext = bundleContext;
-        Dictionary<String, Object> properties = new Hashtable<>();
-        properties.put("event.topics", "openhab/items/" + itemName + "/*");
-        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this,
-                properties);
+        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this, null);
+
+        if (!isWildcard && itemRegistry.get(itemName) == null) {
+            logger.warn("Item '{}' needed for rule '{}' is missing. Trigger '{}' will not work.", itemName, ruleUID,
+                    module.getId());
+        }
     }
 
     @Override
@@ -88,29 +109,48 @@ public class ItemStateTriggerHandler extends BaseTriggerModuleHandler implements
 
     @Override
     public @Nullable EventFilter getEventFilter() {
-        return this;
+        return eventFilter;
     }
 
     @Override
     public void receive(Event event) {
+        if (event instanceof ItemAddedEvent addedEvent) {
+            if (itemName.equals(addedEvent.getItem().name)) {
+                logger.info("Item '{}' needed for rule '{}' added. Trigger '{}' will now work.", itemName, ruleUID,
+                        module.getId());
+                return;
+            }
+        } else if (event instanceof ItemRemovedEvent removedEvent) {
+            if (itemName.equals(removedEvent.getItem().name)) {
+                logger.warn("Item '{}' needed for rule '{}' removed. Trigger '{}' will no longer work.", itemName,
+                        ruleUID, module.getId());
+                return;
+            }
+        }
+
         ModuleHandlerCallback callback = this.callback;
         if (callback != null) {
             logger.trace("Received Event: Source: {} Topic: {} Type: {}  Payload: {}", event.getSource(),
                     event.getTopic(), event.getType(), event.getPayload());
-            Map<String, Object> values = new HashMap<>();
-            if (event instanceof ItemStateEvent && UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
+            Map<String, @Nullable Object> values = new HashMap<>();
+            if (event instanceof ItemStateUpdatedEvent updatedEvent
+                    && UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
                 String state = this.state;
-                State itemState = ((ItemStateEvent) event).getItemState();
+                State itemState = updatedEvent.getItemState();
                 if ((state == null || state.equals(itemState.toFullString()))) {
                     values.put("state", itemState);
+                    values.put("lastStateUpdate", updatedEvent.getLastStateUpdate());
                 }
-            } else if (event instanceof ItemStateChangedEvent && CHANGE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
-                State itemState = ((ItemStateChangedEvent) event).getItemState();
-                State oldItemState = ((ItemStateChangedEvent) event).getOldItemState();
+            } else if (event instanceof ItemStateChangedEvent changedEvent
+                    && CHANGE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
+                State itemState = changedEvent.getItemState();
+                State oldItemState = changedEvent.getOldItemState();
 
                 if (stateMatches(this.state, itemState) && stateMatches(this.previousState, oldItemState)) {
                     values.put("oldState", oldItemState);
                     values.put("newState", itemState);
+                    values.put("lastStateUpdate", changedEvent.getLastStateUpdate());
+                    values.put("lastStateChange", changedEvent.getLastStateChange());
                 }
             }
             if (!values.isEmpty()) {
@@ -139,11 +179,5 @@ public class ItemStateTriggerHandler extends BaseTriggerModuleHandler implements
             eventSubscriberRegistration.unregister();
             eventSubscriberRegistration = null;
         }
-    }
-
-    @Override
-    public boolean apply(Event event) {
-        logger.trace("->FILTER: {}:{}", event.getTopic(), itemName);
-        return event.getTopic().contains("openhab/items/" + itemName + "/");
     }
 }

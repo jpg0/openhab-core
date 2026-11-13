@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,10 +22,10 @@ import java.util.Hashtable;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.openhab.core.voice.internal.HumanLanguageInterpreterStub;
-import org.openhab.core.voice.internal.TTSServiceStub;
-import org.openhab.core.voice.internal.VoiceManagerImpl;
-import org.openhab.core.voice.internal.VoiceStub;
+import org.openhab.core.voice.internal.VoiceConfigurationConstants;
+import org.openhab.core.voice.text.HumanLanguageInterpreterStub;
+import org.openhab.core.voice.tts.TTSServiceStub;
+import org.openhab.core.voice.tts.VoiceStub;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 
@@ -51,6 +51,7 @@ public class InterpretCommandTest extends VoiceConsoleCommandExtensionTest {
 
     @BeforeEach
     public void setUp() throws IOException, InterruptedException {
+        registerVolatileStorageService();
         ttsService = new TTSServiceStub();
         hliStub = new HumanLanguageInterpreterStub();
         voice = new VoiceStub();
@@ -64,7 +65,7 @@ public class InterpretCommandTest extends VoiceConsoleCommandExtensionTest {
         config.put(CONFIG_DEFAULT_HLI, hliStub.getId());
         config.put(CONFIG_DEFAULT_VOICE, voice.getUID());
         ConfigurationAdmin configAdmin = super.getService(ConfigurationAdmin.class);
-        Configuration configuration = configAdmin.getConfiguration(VoiceManagerImpl.CONFIGURATION_PID);
+        Configuration configuration = configAdmin.getConfiguration(VoiceConfigurationConstants.CONFIGURATION_PID);
         configuration.update(config);
     }
 

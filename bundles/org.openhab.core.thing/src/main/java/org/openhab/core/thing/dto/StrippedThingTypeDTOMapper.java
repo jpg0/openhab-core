@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,10 +19,11 @@ import org.openhab.core.thing.type.BridgeType;
 import org.openhab.core.thing.type.ThingType;
 
 /**
- * The {@link StrippedThingTypeDTOMapper} is an utility class to map things into stripped thing type data transfer
+ * The {@link StrippedThingTypeDTOMapper} is a utility class to map things into stripped thing type data transfer
  * objects (DTOs).
  *
  * @author Miki Jankov - Initial contribution
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class StrippedThingTypeDTOMapper {
@@ -36,6 +37,6 @@ public class StrippedThingTypeDTOMapper {
     public static StrippedThingTypeDTO map(ThingType thingType, Locale locale) {
         return new StrippedThingTypeDTO(thingType.getUID().toString(), thingType.getLabel(), thingType.getDescription(),
                 thingType.getCategory(), thingType.isListed(), thingType.getSupportedBridgeTypeUIDs(),
-                thingType instanceof BridgeType);
+                thingType instanceof BridgeType, thingType.getSemanticEquipmentTag());
     }
 }

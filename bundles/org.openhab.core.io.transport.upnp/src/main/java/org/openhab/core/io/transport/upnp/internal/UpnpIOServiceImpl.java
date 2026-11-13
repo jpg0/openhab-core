@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,7 @@ package org.openhab.core.io.transport.upnp.internal;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,6 +24,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.eclipse.jdt.annotation.Nullable;
 import org.jupnp.UpnpService;
 import org.jupnp.controlpoint.ActionCallback;
 import org.jupnp.controlpoint.ControlPoint;
@@ -32,6 +34,7 @@ import org.jupnp.model.action.ActionException;
 import org.jupnp.model.action.ActionInvocation;
 import org.jupnp.model.gena.CancelReason;
 import org.jupnp.model.gena.GENASubscription;
+import org.jupnp.model.gena.RemoteGENASubscription;
 import org.jupnp.model.message.UpnpResponse;
 import org.jupnp.model.meta.Action;
 import org.jupnp.model.meta.Device;
@@ -118,14 +121,31 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
                     if (cp != null) {
                         final UpnpSubscriptionCallback callback = new UpnpSubscriptionCallback(service,
                                 subscription.getActualDurationSeconds());
-                        cp.execute(callback);
+                        if (subscriptionCallbacks.replace(service, this, callback)) {
+                            cp.execute(callback);
+                        }
                     }
                 }
             }
         }
 
+        private boolean isTracked() {
+            return equals(subscriptionCallbacks.get(getService()));
+        }
+
+        @Override
+        public synchronized void run() {
+            if (isTracked()) {
+                super.run();
+            }
+        }
+
         @Override
         protected void established(GENASubscription subscription) {
+            if (!isTracked()) {
+                removeFromRegistry(subscription);
+                return;
+            }
             Device deviceRoot = subscription.getService().getDevice().getRoot();
             String serviceId = subscription.getService().getServiceId().getId();
 
@@ -147,18 +167,20 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
         @Override
         protected void eventReceived(GENASubscription sub) {
             Map<String, StateVariableValue> values = sub.getCurrentValues();
-            Device deviceRoot = sub.getService().getDevice().getRoot();
+            Device device = sub.getService().getDevice();
             String serviceId = sub.getService().getServiceId().getId();
 
             logger.trace("Receiving a GENA subscription '{}' response for device '{}'", serviceId,
-                    deviceRoot.getIdentity().getUdn());
+                    device.getIdentity().getUdn());
+
             for (UpnpIOParticipant participant : participants) {
-                if (Objects.equals(getDevice(participant), deviceRoot)) {
-                    for (String stateVariable : values.keySet()) {
-                        StateVariableValue value = values.get(stateVariable);
-                        if (value.getValue() != null) {
+                Device participantDevice = getDevice(participant);
+                if (Objects.equals(participantDevice, device) || Objects.equals(participantDevice, device.getRoot())) {
+                    for (Entry<String, StateVariableValue> entry : values.entrySet()) {
+                        Object value = entry.getValue().getValue();
+                        if (value != null) {
                             try {
-                                participant.onValueReceived(stateVariable, value.getValue().toString(), serviceId);
+                                participant.onValueReceived(entry.getKey(), value.toString(), serviceId);
                             } catch (Exception e) {
                                 logger.error("Participant threw an exception onValueReceived", e);
                             }
@@ -215,7 +237,7 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
     }
 
     private Device getDevice(UpnpIOParticipant participant) {
-        return upnpService.getRegistry().getDevice(new UDN(participant.getUDN()), true);
+        return upnpService.getRegistry().getDevice(new UDN(participant.getUDN()), false);
     }
 
     @Override
@@ -243,13 +265,13 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
     }
 
     private Service searchSubService(String serviceID, Device device) {
-        Service subService = findService(device, serviceID);
+        Service subService = findService(device, null, serviceID);
         if (subService == null) {
             // service not on the root device, we search the embedded devices as well
             Device[] embedded = device.getEmbeddedDevices();
             if (embedded != null) {
                 for (Device aDevice : embedded) {
-                    subService = findService(aDevice, serviceID);
+                    subService = findService(aDevice, null, serviceID);
                     if (subService != null) {
                         break;
                     }
@@ -269,11 +291,10 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
                     logger.trace("Removing an UPNP service subscription '{}' for particpant '{}'", serviceID,
                             participant.getUDN());
 
-                    UpnpSubscriptionCallback callback = subscriptionCallbacks.get(subService);
+                    UpnpSubscriptionCallback callback = subscriptionCallbacks.remove(subService);
                     if (callback != null) {
                         callback.end();
                     }
-                    subscriptionCallbacks.remove(subService);
                 } else {
                     logger.trace("Could not find service '{}' for device '{}'", serviceID,
                             device.getIdentity().getUdn());
@@ -288,6 +309,13 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
     @Override
     public Map<String, String> invokeAction(UpnpIOParticipant participant, String serviceID, String actionID,
             Map<String, String> inputs) {
+        return invokeAction(participant, null, serviceID, actionID, inputs);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Map<String, String> invokeAction(UpnpIOParticipant participant, @Nullable String namespace, String serviceID,
+            String actionID, Map<String, String> inputs) {
         Map<String, String> resultMap = new HashMap<>();
 
         if (serviceID != null && actionID != null && participant != null) {
@@ -295,14 +323,14 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
             Device device = getDevice(participant);
 
             if (device != null) {
-                Service service = findService(device, serviceID);
+                Service service = findService(device, namespace, serviceID);
                 if (service != null) {
                     Action action = service.getAction(actionID);
                     if (action != null) {
                         ActionInvocation invocation = new ActionInvocation(action);
                         if (inputs != null) {
-                            for (String variable : inputs.keySet()) {
-                                invocation.setInput(variable, inputs.get(variable));
+                            for (Entry<String, String> entry : inputs.entrySet()) {
+                                invocation.setInput(entry.getKey(), entry.getValue());
                             }
                         }
 
@@ -317,10 +345,11 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
 
                         Map<String, ActionArgumentValue> result = invocation.getOutputMap();
                         if (result != null) {
-                            for (String variable : result.keySet()) {
+                            for (Entry<String, ActionArgumentValue> entry : result.entrySet()) {
+                                String variable = entry.getKey();
                                 final ActionArgumentValue newArgument;
                                 try {
-                                    newArgument = result.get(variable);
+                                    newArgument = entry.getValue();
                                 } catch (final Exception ex) {
                                     logger.debug("An exception '{}' occurred, cannot get argument for variable '{}'",
                                             ex.getMessage(), variable);
@@ -353,7 +382,7 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
 
     @Override
     public boolean isRegistered(UpnpIOParticipant participant) {
-        return upnpService.getRegistry().getDevice(new UDN(participant.getUDN()), true) != null;
+        return upnpService.getRegistry().getDevice(new UDN(participant.getUDN()), false) != null;
     }
 
     @Override
@@ -383,9 +412,11 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
         }
     }
 
-    private Service findService(Device device, String serviceID) {
-        Service service = null;
-        String namespace = device.getType().getNamespace();
+    private Service findService(Device device, @Nullable String namespace, String serviceID) {
+        Service service;
+        if (namespace == null) {
+            namespace = device.getType().getNamespace();
+        }
         if (UDAServiceId.DEFAULT_NAMESPACE.equals(namespace)
                 || UDAServiceId.BROKEN_DEFAULT_NAMESPACE.equals(namespace)) {
             service = device.findService(new UDAServiceId(serviceID));
@@ -436,7 +467,7 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
             try {
                 Device device = getDevice(participant);
                 if (device != null) {
-                    Service service = findService(device, serviceID);
+                    Service service = findService(device, null, serviceID);
                     if (service != null) {
                         Action action = service.getAction(actionID);
                         if (action != null) {
@@ -507,6 +538,10 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
     @Override
     public void remoteDeviceAdded(Registry registry, RemoteDevice device) {
         informParticipants(device, true);
+
+        for (RemoteDevice childDevice : device.getEmbeddedDevices()) {
+            informParticipants(childDevice, true);
+        }
     }
 
     @Override
@@ -515,7 +550,47 @@ public class UpnpIOServiceImpl implements UpnpIOService, RegistryListener {
 
     @Override
     public void remoteDeviceRemoved(Registry registry, RemoteDevice device) {
+        dropSubscriptionsWithoutUnsubscribing(device);
+
         informParticipants(device, false);
+
+        for (RemoteDevice childDevice : device.getEmbeddedDevices()) {
+            informParticipants(childDevice, false);
+        }
+    }
+
+    private void dropSubscriptionsWithoutUnsubscribing(RemoteDevice removedDevice) {
+        for (Service service : subscriptionCallbacks.keySet()) {
+            if (removedDevice.equals(service.getDevice().getRoot())) {
+                UpnpSubscriptionCallback callback = subscriptionCallbacks.remove(service);
+                if (callback != null) {
+                    removeFromRegistry(callback.getSubscription());
+                    reportSubscriptionLost(service);
+                }
+            }
+        }
+    }
+
+    private void removeFromRegistry(@Nullable GENASubscription subscription) {
+        if (subscription instanceof RemoteGENASubscription remoteSubscription) {
+            upnpService.getRegistry().removeRemoteSubscription(remoteSubscription);
+        }
+    }
+
+    private void reportSubscriptionLost(Service service) {
+        String serviceId = service.getServiceId().getId();
+        String deviceUdn = service.getDevice().getIdentity().getUdn().getIdentifierString();
+        String rootUdn = service.getDevice().getRoot().getIdentity().getUdn().getIdentifierString();
+        for (UpnpIOParticipant participant : participants) {
+            String participantUdn = participant.getUDN();
+            if (deviceUdn.equals(participantUdn) || rootUdn.equals(participantUdn)) {
+                try {
+                    participant.onServiceSubscribed(serviceId, false);
+                } catch (Exception e) {
+                    logger.error("Participant threw an exception onServiceSubscribed", e);
+                }
+            }
+        }
     }
 
     @Override

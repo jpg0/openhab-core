@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.model.rule.scoping;
 
+import java.io.Serial;
 import java.util.HashMap;
 
 import org.eclipse.xtext.common.types.access.impl.Primitives;
@@ -32,10 +33,12 @@ import org.slf4j.LoggerFactory;
  * It allows for removing and updating classes in the cache when add-ons are installed or updated.
  *
  * @author Wouter Born - Initial contribution
+ * @author Dan Cunningham - Cache action classes instead of action service classes
  */
 @Component
 public class RulesClassCache extends HashMap<String, Class<?>> {
 
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private static RulesClassCache instance;
@@ -65,15 +68,15 @@ public class RulesClassCache extends HashMap<String, Class<?>> {
         return instance;
     }
 
-    private void updateCacheEntry(Object object) {
-        String key = object.getClass().getName();
-        put(key, object.getClass());
+    private void updateCacheEntry(Class<?> clazz) {
+        String key = clazz.getName();
+        put(key, clazz);
         logger.debug("Updated cache entry: {}", key);
     }
 
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     public void addActionService(ActionService actionService) {
-        updateCacheEntry(actionService);
+        updateCacheEntry(actionService.getActionClass());
     }
 
     public void removeActionService(ActionService actionService) {
@@ -81,7 +84,7 @@ public class RulesClassCache extends HashMap<String, Class<?>> {
 
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     public void addThingActions(ThingActions thingActions) {
-        updateCacheEntry(thingActions);
+        updateCacheEntry(thingActions.getClass());
     }
 
     public void removeThingActions(ThingActions thingActions) {

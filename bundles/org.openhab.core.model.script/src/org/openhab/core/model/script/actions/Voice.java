@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,8 @@
  */
 package org.openhab.core.model.script.actions;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -23,11 +25,12 @@ import org.openhab.core.library.types.PercentType;
 import org.openhab.core.model.script.engine.action.ActionDoc;
 import org.openhab.core.model.script.engine.action.ParamDoc;
 import org.openhab.core.model.script.internal.engine.action.VoiceActionService;
-import org.openhab.core.voice.KSService;
-import org.openhab.core.voice.STTService;
-import org.openhab.core.voice.TTSService;
+import org.openhab.core.voice.dialog.trigger.ks.KSService;
+import org.openhab.core.voice.stt.STTService;
 import org.openhab.core.voice.text.HumanLanguageInterpreter;
+import org.openhab.core.voice.text.InterpretationArguments;
 import org.openhab.core.voice.text.InterpretationException;
+import org.openhab.core.voice.tts.TTSService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +72,12 @@ public class Voice {
         say(text, null, null, volume);
     }
 
+    @ActionDoc(text = "says a given text with the default voice and the given volume")
+    public static void say(@ParamDoc(name = "text") Object text,
+            @ParamDoc(name = "volume", text = "volume in the range [0;1]") float volume) {
+        say(text, null, null, floatVolumeToPercentType(volume));
+    }
+
     /**
      * Says the given text with a given voice.
      *
@@ -99,6 +108,12 @@ public class Voice {
     public static void say(@ParamDoc(name = "text") Object text, @ParamDoc(name = "voice") @Nullable String voice,
             @ParamDoc(name = "volume", text = "the volume to be used") PercentType volume) {
         say(text, voice, null, volume);
+    }
+
+    @ActionDoc(text = "says a given text with a given voice and the given volume")
+    public static void say(@ParamDoc(name = "text") Object text, @ParamDoc(name = "voice") @Nullable String voice,
+            @ParamDoc(name = "volume", text = "volume in the range [0;1]") float volume) {
+        say(text, voice, null, floatVolumeToPercentType(volume));
     }
 
     /**
@@ -138,6 +153,13 @@ public class Voice {
         }
     }
 
+    @ActionDoc(text = "says a given text with a given voice and the given volume through the given sink")
+    public static void say(@ParamDoc(name = "text") Object text, @ParamDoc(name = "voice") @Nullable String voice,
+            @ParamDoc(name = "sink") @Nullable String sink,
+            @ParamDoc(name = "volume", text = "volume in the range [0;1]") float volume) {
+        say(text, voice, sink, floatVolumeToPercentType(volume));
+    }
+
     /**
      * Interprets the given text.
      *
@@ -148,7 +170,7 @@ public class Voice {
      */
     @ActionDoc(text = "interprets a given text by the default human language interpreter", returns = "human language response")
     public static String interpret(@ParamDoc(name = "text") Object text) {
-        return interpret(text, null);
+        return interpret(text, null, null, null);
     }
 
     /**
@@ -157,14 +179,35 @@ public class Voice {
      * In case of interpretation error, the error message is played using the default audio sink.
      *
      * @param text The text to interpret
-     * @param interpreter The Human Language Interpreter to be used
+     * @param interpreters Comma separated list of human language text interpreters to use
      */
-    @ActionDoc(text = "interprets a given text by a given human language interpreter", returns = "human language response")
+    @ActionDoc(text = "interprets a given text by given human language interpreter(s)", returns = "human language response")
     public static String interpret(@ParamDoc(name = "text") Object text,
-            @ParamDoc(name = "interpreter") @Nullable String interpreter) {
+            @ParamDoc(name = "interpreters") @Nullable String interpreters) {
+        return interpret(text, interpreters, null, null);
+    }
+
+    /**
+     * Interprets the given text with a given Human Language Interpreter.
+     *
+     * In case of interpretation error, the error message is played using the default audio sink.
+     *
+     * @param text The text to interpret
+     * @param interpreters Comma separated list of human language text interpreters to use
+     * @param conversationId The id of the conversation to use
+     * @param llmTools Comma separated list of LLM tools to use
+     */
+    @ActionDoc(text = "interprets a given text by given human language interpreter(s)", returns = "human language response")
+    public static String interpret(@ParamDoc(name = "text") Object text,
+            @ParamDoc(name = "interpreters") @Nullable String interpreters,
+            @ParamDoc(name = "conversationId") @Nullable String conversationId,
+            @ParamDoc(name = "llm-tools") @Nullable String llmTools) {
         String response;
         try {
-            response = VoiceActionService.voiceManager.interpret(text.toString(), interpreter);
+            response = VoiceActionService.voiceManager.interpret(text.toString(),
+                    new InterpretationArguments(Objects.requireNonNullElse(interpreters, ""),
+                            Objects.requireNonNullElse(conversationId, ""), Objects.requireNonNullElse(llmTools, "*"),
+                            null, null));
         } catch (InterpretationException e) {
             String message = Objects.requireNonNullElse(e.getMessage(), "");
             say(message);
@@ -180,15 +223,17 @@ public class Voice {
      * If sink parameter is null, the error message is simply not played.
      *
      * @param text The text to interpret
-     * @param interpreter The Human Language Interpreter to be used
+     * @param interpreters Comma separated list of human language text interpreters to use
      * @param sink The name of audio sink to be used to play the error message
      */
-    @ActionDoc(text = "interprets a given text by a given human language interpreter", returns = "human language response")
+    @ActionDoc(text = "interprets a given text by given human language interpreter(s) and using the given sink", returns = "human language response")
     public static String interpret(@ParamDoc(name = "text") Object text,
-            @ParamDoc(name = "interpreter") String interpreter, @ParamDoc(name = "sink") @Nullable String sink) {
+            @ParamDoc(name = "interpreters") @Nullable String interpreters,
+            @ParamDoc(name = "sink") @Nullable String sink) {
         String response;
         try {
-            response = VoiceActionService.voiceManager.interpret(text.toString(), interpreter);
+            response = VoiceActionService.voiceManager.interpret(text.toString(),
+                    new InterpretationArguments(interpreters != null ? interpreters : "", "", "", null, null));
         } catch (InterpretationException e) {
             String message = Objects.requireNonNullElse(e.getMessage(), "");
             if (sink != null) {
@@ -209,7 +254,7 @@ public class Voice {
     @ActionDoc(text = "starts dialog processing for a given audio source")
     public static void startDialog(@ParamDoc(name = "source") @Nullable String source,
             @ParamDoc(name = "sink") @Nullable String sink) {
-        startDialog(null, null, null, null, source, sink, null, null, null);
+        startDialog(null, null, null, null, null, source, sink, null, null, null);
     }
 
     /**
@@ -218,10 +263,13 @@ public class Voice {
      * @param ks the keyword spotting service to use or null to use the default service
      * @param stt the speech-to-text service to use or null to use the default service
      * @param tts the text-to-speech service to use or null to use the default service
-     * @param interpreter the human language text interpreter to use or null to use the default service
+     * @param voice the voice to use or null to use the default voice or any voice provided by the text-to-speech
+     *            service matching the locale
+     * @param interpreters comma separated list of human language text interpreters to use or null to use the default
+     *            service
      * @param source the name of audio source to use or null to use the default source
      * @param sink the name of audio sink to use or null to use the default sink
-     * @param Locale the locale to use or null to use the default locale
+     * @param locale the locale to use or null to use the default locale
      * @param keyword the keyword to use during keyword spotting or null to use the default keyword
      * @param listeningItem the item to switch ON while listening to a question
      */
@@ -229,71 +277,87 @@ public class Voice {
     public static void startDialog(@ParamDoc(name = "keyword spotting service") @Nullable String ks,
             @ParamDoc(name = "speech-to-text service") @Nullable String stt,
             @ParamDoc(name = "text-to-speech service") @Nullable String tts,
-            @ParamDoc(name = "interpreter") @Nullable String interpreter,
+            @ParamDoc(name = "voice") @Nullable String voice,
+            @ParamDoc(name = "interpreters") @Nullable String interpreters,
             @ParamDoc(name = "source") @Nullable String source, @ParamDoc(name = "sink") @Nullable String sink,
             @ParamDoc(name = "locale") @Nullable String locale, @ParamDoc(name = "keyword") @Nullable String keyword,
             @ParamDoc(name = "listening item") @Nullable String listeningItem) {
-        AudioSource audioSource = null;
+        var dialogContextBuilder = VoiceActionService.voiceManager.getDialogContextBuilder();
         if (source != null) {
-            audioSource = VoiceActionService.audioManager.getSource(source);
+            AudioSource audioSource = VoiceActionService.audioManager.getSource(source);
             if (audioSource == null) {
                 logger.warn("Failed starting dialog processing: audio source '{}' not found", source);
                 return;
             }
+            dialogContextBuilder.withSource(audioSource);
         }
-        KSService ksService = null;
         if (ks != null) {
-            ksService = VoiceActionService.voiceManager.getKS(ks);
+            KSService ksService = VoiceActionService.voiceManager.getKS(ks);
             if (ksService == null) {
                 logger.warn("Failed starting dialog processing: keyword spotting service '{}' not found", ks);
                 return;
             }
+            dialogContextBuilder.withKS(ksService);
         }
-        STTService sttService = null;
+        if (keyword != null) {
+            dialogContextBuilder.withKeyword(keyword);
+        }
         if (stt != null) {
-            sttService = VoiceActionService.voiceManager.getSTT(stt);
+            STTService sttService = VoiceActionService.voiceManager.getSTT(stt);
             if (sttService == null) {
                 logger.warn("Failed starting dialog processing: speech-to-text service '{}' not found", stt);
                 return;
             }
+            dialogContextBuilder.withSTT(sttService);
         }
-        TTSService ttsService = null;
         if (tts != null) {
-            ttsService = VoiceActionService.voiceManager.getTTS(tts);
+            TTSService ttsService = VoiceActionService.voiceManager.getTTS(tts);
             if (ttsService == null) {
                 logger.warn("Failed starting dialog processing: text-to-speech service '{}' not found", tts);
                 return;
             }
+            dialogContextBuilder.withTTS(ttsService);
         }
-        HumanLanguageInterpreter hliService = null;
-        if (interpreter != null) {
-            hliService = VoiceActionService.voiceManager.getHLI(interpreter);
-            if (hliService == null) {
-                logger.warn("Failed starting dialog processing: interpreter '{}' not found", interpreter);
+        if (voice != null) {
+            org.openhab.core.voice.tts.Voice prefVoice = getVoice(voice);
+            if (prefVoice == null) {
+                logger.warn("Failed starting dialog processing: voice '{}' not found", voice);
                 return;
             }
+            dialogContextBuilder.withVoice(prefVoice);
         }
-        AudioSink audioSink = null;
+        if (interpreters != null) {
+            List<HumanLanguageInterpreter> hliServices = VoiceActionService.voiceManager.getHLIsByIds(interpreters);
+            if (hliServices.isEmpty()) {
+                logger.warn("Failed starting dialog processing: interpreters '{}' not found", interpreters);
+                return;
+            }
+            dialogContextBuilder.withHLIs(hliServices);
+        }
         if (sink != null) {
-            audioSink = VoiceActionService.audioManager.getSink(sink);
+            AudioSink audioSink = VoiceActionService.audioManager.getSink(sink);
             if (audioSink == null) {
                 logger.warn("Failed starting dialog processing: audio sink '{}' not found", sink);
                 return;
             }
+            dialogContextBuilder.withSink(audioSink);
         }
-        Locale loc = null;
+        if (listeningItem != null) {
+            dialogContextBuilder.withListeningItem(listeningItem);
+        }
         if (locale != null) {
             String[] split = locale.split("-");
+            Locale loc;
             if (split.length == 2) {
-                loc = new Locale(split[0], split[1]);
+                loc = Locale.of(split[0], split[1]);
             } else {
-                loc = new Locale(split[0]);
+                loc = Locale.of(split[0]);
             }
+            dialogContextBuilder.withLocale(loc);
         }
 
         try {
-            VoiceActionService.voiceManager.startDialog(ksService, sttService, ttsService, hliService, audioSource,
-                    audioSink, loc, keyword, listeningItem);
+            VoiceActionService.voiceManager.startDialog(dialogContextBuilder.build());
         } catch (IllegalStateException e) {
             logger.warn("Failed starting dialog processing: {}", e.getMessage());
         }
@@ -306,15 +370,15 @@ public class Voice {
      */
     @ActionDoc(text = "stops dialog processing for a given audio source")
     public static void stopDialog(@ParamDoc(name = "source") @Nullable String source) {
-        AudioSource audioSource = null;
-        if (source != null) {
-            audioSource = VoiceActionService.audioManager.getSource(source);
-            if (audioSource == null) {
-                logger.warn("Failed stopping dialog processing: audio source '{}' not found", source);
-                return;
-            }
-        }
         try {
+            AudioSource audioSource = null;
+            if (source != null) {
+                audioSource = VoiceActionService.audioManager.getSource(source);
+                if (audioSource == null) {
+                    logger.warn("Failed stopping dialog processing: audio source '{}' not found", source);
+                    return;
+                }
+            }
             VoiceActionService.voiceManager.stopDialog(audioSource);
         } catch (IllegalStateException e) {
             logger.warn("Failed stopping dialog processing: {}", e.getMessage());
@@ -331,7 +395,7 @@ public class Voice {
     @ActionDoc(text = "executes a simple dialog sequence without keyword spotting for a given audio source")
     public static void listenAndAnswer(@ParamDoc(name = "source") @Nullable String source,
             @ParamDoc(name = "sink") @Nullable String sink) {
-        listenAndAnswer(null, null, null, source, sink, null, null);
+        listenAndAnswer(null, null, null, null, source, sink, null, null);
     }
 
     /**
@@ -339,74 +403,107 @@ public class Voice {
      *
      * @param stt the speech-to-text service to use or null to use the default service
      * @param tts the text-to-speech service to use or null to use the default service
-     * @param interpreter the human language text interpreter to use or null to use the default service
+     * @param voice the voice to use or null to use the default voice or any voice provided by the text-to-speech
+     *            service matching the locale
+     * @param interpreters comma separated list of human language text interpreters to use or null to use the default
+     *            service
      * @param source the name of audio source to use or null to use the default source
      * @param sink the name of audio sink to use or null to use the default sink
-     * @param Locale the locale to use or null to use the default locale
+     * @param locale the locale to use or null to use the default locale
      * @param listeningItem the item to switch ON while listening to a question
      */
     @ActionDoc(text = "executes a simple dialog sequence without keyword spotting for a given audio source")
     public static void listenAndAnswer(@ParamDoc(name = "speech-to-text service") @Nullable String stt,
             @ParamDoc(name = "text-to-speech service") @Nullable String tts,
-            @ParamDoc(name = "interpreter") @Nullable String interpreter,
+            @ParamDoc(name = "voice") @Nullable String voice,
+            @ParamDoc(name = "interpreters") @Nullable String interpreters,
             @ParamDoc(name = "source") @Nullable String source, @ParamDoc(name = "sink") @Nullable String sink,
             @ParamDoc(name = "locale") @Nullable String locale,
             @ParamDoc(name = "listening item") @Nullable String listeningItem) {
-        AudioSource audioSource = null;
-        if (source != null) {
-            audioSource = VoiceActionService.audioManager.getSource(source);
-            if (audioSource == null) {
-                logger.warn("Failed executing simple dialog: audio source '{}' not found", source);
-                return;
-            }
-        }
-        STTService sttService = null;
-        if (stt != null) {
-            sttService = VoiceActionService.voiceManager.getSTT(stt);
-            if (sttService == null) {
-                logger.warn("Failed executing simple dialog: speech-to-text service '{}' not found", stt);
-                return;
-            }
-        }
-        TTSService ttsService = null;
-        if (tts != null) {
-            ttsService = VoiceActionService.voiceManager.getTTS(tts);
-            if (ttsService == null) {
-                logger.warn("Failed executing simple dialog: text-to-speech service '{}' not found", tts);
-                return;
-            }
-        }
-        HumanLanguageInterpreter hliService = null;
-        if (interpreter != null) {
-            hliService = VoiceActionService.voiceManager.getHLI(interpreter);
-            if (hliService == null) {
-                logger.warn("Failed executing simple dialog: interpreter '{}' not found", interpreter);
-                return;
-            }
-        }
-        AudioSink audioSink = null;
-        if (sink != null) {
-            audioSink = VoiceActionService.audioManager.getSink(sink);
-            if (audioSink == null) {
-                logger.warn("Failed executing simple dialog: audio sink '{}' not found", sink);
-                return;
-            }
-        }
-        Locale loc = null;
-        if (locale != null) {
-            String[] split = locale.split("-");
-            if (split.length == 2) {
-                loc = new Locale(split[0], split[1]);
-            } else {
-                loc = new Locale(split[0]);
-            }
-        }
-
         try {
-            VoiceActionService.voiceManager.listenAndAnswer(sttService, ttsService, hliService, audioSource, audioSink,
-                    loc, listeningItem);
+            var dialogContextBuilder = VoiceActionService.voiceManager.getDialogContextBuilder();
+            if (source != null) {
+                AudioSource audioSource = VoiceActionService.audioManager.getSource(source);
+                if (audioSource == null) {
+                    logger.warn("Failed executing simple dialog: audio source '{}' not found", source);
+                    return;
+                }
+                dialogContextBuilder.withSource(audioSource);
+            }
+            if (stt != null) {
+                STTService sttService = VoiceActionService.voiceManager.getSTT(stt);
+                if (sttService == null) {
+                    logger.warn("Failed executing simple dialog: speech-to-text service '{}' not found", stt);
+                    return;
+                }
+                dialogContextBuilder.withSTT(sttService);
+            }
+            if (tts != null) {
+                TTSService ttsService = VoiceActionService.voiceManager.getTTS(tts);
+                if (ttsService == null) {
+                    logger.warn("Failed executing simple dialog: text-to-speech service '{}' not found", tts);
+                    return;
+                }
+                dialogContextBuilder.withTTS(ttsService);
+            }
+            if (voice != null) {
+                org.openhab.core.voice.tts.Voice prefVoice = getVoice(voice);
+                if (prefVoice == null) {
+                    logger.warn("Failed executing simple dialog: voice '{}' not found", voice);
+                    return;
+                }
+                dialogContextBuilder.withVoice(prefVoice);
+            }
+            if (interpreters != null) {
+                List<HumanLanguageInterpreter> hliServices = VoiceActionService.voiceManager.getHLIsByIds(interpreters);
+                if (hliServices.isEmpty()) {
+                    logger.warn("Failed executing simple dialog: interpreters '{}' not found", interpreters);
+                    return;
+                }
+                dialogContextBuilder.withHLIs(hliServices);
+            }
+            if (sink != null) {
+                AudioSink audioSink = VoiceActionService.audioManager.getSink(sink);
+                if (audioSink == null) {
+                    logger.warn("Failed executing simple dialog: audio sink '{}' not found", sink);
+                    return;
+                }
+                dialogContextBuilder.withSink(audioSink);
+            }
+            if (listeningItem != null) {
+                dialogContextBuilder.withListeningItem(listeningItem);
+            }
+            if (locale != null) {
+                Locale loc;
+                String[] split = locale.split("-");
+                if (split.length == 2) {
+                    loc = Locale.of(split[0], split[1]);
+                } else {
+                    loc = Locale.of(split[0]);
+                }
+                dialogContextBuilder.withLocale(loc);
+            }
+            VoiceActionService.voiceManager.listenAndAnswer(dialogContextBuilder.build());
         } catch (IllegalStateException e) {
             logger.warn("Failed executing simple dialog: {}", e.getMessage());
         }
+    }
+
+    private static org.openhab.core.voice.tts.@Nullable Voice getVoice(String id) {
+        return VoiceActionService.voiceManager.getAllVoices().stream().filter(voice -> voice.getUID().equals(id))
+                .findAny().orElse(null);
+    }
+
+    /**
+     * Converts a float volume to a {@link PercentType} volume and checks if float volume is in the [0;1] range.
+     * 
+     * @param volume
+     * @return
+     */
+    private static PercentType floatVolumeToPercentType(float volume) {
+        if (volume < 0 || volume > 1) {
+            throw new IllegalArgumentException("Volume value must be in the range [0;1]!");
+        }
+        return new PercentType(new BigDecimal(volume * 100f));
     }
 }

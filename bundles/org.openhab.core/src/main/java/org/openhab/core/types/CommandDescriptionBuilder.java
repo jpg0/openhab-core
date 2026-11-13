@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -48,7 +48,7 @@ public class CommandDescriptionBuilder {
      */
     public CommandDescription build() {
         CommandDescriptionImpl commandDescription = new CommandDescriptionImpl();
-        commandOptions.forEach(co -> commandDescription.addCommandOption(co));
+        commandOptions.forEach(commandDescription::addCommandOption);
         return commandDescription;
     }
 

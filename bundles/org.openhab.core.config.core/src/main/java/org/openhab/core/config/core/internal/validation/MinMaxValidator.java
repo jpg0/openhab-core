@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,6 +18,8 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.config.core.ConfigDescriptionParameter;
 import org.openhab.core.config.core.ConfigDescriptionParameter.Type;
+import org.openhab.core.config.core.ConfigUtil;
+import org.openhab.core.config.core.ParameterOption;
 import org.openhab.core.config.core.internal.validation.TypeIntrospections.TypeIntrospection;
 import org.openhab.core.config.core.validation.ConfigValidationMessage;
 
@@ -26,7 +28,7 @@ import org.openhab.core.config.core.validation.ConfigValidationMessage;
  * {@link ConfigDescriptionParameter}.
  *
  * @author Thomas Höfer - Initial contribution
- * @authod Chris Jackson - Allow options to be outside of min/max value
+ * @author Chris Jackson - Allow options to be outside of min/max value
  */
 @NonNullByDefault
 final class MinMaxValidator implements ConfigDescriptionParameterValidator {
@@ -37,26 +39,25 @@ final class MinMaxValidator implements ConfigDescriptionParameterValidator {
             return null;
         }
 
-        // Allow specified options to be outside of the min/max value
+        String normalizedValueString = ConfigUtil.normalizeType(value, parameter).toString();
+
+        // Allow specified options to be outside the min/max value
         // Option values are a string, so we can do a simple compare
-        if (parameter.getOptions().stream().map(o -> o.getValue()).anyMatch(v -> v.equals(value.toString()))) {
+        if (parameter.getOptions().stream().map(ParameterOption::getValue)
+                .anyMatch(v -> v.equals(normalizedValueString))) {
             return null;
         }
 
         TypeIntrospection typeIntrospection = TypeIntrospections.get(parameter.getType());
-        if (parameter.getMinimum() != null) {
-            BigDecimal min = parameter.getMinimum();
-            if (typeIntrospection.isMinViolated(value, min)) {
-                return createMinMaxViolationMessage(parameter.getName(), typeIntrospection.getMinViolationMessageKey(),
-                        min);
-            }
+        BigDecimal min = parameter.getMinimum();
+        if (min != null && typeIntrospection.isMinViolated(value, min)) {
+            return createMinMaxViolationMessage(parameter.getName(), typeIntrospection.getMinViolationMessageKey(),
+                    min);
         }
-        if (parameter.getMaximum() != null) {
-            BigDecimal max = parameter.getMaximum();
-            if (typeIntrospection.isMaxViolated(value, max)) {
-                return createMinMaxViolationMessage(parameter.getName(), typeIntrospection.getMaxViolationMessageKey(),
-                        max);
-            }
+        BigDecimal max = parameter.getMaximum();
+        if (max != null && typeIntrospection.isMaxViolated(value, max)) {
+            return createMinMaxViolationMessage(parameter.getName(), typeIntrospection.getMaxViolationMessageKey(),
+                    max);
         }
         return null;
     }

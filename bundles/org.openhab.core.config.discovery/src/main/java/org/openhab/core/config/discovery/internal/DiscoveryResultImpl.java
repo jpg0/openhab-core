@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,21 +12,21 @@
  */
 package org.openhab.core.config.discovery.internal;
 
+import java.time.Instant;
 import java.util.Collections;
-import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.AbstractUID;
 import org.openhab.core.config.discovery.DiscoveryResult;
-import org.openhab.core.config.discovery.DiscoveryResultBuilder;
 import org.openhab.core.config.discovery.DiscoveryResultFlag;
-import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -35,15 +35,17 @@ import org.openhab.core.thing.ThingUID;
 @NonNullByDefault
 public class DiscoveryResultImpl implements DiscoveryResult {
 
+    private final transient Logger logger = LoggerFactory.getLogger(DiscoveryResultImpl.class);
+
     private @Nullable ThingUID bridgeUID;
     private @NonNullByDefault({}) ThingUID thingUID;
     private @Nullable ThingTypeUID thingTypeUID;
 
-    private Map<String, Object> properties = Collections.emptyMap();
+    private Map<String, Object> properties = Map.of();
     private @Nullable String representationProperty;
     private @NonNullByDefault({}) DiscoveryResultFlag flag;
     private @NonNullByDefault({}) String label;
-    private long timestamp;
+    private Instant timestamp = Instant.MIN;
     private long timeToLive = TTL_UNLIMITED;
 
     /**
@@ -59,22 +61,19 @@ public class DiscoveryResultImpl implements DiscoveryResult {
      * @param thingUID the {@link ThingUID} to be set. If a {@code Thing} disappears and is discovered again, the same
      *            {@code Thing} ID must be created. A typical {@code Thing} ID could be the serial number. It's usually
      *            <i>not</i> a product name.
-     * @param bridgeUID the unique {@link Bridge} ID to be set
+     * @param bridgeUID the unique {@link org.openhab.core.thing.Bridge} ID to be set
      * @param properties the properties to be set
      * @param representationProperty the representationProperty to be set
      * @param label the human readable label to set
      * @param timeToLive time to live in seconds
      *
      * @throws IllegalArgumentException if the {@link ThingUID} is null or the time to live is less than 1
-     * @deprecated use {@link DiscoveryResultBuilder} instead.
+     * @deprecated use {@link org.openhab.core.config.discovery.DiscoveryResultBuilder} instead.
      */
     @Deprecated
     public DiscoveryResultImpl(@Nullable ThingTypeUID thingTypeUID, ThingUID thingUID, @Nullable ThingUID bridgeUID,
             @Nullable Map<String, Object> properties, @Nullable String representationProperty, @Nullable String label,
             long timeToLive) throws IllegalArgumentException {
-        if (thingUID == null) {
-            throw new IllegalArgumentException("The thing UID must not be null!");
-        }
         if (timeToLive < 1 && timeToLive != TTL_UNLIMITED) {
             throw new IllegalArgumentException("The ttl must not be 0 or negative!");
         }
@@ -82,11 +81,11 @@ public class DiscoveryResultImpl implements DiscoveryResult {
         this.thingUID = thingUID;
         this.thingTypeUID = thingTypeUID;
         this.bridgeUID = bridgeUID;
-        this.properties = properties == null ? Collections.emptyMap() : Collections.unmodifiableMap(properties);
+        this.properties = properties == null ? Map.of() : Collections.unmodifiableMap(properties);
         this.representationProperty = representationProperty;
         this.label = label == null ? "" : label;
 
-        this.timestamp = new Date().getTime();
+        this.timestamp = Instant.now();
         this.timeToLive = timeToLive;
 
         this.flag = DiscoveryResultFlag.NEW;
@@ -157,20 +156,27 @@ public class DiscoveryResultImpl implements DiscoveryResult {
             this.properties = sourceResult.getProperties();
             this.representationProperty = sourceResult.getRepresentationProperty();
             this.label = sourceResult.getLabel();
-            this.timestamp = new Date().getTime();
+            this.timestamp = Instant.now();
             this.timeToLive = sourceResult.getTimeToLive();
         }
     }
 
+    @SuppressWarnings({ "null", "unused" })
     @Override
     public void normalizePropertiesOnConfigDescription(List<String> configurationParameters) {
-        properties = properties.entrySet().stream().map(e -> {
-            if (!configurationParameters.contains(e.getKey())) {
-                return Map.entry(e.getKey(), String.valueOf(e.getValue()));
+        Map<String, Object> normalized = new HashMap<>();
+        properties.forEach((key, value) -> {
+            if (!configurationParameters.contains(key)) {
+                normalized.put(key, String.valueOf(value));
             } else {
-                return e;
+                if (value == null) {
+                    // Bindings may return null values for properties if not properly guarded. Warn about it.
+                    logger.warn("Discovery result '{}' has property '{}' with null value", thingUID, key);
+                }
+                normalized.put(key, value);
             }
-        }).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        });
+        properties = normalized;
     }
 
     /**
@@ -220,7 +226,7 @@ public class DiscoveryResultImpl implements DiscoveryResult {
     }
 
     @Override
-    public long getTimestamp() {
+    public Instant getCreationTime() {
         return timestamp;
     }
 

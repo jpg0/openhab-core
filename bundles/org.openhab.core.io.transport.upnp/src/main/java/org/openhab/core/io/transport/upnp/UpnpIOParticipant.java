@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,25 +22,25 @@ package org.openhab.core.io.transport.upnp;
 public interface UpnpIOParticipant {
 
     /** Get the UDN of the participant **/
-    public String getUDN();
+    String getUDN();
 
     /** Called when the UPNP IO service receives a {variable,value} tuple for the given UPNP service **/
-    public void onValueReceived(String variable, String value, String service);
+    void onValueReceived(String variable, String value, String service);
 
     /**
      * Called to notify if a GENA subscription succeeded or failed.
      *
      * @param service the UPnP service subscribed
-     * @param succeeded true if the subscription succeeded; false if failed
+     * @param succeeded true if the subscription succeeded; false if it failed or was dropped
      */
-    public void onServiceSubscribed(String service, boolean succeeded);
+    void onServiceSubscribed(String service, boolean succeeded);
 
     /**
      * Called when the UPNP IO service is unable to poll the UDN of the participant, given that
-     * a addStatusListener is registered.
+     * an addStatusListener is registered.
      *
      * @param status false, if the poll fails when the polling was previously successful; true if the poll succeeds
      *            when the polling was previously failing
      */
-    public void onStatusChanged(boolean status);
+    void onStatusChanged(boolean status);
 }

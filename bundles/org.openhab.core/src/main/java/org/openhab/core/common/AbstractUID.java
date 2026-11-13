@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,8 +13,8 @@
 package org.openhab.core.common;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -27,16 +27,16 @@ import org.eclipse.jdt.annotation.Nullable;
 @NonNullByDefault
 public abstract class AbstractUID {
 
-    public static final String SEGMENT_PATTERN = "[\\w-]*";
+    private static final Pattern SEGMENT_PATTERN = Pattern.compile("[\\w-]*");
     public static final String SEPARATOR = ":";
     private final List<String> segments;
     private String uid = "";
 
     /**
-     * Constructor must be public, otherwise it can not be called by subclasses from another package.
+     * Constructor must be protected, otherwise it can not be called by subclasses from another package.
      */
-    public AbstractUID() {
-        segments = Collections.emptyList();
+    protected AbstractUID() {
+        segments = List.of();
     }
 
     /**
@@ -45,17 +45,17 @@ public abstract class AbstractUID {
      *
      * @param uid uid in form a string
      */
-    public AbstractUID(String uid) {
+    protected AbstractUID(String uid) {
         this(splitToSegments(uid));
         this.uid = uid;
     }
 
     /**
-     * Creates a AbstractUID for a list of segments.
+     * Creates an AbstractUID for a list of segments.
      *
      * @param segments the id segments
      */
-    public AbstractUID(final String... segments) {
+    protected AbstractUID(final String... segments) {
         this(Arrays.asList(segments));
     }
 
@@ -64,19 +64,19 @@ public abstract class AbstractUID {
      *
      * @param segments segments
      */
-    public AbstractUID(List<String> segments) {
+    protected AbstractUID(List<String> segments) {
         int minNumberOfSegments = getMinimalNumberOfSegments();
         int numberOfSegments = segments.size();
         if (numberOfSegments < minNumberOfSegments) {
             throw new IllegalArgumentException(
-                    String.format("UID must have at least %d segments.", minNumberOfSegments));
+                    String.format("UID must have at least %d segments: %s", minNumberOfSegments, segments));
         }
         for (int i = 0; i < numberOfSegments; i++) {
             String segment = segments.get(i);
             validateSegment(segment, i, numberOfSegments);
         }
         if (segments.get(numberOfSegments - 1).isBlank()) {
-            throw new IllegalArgumentException("Last segment must not be blank.");
+            throw new IllegalArgumentException("Last segment must not be blank: " + segments);
         }
         this.segments = List.copyOf(segments);
     }
@@ -96,8 +96,12 @@ public abstract class AbstractUID {
         return segments.get(segment);
     }
 
+    public static boolean isValid(@Nullable String segment) {
+        return segment != null && SEGMENT_PATTERN.matcher(segment).matches();
+    }
+
     protected void validateSegment(String segment, int index, int length) {
-        if (!segment.matches(SEGMENT_PATTERN)) {
+        if (!isValid(segment)) {
             throw new IllegalArgumentException(String.format(
                     "ID segment '%s' contains invalid characters. Each segment of the ID must match the pattern %s.",
                     segment, SEGMENT_PATTERN));

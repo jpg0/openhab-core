@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -33,7 +33,8 @@ import org.mockito.quality.Strictness;
 import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioStream;
 import org.openhab.core.audio.ByteArrayAudioStream;
-import org.openhab.core.audio.FixedLengthAudioStream;
+import org.openhab.core.audio.utils.AudioSinkUtils;
+import org.openhab.core.audio.utils.AudioSinkUtilsImpl;
 import org.openhab.core.test.TestPortUtil;
 import org.openhab.core.test.TestServer;
 import org.openhab.core.test.java.JavaTest;
@@ -60,12 +61,13 @@ public abstract class AbstractAudioServletTest extends JavaTest {
     private @NonNullByDefault({}) HttpClient httpClient;
     private @NonNullByDefault({}) CompletableFuture<Boolean> serverStarted;
 
-    private @Mock @NonNullByDefault({}) HttpService httpServiceMock;
-    private @Mock @NonNullByDefault({}) HttpContext httpContextMock;
+    public @Mock @NonNullByDefault({}) HttpService httpServiceMock;
+    public @Mock @NonNullByDefault({}) HttpContext httpContextMock;
+    public AudioSinkUtils audioSinkUtils = new AudioSinkUtilsImpl();
 
     @BeforeEach
     public void setupServerAndClient() {
-        audioServlet = new AudioServlet(httpServiceMock, httpContextMock);
+        audioServlet = new AudioServlet(audioSinkUtils);
 
         ServletHolder servletHolder = new ServletHolder(audioServlet);
 
@@ -86,8 +88,9 @@ public abstract class AbstractAudioServletTest extends JavaTest {
         int bitDepth = 16;
         int bitRate = 1000;
         long frequency = 16384;
+        int channels = 1;
 
-        AudioFormat audioFormat = new AudioFormat(container, codec, true, bitDepth, bitRate, frequency);
+        AudioFormat audioFormat = new AudioFormat(container, codec, true, bitDepth, bitRate, frequency, channels);
 
         return new ByteArrayAudioStream(byteArray, audioFormat);
     }
@@ -95,6 +98,11 @@ public abstract class AbstractAudioServletTest extends JavaTest {
     protected ContentResponse getHttpResponse(AudioStream audioStream) throws Exception {
         String url = serveStream(audioStream);
         return getHttpRequest(url).send();
+    }
+
+    protected ContentResponse getHttpResponseWithAccept(AudioStream audioStream, String acceptHeader) throws Exception {
+        String url = serveStream(audioStream);
+        return getHttpRequest(url).header("Accept", acceptHeader).send();
     }
 
     protected String serveStream(AudioStream stream) throws Exception {
@@ -121,7 +129,7 @@ public abstract class AbstractAudioServletTest extends JavaTest {
 
         String path;
         if (timeInterval != null) {
-            path = audioServlet.serve((FixedLengthAudioStream) stream, timeInterval);
+            path = audioServlet.serve(stream, timeInterval);
         } else {
             path = audioServlet.serve(stream);
         }

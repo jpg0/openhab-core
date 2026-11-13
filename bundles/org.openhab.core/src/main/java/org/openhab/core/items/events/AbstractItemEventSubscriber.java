@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,9 +15,7 @@ package org.openhab.core.items.events;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 
 /**
@@ -33,7 +31,8 @@ import org.openhab.core.events.EventSubscriber;
 @NonNullByDefault
 public abstract class AbstractItemEventSubscriber implements EventSubscriber {
 
-    private final Set<String> subscribedEventTypes = Set.of(ItemStateEvent.TYPE, ItemCommandEvent.TYPE);
+    private final Set<String> subscribedEventTypes = Set.of(ItemStateEvent.TYPE, ItemCommandEvent.TYPE,
+            ItemTimeSeriesEvent.TYPE);
 
     @Override
     public Set<String> getSubscribedEventTypes() {
@@ -41,16 +40,13 @@ public abstract class AbstractItemEventSubscriber implements EventSubscriber {
     }
 
     @Override
-    public @Nullable EventFilter getEventFilter() {
-        return null;
-    }
-
-    @Override
     public void receive(Event event) {
-        if (event instanceof ItemStateEvent) {
-            receiveUpdate((ItemStateEvent) event);
-        } else if (event instanceof ItemCommandEvent) {
-            receiveCommand((ItemCommandEvent) event);
+        if (event instanceof ItemStateEvent stateEvent) {
+            receiveUpdate(stateEvent);
+        } else if (event instanceof ItemCommandEvent commandEvent) {
+            receiveCommand(commandEvent);
+        } else if (event instanceof ItemTimeSeriesEvent timeSeriesEvent) {
+            receiveTimeSeries(timeSeriesEvent);
         }
     }
 
@@ -72,5 +68,15 @@ public abstract class AbstractItemEventSubscriber implements EventSubscriber {
     protected void receiveUpdate(ItemStateEvent updateEvent) {
         // Default implementation: do nothing.
         // Can be implemented by subclass in order to handle item updates.
+    }
+
+    /**
+     * Callback method for receiving item timeseries events from the openHAB event bus.
+     *
+     * @param timeSeriesEvent the timeseries event
+     */
+    protected void receiveTimeSeries(ItemTimeSeriesEvent timeSeriesEvent) {
+        // Default implementation: do nothing.
+        // Can be implemented by subclass in order to handle timeseries updates.
     }
 }

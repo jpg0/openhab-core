@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,50 +12,54 @@
  */
 package org.openhab.core.ui.internal.components;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import org.eclipse.emf.common.util.EList;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.common.registry.AbstractProvider;
 import org.openhab.core.common.registry.RegistryChangeListener;
 import org.openhab.core.config.core.ConfigUtil;
-import org.openhab.core.model.core.EventType;
-import org.openhab.core.model.core.ModelRepositoryChangeListener;
-import org.openhab.core.model.sitemap.SitemapProvider;
-import org.openhab.core.model.sitemap.sitemap.LinkableWidget;
-import org.openhab.core.model.sitemap.sitemap.Mapping;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.SitemapFactory;
-import org.openhab.core.model.sitemap.sitemap.SitemapPackage;
-import org.openhab.core.model.sitemap.sitemap.Widget;
-import org.openhab.core.model.sitemap.sitemap.impl.ChartImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.ColorpickerImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.DefaultImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.FrameImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.GroupImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.ImageImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.ListImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.MappingImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.MapviewImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.SelectionImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.SetpointImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.SitemapImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.SliderImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.SwitchImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.TextImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.VideoImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.WebviewImpl;
-import org.openhab.core.model.sitemap.sitemap.impl.WidgetImpl;
+import org.openhab.core.sitemap.Button;
+import org.openhab.core.sitemap.Buttongrid;
+import org.openhab.core.sitemap.Chart;
+import org.openhab.core.sitemap.Colortemperaturepicker;
+import org.openhab.core.sitemap.Condition;
+import org.openhab.core.sitemap.Default;
+import org.openhab.core.sitemap.Image;
+import org.openhab.core.sitemap.Input;
+import org.openhab.core.sitemap.LinkableWidget;
+import org.openhab.core.sitemap.Mapping;
+import org.openhab.core.sitemap.Mapview;
+import org.openhab.core.sitemap.NestedSitemap;
+import org.openhab.core.sitemap.Parent;
+import org.openhab.core.sitemap.Rule;
+import org.openhab.core.sitemap.Selection;
+import org.openhab.core.sitemap.Setpoint;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Slider;
+import org.openhab.core.sitemap.Switch;
+import org.openhab.core.sitemap.Video;
+import org.openhab.core.sitemap.Webview;
+import org.openhab.core.sitemap.Widget;
+import org.openhab.core.sitemap.registry.ManagedSitemapProvider;
+import org.openhab.core.sitemap.registry.SitemapFactory;
+import org.openhab.core.sitemap.registry.SitemapProvider;
 import org.openhab.core.ui.components.RootUIComponent;
 import org.openhab.core.ui.components.UIComponent;
 import org.openhab.core.ui.components.UIComponentRegistry;
 import org.openhab.core.ui.components.UIComponentRegistryFactory;
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -68,69 +72,51 @@ import org.slf4j.LoggerFactory;
  * "system:sitemap" namespace.
  *
  * @author Yannick Schaus - Initial contribution
+ * @author Laurent Garnier - icon color support for all widgets
+ * @author Laurent Garnier - Added support for new element Buttongrid
+ * @author Laurent Garnier - Added icon field for mappings
+ * @author Mark Herwege - Make UI provided sitemaps compatible with enhanced syntax in conditions
+ * @author Mark Herwege - Add support for Button element
+ * @author Laurent Garnier - Added support for new sitemap element Colortemperaturepicker
+ * @author Mark Herwege - Implement sitemap registry
+ * @author Mark Herwege - Make provider managed and add support for adding/updating/removing sitemaps via the provider
+ *         interface
+ * @author Mark Herwege - Add support for nested sitemaps
+ * @author Mark Herwege - Add support for confirmation dialog for commands
  */
 @NonNullByDefault
-@Component(service = SitemapProvider.class)
-public class UIComponentSitemapProvider implements SitemapProvider, RegistryChangeListener<RootUIComponent> {
+@Component(service = { SitemapProvider.class, ManagedSitemapProvider.class }, immediate = true)
+public class UIComponentSitemapProvider extends AbstractProvider<Sitemap>
+        implements ManagedSitemapProvider, SitemapProvider, RegistryChangeListener<RootUIComponent> {
+
     private final Logger logger = LoggerFactory.getLogger(UIComponentSitemapProvider.class);
 
     public static final String SITEMAP_NAMESPACE = "system:sitemap";
 
-    private static final String SITEMAP_PREFIX = "uicomponents_";
-    private static final String SITEMAP_SUFFIX = ".sitemap";
+    private static final Pattern CONDITIONS_PREFIX = Pattern.compile("^(?:\"[^\"]*\"|==|!=|<=|>=|<|>|[^\"=])*");
+    private static final Pattern CONDITION_PATTERN = Pattern.compile(
+            "(?:(?<item>[a-zA-Z_][a-zA-Z0-9_]*)(?=(?:\\s+|==|!=|<=|>=|<|>)\\S))?\\s*(?<condition>==|!=|<=|>=|<|>)?\\s*(?<argument>\\\"[^\\\"]*\\\"|(\\+|-)?.+)");
+    private static final Pattern COMMANDS_PATTERN = Pattern.compile("^(?<cmd1>\"[^\"]*\"|[^\": ]*):(?<cmd2>.*)$");
 
     private Map<String, Sitemap> sitemaps = new HashMap<>();
     private @Nullable UIComponentRegistryFactory componentRegistryFactory;
     private @Nullable UIComponentRegistry sitemapComponentRegistry;
 
-    private final Set<ModelRepositoryChangeListener> modelChangeListeners = new CopyOnWriteArraySet<>();
+    private final SitemapFactory sitemapFactory;
+
+    @Activate
+    public UIComponentSitemapProvider(final @Reference SitemapFactory sitemapFactory) {
+        this.sitemapFactory = sitemapFactory;
+    }
 
     @Override
     public @Nullable Sitemap getSitemap(String sitemapName) {
-        buildSitemap(sitemapName.replaceFirst(SITEMAP_PREFIX, ""));
         return sitemaps.get(sitemapName);
     }
 
     @Override
     public Set<String> getSitemapNames() {
-        UIComponentRegistry registry = sitemapComponentRegistry;
-        if (registry == null) {
-            return Collections.emptySet();
-        }
-
-        sitemaps.clear();
-        Collection<RootUIComponent> rootComponents = registry.getAll();
-        // try building all sitemaps to leave the invalid ones out
-        for (RootUIComponent rootComponent : rootComponents) {
-            try {
-                Sitemap sitemap = buildSitemap(rootComponent);
-                sitemaps.put(sitemap.getName(), sitemap);
-            } catch (Exception e) {
-                logger.error("Cannot build sitemap {}", rootComponent.getUID(), e);
-            }
-        }
-
         return sitemaps.keySet();
-    }
-
-    protected @Nullable Sitemap buildSitemap(String sitemapName) {
-        UIComponentRegistry registry = sitemapComponentRegistry;
-        if (registry == null) {
-            return null;
-        }
-
-        RootUIComponent rootComponent = registry.get(sitemapName);
-        if (rootComponent != null) {
-            try {
-                Sitemap sitemap = buildSitemap(rootComponent);
-                sitemaps.put(sitemap.getName(), sitemap);
-                return null;
-            } catch (Exception e) {
-                logger.error("Cannot build sitemap {}", rootComponent.getUID(), e);
-            }
-        }
-
-        return null;
     }
 
     protected Sitemap buildSitemap(RootUIComponent rootComponent) {
@@ -138,145 +124,136 @@ public class UIComponentSitemapProvider implements SitemapProvider, RegistryChan
             throw new IllegalArgumentException("Root component type is not Sitemap");
         }
 
-        SitemapImpl sitemap = (SitemapImpl) SitemapFactory.eINSTANCE.createSitemap();
-        sitemap.setName(SITEMAP_PREFIX + rootComponent.getUID());
-        sitemap.setLabel(rootComponent.getConfig().get("label").toString());
+        Sitemap sitemap = sitemapFactory.createSitemap(rootComponent.getUID());
+        Object label = rootComponent.getConfig().get("label");
+        if (label != null) {
+            sitemap.setLabel(label.toString());
+        }
 
         if (rootComponent.getSlots() != null && rootComponent.getSlots().containsKey("widgets")) {
             for (UIComponent component : rootComponent.getSlot("widgets")) {
-                Widget widget = buildWidget(component);
+                Widget widget = buildWidget(component, sitemap);
                 if (widget != null) {
-                    sitemap.getChildren().add(widget);
+                    sitemap.getWidgets().add(widget);
                 }
             }
         }
+        sitemaps.put(sitemap.getName(), sitemap);
 
         return sitemap;
     }
 
-    protected @Nullable Widget buildWidget(UIComponent component) {
-        Widget widget = null;
+    protected @Nullable Widget buildWidget(UIComponent component, Parent parent) {
+        Widget widget = sitemapFactory.createWidget(component.getType(), parent);
 
-        switch (component.getType()) {
-            case "Frame":
-                FrameImpl frameWidget = (FrameImpl) SitemapFactory.eINSTANCE.createFrame();
-                widget = frameWidget;
+        if (widget == null) {
+            logger.warn("Unknown sitemap component type {}", component.getType());
+            return null;
+        }
+
+        boolean deprecatedButtonsDefinition = false;
+        switch (widget) {
+            case Image imageWidget:
+                setWidgetPropertyFromComponentConfig(imageWidget, component, "url");
+                setWidgetPropertyFromComponentConfig(imageWidget, component, "refresh");
                 break;
-            case "Text":
-                TextImpl textWidget = (TextImpl) SitemapFactory.eINSTANCE.createText();
-                widget = textWidget;
+            case Video videoWidget:
+                setWidgetPropertyFromComponentConfig(videoWidget, component, "url");
+                setWidgetPropertyFromComponentConfig(videoWidget, component, "encoding");
                 break;
-            case "Group":
-                GroupImpl groupWidget = (GroupImpl) SitemapFactory.eINSTANCE.createGroup();
-                widget = groupWidget;
+            case Chart chartWidget:
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "service");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "refresh");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "period");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "legend");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "forceAsItem");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "yAxisDecimalPattern");
+                setWidgetPropertyFromComponentConfig(chartWidget, component, "interpolation");
                 break;
-            case "Image":
-                ImageImpl imageWidget = (ImageImpl) SitemapFactory.eINSTANCE.createImage();
-                widget = imageWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "url", SitemapPackage.IMAGE__URL);
-                setWidgetPropertyFromComponentConfig(widget, component, "refresh", SitemapPackage.IMAGE__REFRESH);
+            case Webview webviewWidget:
+                setWidgetPropertyFromComponentConfig(webviewWidget, component, "height");
+                setWidgetPropertyFromComponentConfig(webviewWidget, component, "url");
                 break;
-            case "Video":
-                VideoImpl videoWidget = (VideoImpl) SitemapFactory.eINSTANCE.createVideo();
-                widget = videoWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "url", SitemapPackage.VIDEO__URL);
-                setWidgetPropertyFromComponentConfig(widget, component, "encoding", SitemapPackage.VIDEO__ENCODING);
-                break;
-            case "Chart":
-                ChartImpl chartWidget = (ChartImpl) SitemapFactory.eINSTANCE.createChart();
-                widget = chartWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "service", SitemapPackage.CHART__SERVICE);
-                setWidgetPropertyFromComponentConfig(widget, component, "refresh", SitemapPackage.CHART__REFRESH);
-                setWidgetPropertyFromComponentConfig(widget, component, "period", SitemapPackage.CHART__PERIOD);
-                setWidgetPropertyFromComponentConfig(widget, component, "legend", SitemapPackage.CHART__LEGEND);
-                setWidgetPropertyFromComponentConfig(widget, component, "forceAsItem",
-                        SitemapPackage.CHART__FORCE_AS_ITEM);
-                break;
-            case "Webview":
-                WebviewImpl webviewWidget = (WebviewImpl) SitemapFactory.eINSTANCE.createWebview();
-                widget = webviewWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "height", SitemapPackage.WEBVIEW__HEIGHT);
-                setWidgetPropertyFromComponentConfig(widget, component, "url", SitemapPackage.WEBVIEW__URL);
-                break;
-            case "Switch":
-                SwitchImpl switchWidget = (SwitchImpl) SitemapFactory.eINSTANCE.createSwitch();
+            case Switch switchWidget:
                 addWidgetMappings(switchWidget.getMappings(), component);
-                widget = switchWidget;
                 break;
-            case "Mapview":
-                MapviewImpl mapviewWidget = (MapviewImpl) SitemapFactory.eINSTANCE.createMapview();
-                widget = mapviewWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "height", SitemapPackage.WEBVIEW__HEIGHT);
+            case Mapview mapviewWidget:
+                setWidgetPropertyFromComponentConfig(mapviewWidget, component, "height");
                 break;
-            case "Slider":
-                SliderImpl sliderWidget = (SliderImpl) SitemapFactory.eINSTANCE.createSlider();
-                widget = sliderWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "minValue", SitemapPackage.SLIDER__MIN_VALUE);
-                setWidgetPropertyFromComponentConfig(widget, component, "maxValue", SitemapPackage.SLIDER__MAX_VALUE);
-                setWidgetPropertyFromComponentConfig(widget, component, "step", SitemapPackage.SLIDER__STEP);
-                setWidgetPropertyFromComponentConfig(widget, component, "switchEnabled",
-                        SitemapPackage.SLIDER__SWITCH_ENABLED);
-                setWidgetPropertyFromComponentConfig(widget, component, "sendFrequency",
-                        SitemapPackage.SLIDER__FREQUENCY);
+            case Slider sliderWidget:
+                setWidgetPropertyFromComponentConfig(sliderWidget, component, "minValue");
+                setWidgetPropertyFromComponentConfig(sliderWidget, component, "maxValue");
+                setWidgetPropertyFromComponentConfig(sliderWidget, component, "step");
+                setWidgetPropertyFromComponentConfig(sliderWidget, component, "switchEnabled");
+                setWidgetPropertyFromComponentConfig(sliderWidget, component, "releaseOnly");
                 break;
-            case "Selection":
-                SelectionImpl selectionWidget = (SelectionImpl) SitemapFactory.eINSTANCE.createSelection();
+            case Selection selectionWidget:
                 addWidgetMappings(selectionWidget.getMappings(), component);
-                widget = selectionWidget;
                 break;
-            case "List":
-                ListImpl listWidget = (ListImpl) SitemapFactory.eINSTANCE.createList();
-                widget = listWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "separator", SitemapPackage.LIST__SEPARATOR);
+            case Input inputWidget:
+                setWidgetPropertyFromComponentConfig(inputWidget, component, "inputHint");
                 break;
-            case "Setpoint":
-                SetpointImpl setpointWidget = (SetpointImpl) SitemapFactory.eINSTANCE.createSetpoint();
-                widget = setpointWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "minValue", SitemapPackage.SETPOINT__MIN_VALUE);
-                setWidgetPropertyFromComponentConfig(widget, component, "maxValue", SitemapPackage.SETPOINT__MAX_VALUE);
-                setWidgetPropertyFromComponentConfig(widget, component, "step", SitemapPackage.SETPOINT__STEP);
+            case Setpoint setpointWidget:
+                setWidgetPropertyFromComponentConfig(setpointWidget, component, "minValue");
+                setWidgetPropertyFromComponentConfig(setpointWidget, component, "maxValue");
+                setWidgetPropertyFromComponentConfig(setpointWidget, component, "step");
                 break;
-            case "Colorpicker":
-                ColorpickerImpl colorpickerWidget = (ColorpickerImpl) SitemapFactory.eINSTANCE.createColorpicker();
-                widget = colorpickerWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "frequency",
-                        SitemapPackage.COLORPICKER__FREQUENCY);
+            case Colortemperaturepicker colortemperaturepickerWidget:
+                setWidgetPropertyFromComponentConfig(colortemperaturepickerWidget, component, "minValue");
+                setWidgetPropertyFromComponentConfig(colortemperaturepickerWidget, component, "maxValue");
                 break;
-            case "Default":
-                DefaultImpl defaultWidget = (DefaultImpl) SitemapFactory.eINSTANCE.createDefault();
-                widget = defaultWidget;
-                setWidgetPropertyFromComponentConfig(widget, component, "height", SitemapPackage.DEFAULT__HEIGHT);
+            case Buttongrid buttongridWidget:
+                deprecatedButtonsDefinition = addWidgetButtons(buttongridWidget, component);
+                break;
+            case Button buttonWidget:
+                setWidgetPropertyFromComponentConfig(buttonWidget, component, "row");
+                setWidgetPropertyFromComponentConfig(buttonWidget, component, "column");
+                setWidgetPropertyFromComponentConfig(buttonWidget, component, "stateless");
+                setWidgetPropertyFromComponentConfig(buttonWidget, component, "cmd");
+                setWidgetPropertyFromComponentConfig(buttonWidget, component, "releaseCmd");
+                break;
+            case Default defaultWidget:
+                setWidgetPropertyFromComponentConfig(defaultWidget, component, "height");
+                break;
+            case NestedSitemap nestedSitemapWidget:
+                setWidgetPropertyFromComponentConfig(nestedSitemapWidget, component, "name");
                 break;
             default:
-                logger.warn("Unknown sitemap component type {}", component.getType());
                 break;
         }
 
-        if (widget != null) {
-            setWidgetPropertyFromComponentConfig(widget, component, "label", SitemapPackage.WIDGET__LABEL);
-            setWidgetPropertyFromComponentConfig(widget, component, "icon", SitemapPackage.WIDGET__ICON);
-            setWidgetPropertyFromComponentConfig(widget, component, "item", SitemapPackage.WIDGET__ITEM);
+        // In case deprecated button definition was encountered, the item is not set on the Buttongrid widget
+        if (!deprecatedButtonsDefinition) {
+            setWidgetPropertyFromComponentConfig(widget, component, "item");
+        }
+        setWidgetPropertyFromComponentConfig(widget, component, "label");
+        setWidgetPropertyFromComponentConfig(widget, component, "icon");
+        setWidgetPropertyFromComponentConfig(widget, component, "staticIcon");
+        setWidgetPropertyFromComponentConfig(widget, component, "confirmCmd");
 
-            if (widget instanceof LinkableWidget) {
-                LinkableWidget linkableWidget = (LinkableWidget) widget;
-                if (component.getSlots() != null && component.getSlots().containsKey("widgets")) {
-                    for (UIComponent childComponent : component.getSlot("widgets")) {
-                        Widget childWidget = buildWidget(childComponent);
-                        if (childWidget != null) {
-                            linkableWidget.getChildren().add(childWidget);
-                        }
+        if (widget instanceof LinkableWidget linkableWidget) {
+            if (component.getSlots() != null && component.getSlots().containsKey("widgets")) {
+                for (UIComponent childComponent : component.getSlot("widgets")) {
+                    Widget childWidget = buildWidget(childComponent, linkableWidget);
+                    if (childWidget != null) {
+                        linkableWidget.getWidgets().add(childWidget);
                     }
                 }
             }
-
-            // TODO: process visibility & color rules
         }
+
+        addWidgetRules(widget.getVisibility(), component, "visibility");
+        addWidgetRules(widget.getLabelColor(), component, "labelcolor");
+        addWidgetRules(widget.getValueColor(), component, "valuecolor");
+        addWidgetRules(widget.getIconColor(), component, "iconcolor");
+        addWidgetRules(widget.getIconRules(), component, "iconrules");
+        addWidgetRules(widget.getConfirmCmdRules(), component, "confirmcmdrules");
 
         return widget;
     }
 
     private void setWidgetPropertyFromComponentConfig(Widget widget, @Nullable UIComponent component,
-            String configParamName, int feature) {
+            String configParamName) {
         if (component == null || component.getConfig() == null) {
             return;
         }
@@ -285,32 +262,62 @@ public class UIComponentSitemapProvider implements SitemapProvider, RegistryChan
             return;
         }
         try {
-            WidgetImpl widgetImpl = (WidgetImpl) widget;
+            String setterName = "set" + configParamName.substring(0, 1).toUpperCase() + configParamName.substring(1);
             Object normalizedValue = ConfigUtil.normalizeType(value);
-            if (widgetImpl.eGet(feature, false, false) instanceof Integer) {
-                normalizedValue = (normalizedValue instanceof BigDecimal) ? ((BigDecimal) normalizedValue).intValue()
-                        : Integer.valueOf(normalizedValue.toString());
-            } else if (widgetImpl.eGet(feature, false, false) instanceof Boolean
+            Class<?> clazz = widget.getClass();
+            Method method = List.of(clazz.getMethods()).stream().filter(m -> m.getName().equals(setterName)).findFirst()
+                    .get();
+            Class<?> argumentType = method.getParameters()[0].getType();
+            if (argumentType.equals(Integer.class) || argumentType.equals(int.class)) {
+                normalizedValue = (normalizedValue instanceof BigDecimal bd) ? bd.intValue()
+                        : Integer.parseInt(normalizedValue.toString());
+            } else if ((argumentType.equals(Boolean.class) || argumentType.equals(boolean.class))
                     && !(normalizedValue instanceof Boolean)) {
                 normalizedValue = Boolean.valueOf(normalizedValue.toString());
             }
-            widgetImpl.eSet(feature, normalizedValue);
+            method.invoke(widget, normalizedValue);
         } catch (Exception e) {
             logger.warn("Cannot set {} parameter for {} widget parameter: {}", configParamName, component.getType(),
                     e.getMessage());
         }
     }
 
-    private void addWidgetMappings(EList<Mapping> mappings, UIComponent component) {
+    private @Nullable String stripQuotes(@Nullable String input) {
+        if ((input != null) && (input.length() >= 2) && (input.charAt(0) == '\"')
+                && (input.charAt(input.length() - 1) == '\"')) {
+            return input.substring(1, input.length() - 1);
+        } else {
+            return input;
+        }
+    }
+
+    private void addWidgetMappings(List<Mapping> mappings, UIComponent component) {
         if (component.getConfig() != null && component.getConfig().containsKey("mappings")) {
-            if (component.getConfig().get("mappings") instanceof Collection<?>) {
-                for (Object sourceMapping : (Collection<?>) component.getConfig().get("mappings")) {
+            Object sourceMappings = component.getConfig().get("mappings");
+            if (sourceMappings instanceof Collection<?> sourceMappingsCollection) {
+                for (Object sourceMapping : sourceMappingsCollection) {
                     if (sourceMapping instanceof String) {
-                        String cmd = sourceMapping.toString().split("=")[0].trim();
-                        String label = sourceMapping.toString().split("=")[1].trim();
-                        MappingImpl mapping = (MappingImpl) SitemapFactory.eINSTANCE.createMapping();
-                        mapping.setCmd(cmd);
-                        mapping.setLabel(label);
+                        String[] splitMapping = sourceMapping.toString().split("=");
+                        String cmd = splitMapping[0].trim();
+                        String releaseCmd = null;
+                        Matcher matcher = COMMANDS_PATTERN.matcher(cmd);
+                        if (matcher.matches()) {
+                            cmd = matcher.group("cmd1");
+                            releaseCmd = matcher.group("cmd2");
+                        }
+                        cmd = stripQuotes(cmd);
+                        releaseCmd = stripQuotes(releaseCmd);
+                        String label = stripQuotes(splitMapping[1].trim());
+                        String icon = splitMapping.length < 3 ? null : stripQuotes(splitMapping[2].trim());
+                        Mapping mapping = sitemapFactory.createMapping();
+                        if (cmd != null) {
+                            mapping.setCmd(cmd);
+                        }
+                        mapping.setReleaseCmd(releaseCmd);
+                        if (label != null) {
+                            mapping.setLabel(label);
+                        }
+                        mapping.setIcon(icon);
                         mappings.add(mapping);
                     }
                 }
@@ -318,42 +325,178 @@ public class UIComponentSitemapProvider implements SitemapProvider, RegistryChan
         }
     }
 
-    @Override
-    public void addModelChangeListener(ModelRepositoryChangeListener listener) {
-        modelChangeListeners.add(listener);
+    private boolean addWidgetButtons(Buttongrid buttongridWidget, UIComponent component) {
+        boolean deprecated = false;
+        if (component.getConfig() != null && component.getConfig().containsKey("buttons")) {
+            // Defining buttons through "buttons" component config is now deprecated.
+            // The relevant way to define buttons in a Buttongrid is now to use Button widget as sub-widgets.
+            // This old way to do is still supported for backward compatibility, sub-widgets are created.
+            deprecated = true;
+            logger.warn(
+                    "Defining buttons as properties of a Butongrid widget is deprecated although still supported; please prefer Button sub-widgets");
+            Object sourceButtons = component.getConfig().get("buttons");
+            if (sourceButtons instanceof Collection<?> sourceButtonsCollection) {
+                for (Object sourceButton : sourceButtonsCollection) {
+                    if (sourceButton instanceof String) {
+                        String[] splitted1 = sourceButton.toString().split(":", 3);
+                        int row = Integer.parseInt(splitted1[0].trim());
+                        int column = Integer.parseInt(splitted1[1].trim());
+                        String[] splitted2 = splitted1[2].trim().split("=");
+                        String cmd = stripQuotes(splitted2[0].trim());
+                        String label = stripQuotes(splitted2[1].trim());
+                        String icon = splitted2.length < 3 ? null : stripQuotes(splitted2[2].trim());
+                        Button button = (Button) Objects.requireNonNull(sitemapFactory.createWidget(
+                                org.openhab.core.sitemap.registry.SitemapFactory.BUTTON, buttongridWidget));
+                        if (component.getConfig().get("item") instanceof String item) {
+                            button.setItem(item);
+                        }
+                        button.setRow(row);
+                        button.setColumn(column);
+                        if (cmd != null) {
+                            button.setCmd(cmd);
+                        }
+                        if (label != null) {
+                            button.setLabel(label);
+                        }
+                        button.setIcon(icon);
+                        buttongridWidget.getWidgets().add(button);
+                    }
+                }
+            }
+        }
+        return deprecated;
     }
 
-    @Override
-    public void removeModelChangeListener(ModelRepositoryChangeListener listener) {
-        modelChangeListeners.remove(listener);
-    }
-
-    @Override
-    public void added(RootUIComponent element) {
-        for (ModelRepositoryChangeListener listener : modelChangeListeners) {
-            listener.modelChanged(SITEMAP_PREFIX + element.getUID() + SITEMAP_SUFFIX, EventType.ADDED);
+    /**
+     * Add rules of a specific type to a widget.
+     * This method is package-private for testing purposes, to allow testing adding rules to a widget without having to
+     * mock the whole widget building process.
+     *
+     * @param rules
+     * @param component
+     * @param key
+     */
+    void addWidgetRules(List<Rule> rules, UIComponent component, String key) {
+        if (component.getConfig() != null && component.getConfig().containsKey(key)) {
+            Object sourceRules = component.getConfig().get(key);
+            if (sourceRules instanceof Collection<?> sourceRulesCollection) {
+                for (Object sourceRule : sourceRulesCollection) {
+                    if (sourceRule instanceof String ruleString) {
+                        ValueMatch match = findTrailingValue(ruleString, component, key);
+                        List<String> conditionsString = getRuleConditions(sourceRule.toString(), match);
+                        Rule rule = sitemapFactory.createRule();
+                        List<Condition> conditions = getConditions(conditionsString, component, key);
+                        rule.setConditions(conditions);
+                        rule.setValue(match != null ? match.value() : null);
+                        rules.add(rule);
+                    }
+                }
+            }
         }
     }
 
-    @Override
-    public void removed(RootUIComponent element) {
-        for (ModelRepositoryChangeListener listener : modelChangeListeners) {
-            listener.modelChanged(SITEMAP_PREFIX + element.getUID() + SITEMAP_SUFFIX, EventType.REMOVED);
+    /**
+     * Get conditions from a list of condition strings. Each condition string may use an optional item name, an optional
+     * comparison operator, and an argument. The operator may be written either with surrounding whitespace (for
+     * example,
+     * "Temperature > 25") or without whitespace (for example, "Temperature>25" or "item==\"value\""). Arguments may be
+     * quoted or unquoted, and item and operator may be omitted entirely for simple arguments such as "ON". The
+     * supported
+     * comparison operators are ==, !=, <, >, <=, >=. If a condition string does not match one of the accepted forms,
+     * it is ignored and a warning is logged.
+     * This method is package-private for testing purposes, to allow testing the parsing of conditions without having to
+     * mock the whole widget building process.
+     *
+     * @param conditionsString
+     * @param component
+     * @param key
+     * @return the list of conditions parsed from the given list of condition strings. If a condition string has a
+     *         syntax error, it is ignored and a warning is logged.
+     */
+    List<Condition> getConditions(List<String> conditionsString, UIComponent component, String key) {
+        List<Condition> conditions = new ArrayList<>();
+        for (String conditionString : conditionsString) {
+            Matcher matcher = CONDITION_PATTERN.matcher(conditionString);
+            String argument = null;
+            if (matcher.matches()) {
+                argument = stripQuotes(matcher.group("argument"));
+            }
+            if (matcher.matches() && argument != null) {
+                Condition condition = sitemapFactory.createCondition();
+                condition.setItem(matcher.group("item"));
+                condition.setCondition(matcher.group("condition"));
+                condition.setArgument(argument);
+                conditions.add(condition);
+            } else {
+                logger.warn("Syntax error in {} rule condition '{}' for widget {}", key, conditionString,
+                        component.getType());
+            }
         }
+        return conditions;
     }
 
-    @Override
-    public void updated(RootUIComponent oldElement, RootUIComponent element) {
-        for (ModelRepositoryChangeListener listener : modelChangeListeners) {
-            listener.modelChanged(SITEMAP_PREFIX + element.getUID() + SITEMAP_SUFFIX, EventType.MODIFIED);
+    private record ValueMatch(String value, int conditionsEnd) {
+    }
+
+    /**
+     * Finds a trailing, properly closed, escape-aware literal that reaches the end of the rule string and is introduced
+     * by a bare "=" (not part of ==, !=, <=, >=). Honors \" and \\ escapes inside the literal if quoted, mirroring
+     * Xtext STRING semantics, and returns the unescaped value. Returns null if there is no such trailing value.
+     */
+    private @Nullable ValueMatch findTrailingValue(String rule, UIComponent component, String key) {
+        if ("visibility".equals(key)) {
+            return null;
         }
+        String trimmed = rule.trim();
+        Matcher m = CONDITIONS_PREFIX.matcher(trimmed);
+        m.find();
+        int delimiterIndex = m.end();
+        if (delimiterIndex >= trimmed.length() || trimmed.charAt(delimiterIndex) != '=') {
+            return null;
+        }
+        String value = trimmed.substring(delimiterIndex + 1).trim();
+        String unescaped = parseValue(value);
+        if (unescaped == null) {
+            logger.warn("Syntax error in {} rule value '{}' for widget {}", key, trimmed, component.getType());
+        }
+        return unescaped != null ? new ValueMatch(unescaped, delimiterIndex) : null;
+    }
+
+    private @Nullable String parseValue(String value) {
+        if (!value.startsWith("\"")) {
+            return value;
+        }
+        StringBuilder sb = new StringBuilder();
+        int j = 1;
+        while (j < value.length()) {
+            char c = value.charAt(j);
+            if (c == '\\' && j + 1 < value.length() && (value.charAt(j + 1) == '"' || value.charAt(j + 1) == '\\')) {
+                sb.append(value.charAt(j + 1));
+                j += 2;
+                continue;
+            }
+            if (c == '"') {
+                return j == value.length() - 1 ? sb.toString() : null;
+            }
+            sb.append(c);
+            j++;
+        }
+        return null;
+    }
+
+    private List<String> getRuleConditions(String rule, @Nullable ValueMatch match) {
+        String conditions = match != null ? rule.trim().substring(0, match.conditionsEnd()) : rule.trim();
+        List<String> conditionsList = List.of(conditions.split(" AND "));
+        return conditionsList.stream().filter(Predicate.not(String::isBlank)).map(String::trim).toList();
     }
 
     @Reference(cardinality = ReferenceCardinality.OPTIONAL, policy = ReferencePolicy.DYNAMIC)
     protected void setComponentRegistryFactory(UIComponentRegistryFactory componentRegistryFactory) {
         this.componentRegistryFactory = componentRegistryFactory;
-        this.sitemapComponentRegistry = this.componentRegistryFactory.getRegistry(SITEMAP_NAMESPACE);
-        this.sitemapComponentRegistry.addRegistryChangeListener(this);
+        UIComponentRegistry sitemapComponentRegistry = this.componentRegistryFactory.getRegistry(SITEMAP_NAMESPACE);
+        sitemapComponentRegistry.addRegistryChangeListener(this);
+        sitemapComponentRegistry.getAll().forEach(element -> added(element));
+        this.sitemapComponentRegistry = sitemapComponentRegistry;
     }
 
     protected void unsetComponentRegistryFactory(UIComponentRegistryFactory componentRegistryFactory) {
@@ -362,7 +505,86 @@ public class UIComponentSitemapProvider implements SitemapProvider, RegistryChan
             registry.removeRegistryChangeListener(this);
         }
 
+        this.sitemaps = new HashMap<>();
         this.componentRegistryFactory = null;
         this.sitemapComponentRegistry = null;
+    }
+
+    @Override
+    public Collection<Sitemap> getAll() {
+        return sitemaps.values();
+    }
+
+    @Override
+    public void added(RootUIComponent element) {
+        if ("Sitemap".equals(element.getType())) {
+            String sitemapName = element.getUID();
+            if (sitemaps.get(sitemapName) == null) {
+                Sitemap sitemap = buildSitemap(element);
+                sitemaps.put(sitemapName, sitemap);
+                notifyListenersAboutAddedElement(sitemap);
+            }
+        }
+    }
+
+    @Override
+    public void removed(RootUIComponent element) {
+        if ("Sitemap".equals(element.getType())) {
+            String sitemapName = element.getUID();
+            Sitemap sitemap = sitemaps.remove(sitemapName);
+            if (sitemap != null) {
+                notifyListenersAboutRemovedElement(sitemap);
+            }
+        }
+    }
+
+    @Override
+    public void updated(RootUIComponent oldElement, RootUIComponent element) {
+        if ("Sitemap".equals(oldElement.getType()) && "Sitemap".equals(element.getType())) {
+            String oldSitemapName = oldElement.getUID();
+            String sitemapName = element.getUID();
+            Sitemap oldSitemap = sitemaps.get(oldSitemapName);
+            Sitemap sitemap = buildSitemap(element);
+            if (!oldSitemapName.equals(sitemapName)) {
+                sitemaps.remove(oldSitemapName);
+            }
+            sitemaps.put(sitemapName, sitemap);
+            if (oldSitemap != null) {
+                notifyListenersAboutUpdatedElement(oldSitemap, sitemap);
+            } else {
+                notifyListenersAboutAddedElement(sitemap);
+            }
+        }
+    }
+
+    @Override
+    public void add(Sitemap element) {
+        UIComponentRegistry sitemapComponentRegistry = this.sitemapComponentRegistry;
+        if (sitemapComponentRegistry != null) {
+            sitemapComponentRegistry.add(UIComponentSitemapMapper.map(element));
+        }
+    }
+
+    @Override
+    public @Nullable Sitemap remove(String key) {
+        Sitemap sitemap = sitemaps.get(key);
+        UIComponentRegistry sitemapComponentRegistry = this.sitemapComponentRegistry;
+        if (sitemapComponentRegistry != null) {
+            sitemapComponentRegistry.remove(key);
+            return sitemap;
+        }
+        return null;
+    }
+
+    @Override
+    public @Nullable Sitemap update(Sitemap element) {
+        Sitemap sitemap = remove(element.getName());
+        add(element);
+        return sitemap;
+    }
+
+    @Override
+    public @Nullable Sitemap get(String key) {
+        return getSitemap(key);
     }
 }

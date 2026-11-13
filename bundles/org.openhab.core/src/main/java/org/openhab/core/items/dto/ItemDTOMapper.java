@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -27,7 +27,7 @@ import org.openhab.core.items.ItemUtil;
 import org.openhab.core.types.State;
 
 /**
- * The {@link ItemDTOMapper} is an utility class to map items into item data transfer objects (DTOs).
+ * The {@link ItemDTOMapper} is a utility class to map items into item data transfer objects (DTOs).
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Stefan Bußweiler - Moved to core and renamed class to DTO mapper
@@ -46,13 +46,6 @@ public class ItemDTOMapper {
      * @return the item object
      */
     public static @Nullable Item map(ItemDTO itemDTO, ItemBuilderFactory itemBuilderFactory) {
-        if (itemDTO == null) {
-            throw new IllegalArgumentException("The argument 'itemDTO' must no be null.");
-        }
-        if (itemBuilderFactory == null) {
-            throw new IllegalArgumentException("The argument 'itemBuilderFactory' must no be null.");
-        }
-
         if (!ItemUtil.isValidItemName(itemDTO.name)) {
             throw new IllegalArgumentException("The item name '" + itemDTO.name + "' is invalid.");
         }
@@ -60,8 +53,7 @@ public class ItemDTOMapper {
         if (itemDTO.type != null) {
             ItemBuilder builder = itemBuilderFactory.newItemBuilder(itemDTO.type, itemDTO.name);
 
-            if (itemDTO instanceof GroupItemDTO && GroupItem.TYPE.equals(itemDTO.type)) {
-                GroupItemDTO groupItemDTO = (GroupItemDTO) itemDTO;
+            if (itemDTO instanceof GroupItemDTO groupItemDTO && GroupItem.TYPE.equals(itemDTO.type)) {
                 Item baseItem = null;
                 if (groupItemDTO.groupType != null && !groupItemDTO.groupType.isEmpty()) {
                     baseItem = itemBuilderFactory.newItemBuilder(groupItemDTO.groupType, itemDTO.name).build();
@@ -96,8 +88,6 @@ public class ItemDTOMapper {
      * Maps item into item DTO object.
      *
      * @param item the item
-     * @param drillDown the drill down
-     * @param uri the uri
      * @return item DTO object
      */
     public static ItemDTO map(Item item) {
@@ -107,8 +97,7 @@ public class ItemDTOMapper {
     }
 
     private static void fillProperties(ItemDTO itemDTO, Item item) {
-        if (item instanceof GroupItem) {
-            GroupItem groupItem = (GroupItem) item;
+        if (item instanceof GroupItem groupItem) {
             GroupItemDTO groupItemDTO = (GroupItemDTO) itemDTO;
             Item baseItem = groupItem.getBaseItem();
             if (baseItem != null) {

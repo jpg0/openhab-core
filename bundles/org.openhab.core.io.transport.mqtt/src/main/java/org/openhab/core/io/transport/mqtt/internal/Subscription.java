@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,6 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.io.transport.mqtt.MqttMessageSubscriber;
+import org.openhab.core.util.HexUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.hivemq.client.mqtt.mqtt3.message.publish.Mqtt3Publish;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
@@ -31,6 +34,7 @@ import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
  */
 @NonNullByDefault
 public class Subscription {
+    private final Logger logger = LoggerFactory.getLogger(Subscription.class);
     private final Map<String, byte[]> retainedMessages = new ConcurrentHashMap<>();
     private final Collection<MqttMessageSubscriber> subscribers = ConcurrentHashMap.newKeySet();
 
@@ -44,8 +48,11 @@ public class Subscription {
     public void add(MqttMessageSubscriber subscriber) {
         if (subscribers.add(subscriber)) {
             // new subscriber. deliver all known retained messages
-            retainedMessages.entrySet().parallelStream()
-                    .forEach(entry -> processMessage(subscriber, entry.getKey(), entry.getValue()));
+            retainedMessages.entrySet().stream().forEach(entry -> {
+                if (entry.getValue().length > 0) {
+                    processMessage(subscriber, entry.getKey(), entry.getValue());
+                }
+            });
         }
     }
 
@@ -71,17 +78,22 @@ public class Subscription {
     }
 
     public void messageArrived(String topic, byte[] payload, boolean retain) {
-        if (retain) {
-            if (payload.length > 0) {
-                retainedMessages.put(topic, payload);
-            } else {
-                retainedMessages.remove(topic);
-            }
+        // http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html#_Toc385349265
+        // Only the first message delivered will have the retain flag; subsequent messages
+        // will not have the flag set. So see if we retained it in the past, and continue
+        // to retain it (even if it's now empty - we need to know to continue to retain it)
+        if (retain || retainedMessages.containsKey(topic)) {
+            retainedMessages.put(topic, payload);
         }
-        subscribers.parallelStream().forEach(subscriber -> processMessage(subscriber, topic, payload));
+        subscribers.forEach(subscriber -> processMessage(subscriber, topic, payload));
     }
 
     private void processMessage(MqttMessageSubscriber subscriber, String topic, byte[] payload) {
-        subscriber.processMessage(topic, payload);
+        try {
+            subscriber.processMessage(topic, payload);
+        } catch (RuntimeException e) {
+            logger.warn("A subscriber of type '{}' failed to process message '{}' to topic '{}'.",
+                    subscriber.getClass(), HexUtils.bytesToHex(payload), topic);
+        }
     }
 }

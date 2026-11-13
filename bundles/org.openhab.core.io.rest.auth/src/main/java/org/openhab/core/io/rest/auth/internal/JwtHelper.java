@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,14 +14,13 @@ package org.openhab.core.io.rest.auth.internal;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.jose4j.jwa.AlgorithmConstraints.ConstraintType;
@@ -72,7 +71,7 @@ public class JwtHelper {
         }
     }
 
-    private RsaJsonWebKey generateNewKey() throws JoseException, FileNotFoundException, IOException {
+    private RsaJsonWebKey generateNewKey() throws JoseException, IOException {
         RsaJsonWebKey newKey = RsaJwkGenerator.generateJwk(2048);
 
         File file = new File(KEY_FILE_PATH);
@@ -84,8 +83,8 @@ public class JwtHelper {
         return newKey;
     }
 
-    private RsaJsonWebKey loadOrGenerateKey() throws FileNotFoundException, JoseException, IOException {
-        try (final BufferedReader reader = Files.newBufferedReader(Paths.get(KEY_FILE_PATH))) {
+    private RsaJsonWebKey loadOrGenerateKey() throws JoseException, IOException {
+        try (final BufferedReader reader = Files.newBufferedReader(Path.of(KEY_FILE_PATH))) {
             return (RsaJsonWebKey) JsonWebKey.Factory.newJwk(reader.readLine());
         } catch (IOException | JoseException e) {
             RsaJsonWebKey key = generateNewKey();
@@ -116,24 +115,22 @@ public class JwtHelper {
             jwtClaims.setSubject(user.getName());
             jwtClaims.setClaim("client_id", clientId);
             jwtClaims.setClaim("scope", scope);
-            jwtClaims.setStringListClaim("role",
-                    new ArrayList<>(user.getRoles() != null ? user.getRoles() : Collections.emptySet()));
+            jwtClaims.setStringListClaim("role", new ArrayList<>(user.getRoles() != null ? user.getRoles() : Set.of()));
 
             JsonWebSignature jws = new JsonWebSignature();
             jws.setPayload(jwtClaims.toJson());
             jws.setKey(jwtWebKey.getPrivateKey());
             jws.setKeyIdHeaderValue(jwtWebKey.getKeyId());
             jws.setAlgorithmHeaderValue(AlgorithmIdentifiers.RSA_USING_SHA256);
-            String jwt = jws.getCompactSerialization();
 
-            return jwt;
+            return jws.getCompactSerialization();
         } catch (JoseException e) {
             throw new IllegalStateException("Error while writing JWT token", e);
         }
     }
 
     /**
-     * Performs verifications on a JWT token, then parses it into a {@link AuthenticationException} instance
+     * Performs verifications on a JWT token, then parses it into an {@link AuthenticationException} instance
      *
      * @param jwt the base64-encoded JWT token from the request
      * @return the {@link Authentication} derived from the information in the token
@@ -143,7 +140,7 @@ public class JwtHelper {
         JwtConsumer jwtConsumer = new JwtConsumerBuilder().setRequireExpirationTime().setAllowedClockSkewInSeconds(30)
                 .setRequireSubject().setExpectedIssuer(ISSUER_NAME).setExpectedAudience(AUDIENCE)
                 .setVerificationKey(jwtWebKey.getKey())
-                .setJwsAlgorithmConstraints(ConstraintType.WHITELIST, AlgorithmIdentifiers.RSA_USING_SHA256).build();
+                .setJwsAlgorithmConstraints(ConstraintType.PERMIT, AlgorithmIdentifiers.RSA_USING_SHA256).build();
 
         try {
             JwtClaims jwtClaims = jwtConsumer.processToClaims(jwt);

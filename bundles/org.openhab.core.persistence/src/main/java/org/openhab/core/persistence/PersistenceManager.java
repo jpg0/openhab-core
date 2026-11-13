@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,27 +13,27 @@
 package org.openhab.core.persistence;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.items.Item;
 
 /**
- * A persistence manager service which could be used to start event handling or supply configuration for persistence
- * services.
+ * The {@link PersistenceManager} interface is used to communicate between external components (e.g. REST interface)
+ * that modify persisted data bypassing the {@link org.openhab.core.persistence.internal.PersistenceManagerImpl}. This
+ * is required because forecast jobs might need an update when the persisted data changes.
  *
- * @author Markus Rathgeb - Initial contribution
+ * @author Jan N. Klug - Initial contribution
  */
 @NonNullByDefault
 public interface PersistenceManager {
-    /**
-     * Add a configuration for a persistence service.
-     *
-     * @param dbId the database id used by the persistence service
-     * @param config the configuration of the persistence service
-     */
-    void addConfig(String dbId, PersistenceServiceConfiguration config);
 
     /**
-     * Remove a configuration for a persistence service.
+     * External code that updates persisted data, that may have an impact on the persistence logic (restoring item
+     * states, forecast logic), should call this method to inform the {@link PersistenceManager} about a potential
+     * impact. The {@link PersistenceManager} will query the service again to get the necessary information. This all
+     * happens in the calling thread and may therefore take some time. If this is undesired, this call should be
+     * performed asynchronously.
      *
-     * @param dbId the database id used by the persistence service
+     * @param persistenceService the persistence service
+     * @param item the item for which persisted data has been updated
      */
-    void removeConfig(String dbId);
+    void handleExternalPersistenceDataChange(PersistenceService persistenceService, Item item);
 }

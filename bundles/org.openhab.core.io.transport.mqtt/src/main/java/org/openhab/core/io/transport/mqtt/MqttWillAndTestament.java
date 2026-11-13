@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -72,14 +72,14 @@ public class MqttWillAndTestament {
                         break;
                     case 2:
                         if (!"".equals(value)) {
-                            int tmp = Integer.valueOf(value);
+                            int tmp = Integer.parseInt(value);
                             if (tmp >= 0 && tmp <= 2) {
                                 tmpQos = tmp;
                             }
                         }
                         break;
                     case 3:
-                        tmpRetain = Boolean.valueOf(value);
+                        tmpRetain = Boolean.parseBoolean(value);
                         break;
                 }
             }
@@ -109,11 +109,11 @@ public class MqttWillAndTestament {
     }
 
     /**
-     * Create a new {@link} MqttWillAndTestament with at least a topic name.
+     * Create a new {@link MqttWillAndTestament} with at least a topic name.
      *
      * @param topic topic is a normal topic string (no placeholders are allowed)
      * @param payload The optional payload. Can be null.
-     * @param qos Valid values are 0 (Deliver at most once),1 (Deliver at least once) or 2</li>
+     * @param qos Valid values are 0 (Deliver at most once),1 (Deliver at least once) or 2
      * @param retain true if messages shall be retained
      */
     public MqttWillAndTestament(String topic, byte @Nullable [] payload, int qos, boolean retain) {

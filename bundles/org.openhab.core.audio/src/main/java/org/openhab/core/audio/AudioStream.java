@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,13 +15,16 @@ package org.openhab.core.audio;
 import java.io.InputStream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 
 /**
  * Wrapper for a source of audio data.
  *
+ * <p>
  * In contrast to {@link AudioSource}, this is often a "one time use" instance for passing some audio data,
  * but it is not meant to be registered as a service.
  *
+ * <p>
  * The stream needs to be closed by the client that uses it.
  *
  * @author Harald Kuhn - Initial contribution
@@ -37,4 +40,14 @@ public abstract class AudioStream extends InputStream {
      * @return The supported audio format
      */
     public abstract AudioFormat getFormat();
+
+    /**
+     * Useful for sinks playing the same stream multiple times
+     * to avoid already done computation (like re-encoding).
+     *
+     * @return A string uniquely identifying the stream.
+     */
+    public @Nullable String getId() {
+        return null;
+    }
 }

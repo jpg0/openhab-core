@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,10 +12,10 @@
  */
 package org.openhab.core.model.script.scoping;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.net.URLEncoder;
+import java.time.DayOfWeek;
 import java.time.Duration;
+import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -28,16 +28,21 @@ import org.openhab.core.library.unit.ImperialUnits;
 import org.openhab.core.library.unit.MetricPrefix;
 import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
+import org.openhab.core.model.script.ScriptServiceUtil;
 import org.openhab.core.model.script.actions.BusEvent;
+import org.openhab.core.model.script.actions.CoreUtil;
 import org.openhab.core.model.script.actions.Exec;
 import org.openhab.core.model.script.actions.HTTP;
 import org.openhab.core.model.script.actions.Log;
 import org.openhab.core.model.script.actions.Ping;
 import org.openhab.core.model.script.actions.ScriptExecution;
+import org.openhab.core.model.script.actions.Transformation;
 import org.openhab.core.model.script.engine.IActionServiceProvider;
 import org.openhab.core.model.script.engine.IThingActionsProvider;
 import org.openhab.core.model.script.engine.action.ActionService;
+import org.openhab.core.model.script.lib.ItemExtensions;
 import org.openhab.core.model.script.lib.NumberExtensions;
+import org.openhab.core.model.script.lib.RuleExtensions;
 import org.openhab.core.thing.binding.ThingActions;
 
 import com.google.inject.Inject;
@@ -54,8 +59,6 @@ import com.google.inject.Singleton;
 @Singleton
 public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
 
-    private List<Class<?>> actionClasses = null;
-
     @Inject
     IActionServiceProvider actionServiceProvider;
 
@@ -65,12 +68,6 @@ public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
     @Override
     protected List<Class<?>> getExtensionClasses() {
         List<Class<?>> result = super.getExtensionClasses();
-        result.remove(Comparable.class);
-        result.remove(Double.class);
-        result.remove(Integer.class);
-        result.remove(BigInteger.class);
-        result.remove(BigDecimal.class);
-        result.remove(double.class);
 
         result.add(NumberExtensions.class);
 
@@ -78,7 +75,10 @@ public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
         result.add(HTTP.class);
         result.add(Log.class);
         result.add(Ping.class);
+        result.add(Transformation.class);
         result.add(ScriptExecution.class);
+        result.add(ItemExtensions.class);
+        result.add(RuleExtensions.class);
         result.add(URLEncoder.class);
 
         result.addAll(getActionClasses());
@@ -93,8 +93,11 @@ public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
         result.add(HTTP.class);
         result.add(Log.class);
         result.add(Ping.class);
+        result.add(Transformation.class);
         result.add(ScriptExecution.class);
+        result.add(ScriptServiceUtil.class);
         result.add(URLEncoder.class);
+        result.add(CoreUtil.class);
 
         result.add(ImperialUnits.class);
         result.add(MetricPrefix.class);
@@ -104,7 +107,9 @@ public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
 
         // date time static functions
         result.add(ChronoUnit.class);
+        result.add(DayOfWeek.class);
         result.add(Duration.class);
+        result.add(Month.class);
         result.add(ZoneId.class);
         result.add(ZonedDateTime.class);
 
@@ -113,23 +118,22 @@ public class ScriptImplicitlyImportedTypes extends ImplicitlyImportedFeatures {
     }
 
     protected List<Class<?>> getActionClasses() {
-        List<Class<?>> localActionClasses = new ArrayList<>();
+        List<Class<?>> actionClasses = new ArrayList<>();
 
         List<ActionService> services = actionServiceProvider.get();
         if (services != null) {
             for (ActionService actionService : services) {
-                localActionClasses.add(actionService.getActionClass());
+                actionClasses.add(actionService.getActionClass());
             }
         }
 
         List<ThingActions> actions = thingActionsProvider.get();
         if (actions != null) {
             for (ThingActions thingActions : actions) {
-                localActionClasses.add(thingActions.getClass());
+                actionClasses.add(thingActions.getClass());
             }
         }
 
-        actionClasses = localActionClasses;
         return actionClasses;
     }
 }

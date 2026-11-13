@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,7 +17,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Map.Entry;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -65,8 +65,7 @@ public class CompositeModuleHandlerFactory extends BaseModuleHandlerFactory impl
     /**
      * The constructor of system handler factory for composite module types.
      *
-     * @param context is a bundle context
-     * @param mtManager is a module type manager
+     * @param mtRegistry is a module type registry
      * @param re is a rule engine
      */
     public CompositeModuleHandlerFactory(ModuleTypeRegistry mtRegistry, RuleEngineImpl re) {
@@ -92,12 +91,12 @@ public class CompositeModuleHandlerFactory extends BaseModuleHandlerFactory impl
     @SuppressWarnings({ "unchecked" })
     @Override
     public void ungetHandler(Module module, String childModulePrefix, ModuleHandler handler) {
-        ModuleHandler handlerOfModule = getHandlers().get(childModulePrefix + module.getId());
+        ModuleHandler handlerOfModule = getHandlers().get(getModuleIdentifier(childModulePrefix, module.getId()));
         if (handlerOfModule instanceof AbstractCompositeModuleHandler) {
             AbstractCompositeModuleHandler<ModuleImpl, ?, ?> h = (AbstractCompositeModuleHandler<ModuleImpl, ?, ?>) handlerOfModule;
-            Set<ModuleImpl> modules = h.moduleHandlerMap.keySet();
-            for (ModuleImpl child : modules) {
-                ModuleHandler childHandler = h.moduleHandlerMap.get(child);
+            for (Entry<ModuleImpl, @Nullable ? extends ModuleHandler> entry : h.moduleHandlerMap.entrySet()) {
+                ModuleImpl child = entry.getKey();
+                ModuleHandler childHandler = entry.getValue();
                 if (childHandler == null) {
                     continue;
                 }
@@ -114,8 +113,7 @@ public class CompositeModuleHandlerFactory extends BaseModuleHandlerFactory impl
 
     private String getRuleId(String childModulePrefix) {
         int i = childModulePrefix.indexOf(':');
-        String ruleId = i != -1 ? childModulePrefix.substring(0, i) : childModulePrefix;
-        return ruleId;
+        return i != -1 ? childModulePrefix.substring(0, i) : childModulePrefix;
     }
 
     @Override
@@ -123,29 +121,26 @@ public class CompositeModuleHandlerFactory extends BaseModuleHandlerFactory impl
         ModuleHandler handler = null;
         String moduleType = module.getTypeUID();
         ModuleType mt = mtRegistry.get(moduleType);
-        if (mt instanceof CompositeTriggerType) {
-            List<Trigger> childModules = ((CompositeTriggerType) mt).getChildren();
+        if (mt instanceof CompositeTriggerType type) {
+            List<Trigger> childModules = type.getChildren();
             LinkedHashMap<Trigger, @Nullable TriggerHandler> mapModuleToHandler = getChildHandlers(module.getId(),
                     module.getConfiguration(), childModules, ruleUID);
             if (mapModuleToHandler != null) {
-                handler = new CompositeTriggerHandler((Trigger) module, (CompositeTriggerType) mt, mapModuleToHandler,
-                        ruleUID);
+                handler = new CompositeTriggerHandler((Trigger) module, type, mapModuleToHandler, ruleUID);
             }
-        } else if (mt instanceof CompositeConditionType) {
-            List<Condition> childModules = ((CompositeConditionType) mt).getChildren();
+        } else if (mt instanceof CompositeConditionType type) {
+            List<Condition> childModules = type.getChildren();
             LinkedHashMap<Condition, @Nullable ConditionHandler> mapModuleToHandler = getChildHandlers(module.getId(),
                     module.getConfiguration(), childModules, ruleUID);
             if (mapModuleToHandler != null) {
-                handler = new CompositeConditionHandler((Condition) module, (CompositeConditionType) mt,
-                        mapModuleToHandler, ruleUID);
+                handler = new CompositeConditionHandler((Condition) module, type, mapModuleToHandler, ruleUID);
             }
-        } else if (mt instanceof CompositeActionType) {
-            List<Action> childModules = ((CompositeActionType) mt).getChildren();
+        } else if (mt instanceof CompositeActionType type) {
+            List<Action> childModules = type.getChildren();
             LinkedHashMap<Action, @Nullable ActionHandler> mapModuleToHandler = getChildHandlers(module.getId(),
                     module.getConfiguration(), childModules, ruleUID);
             if (mapModuleToHandler != null) {
-                handler = new CompositeActionHandler((Action) module, (CompositeActionType) mt, mapModuleToHandler,
-                        ruleUID);
+                handler = new CompositeActionHandler((Action) module, type, mapModuleToHandler, ruleUID);
             }
         }
         if (handler != null) {

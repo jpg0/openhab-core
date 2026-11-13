@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.SafeCaller;
@@ -62,8 +63,8 @@ public class SafeCallerImpl implements SafeCaller {
     }
 
     @Override
-    public <T> SafeCallerBuilder<T> create(T target, Class<T> interfaceType) {
-        return new SafeCallerBuilderImpl<T>(target, new Class<?>[] { interfaceType }, manager);
+    public <T> SafeCallerBuilder<@NonNull T> create(T target, Class<T> interfaceType) {
+        return new SafeCallerBuilderImpl<>(target, new Class<?>[] { interfaceType }, manager);
     }
 
     protected ExecutorService getScheduler() {

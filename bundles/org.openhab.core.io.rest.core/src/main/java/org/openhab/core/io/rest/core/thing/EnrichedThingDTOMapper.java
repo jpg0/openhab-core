@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,11 +13,12 @@
 package org.openhab.core.io.rest.core.thing;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.dto.ChannelDTO;
@@ -26,11 +27,12 @@ import org.openhab.core.thing.dto.ThingDTOMapper;
 import org.openhab.core.thing.firmware.dto.FirmwareStatusDTO;
 
 /**
- * The {@link EnrichedThingDTOMapper} is an utility class to map things into enriched thing data transfer objects
+ * The {@link EnrichedThingDTOMapper} is a utility class to map things into enriched thing data transfer objects
  * (DTOs).
  *
  * @author Dennis Nobel - Initial contribution
  */
+@NonNullByDefault
 public class EnrichedThingDTOMapper extends ThingDTOMapper {
 
     /**
@@ -43,13 +45,14 @@ public class EnrichedThingDTOMapper extends ThingDTOMapper {
      * @param editable true if this thing can be edited
      * @return the enriched thing DTO object
      */
-    public static EnrichedThingDTO map(Thing thing, ThingStatusInfo thingStatusInfo, FirmwareStatusDTO firmwareStatus,
-            Map<String, Set<String>> linkedItemsMap, boolean editable) {
+    public static EnrichedThingDTO map(Thing thing, ThingStatusInfo thingStatusInfo,
+            @Nullable FirmwareStatusDTO firmwareStatus, @Nullable Map<String, Set<String>> linkedItemsMap,
+            boolean editable) {
         ThingDTO thingDTO = ThingDTOMapper.map(thing);
 
         List<EnrichedChannelDTO> channels = new ArrayList<>();
         for (ChannelDTO channel : thingDTO.channels) {
-            Set<String> linkedItems = linkedItemsMap != null ? linkedItemsMap.get(channel.id) : Collections.emptySet();
+            Set<String> linkedItems = linkedItemsMap != null ? linkedItemsMap.get(channel.id) : Set.of();
             channels.add(new EnrichedChannelDTO(channel, linkedItems));
         }
 

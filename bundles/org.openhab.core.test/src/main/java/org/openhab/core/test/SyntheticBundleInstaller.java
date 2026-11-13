@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -60,11 +60,11 @@ import org.osgi.framework.ServiceReference;
  */
 public class SyntheticBundleInstaller {
 
-    private static final int WAIT_TIMOUT = 30; // [seconds]
+    private static final int WAIT_TIMEOUT = 30; // [seconds]
     private static final String BUNDLE_POOL_PATH = "/test-bundle-pool";
 
     private static final String XML_THING_TYPE = "openhab.xmlThingTypes";
-    private static final String XML_BINDING_INFO = "openhab.xmlBindingInfo";
+    private static final String XML_ADDON_INFO = "openhab.xmlAddonInfo";
     private static final String XML_CONFIG = "openhab.xmlConfig";
 
     /**
@@ -91,7 +91,7 @@ public class SyntheticBundleInstaller {
      * Install synthetic bundle, denoted by its name, into the test runtime (by using the given bundle context).
      *
      * @param bundleContext the bundle context of the test runtime
-     * @param testBundleNamethe symbolic name of the sub-directory of {@value #BUNDLE_POOL_PATH}, which contains the
+     * @param testBundleName the symbolic name of the sub-directory of {@value #BUNDLE_POOL_PATH}, which contains the
      *            files
      *            for the synthetic bundle
      * @param extensionsToInclude a list of extension to be included into the synthetic bundle. In order to use the list
@@ -185,7 +185,7 @@ public class SyntheticBundleInstaller {
      * Updates given bundle into the test runtime (the content is changed, but the symbolic name of the bundles remains
      * the same) with a new content, prepared in another resources directory.
      *
-     * @param bundleContextthe bundle context of the test runtime
+     * @param bundleContext the bundle context of the test runtime
      * @param bundleToUpdateName the symbolic name of the bundle to be updated
      * @param updateDirName the location of the new content, that the target bundle will be updated with
      * @param extensionsToInclude a list of extension to be included into the synthetic bundle
@@ -207,8 +207,6 @@ public class SyntheticBundleInstaller {
      * @param bundleContext the bundle context of the test runtime
      * @param testBundleName the name of the sub-directory of {@value #BUNDLE_POOL_PATH}, which contains the files for
      *            the synthetic bundle
-     * @param extensionsToInclude a list of extension to be included into the synthetic bundle fragment. In order to use
-     *            the list of default extensions ({@link #DEFAULT_EXTENSIONS})
      * @return the synthetic bundle representation
      * @throws Exception thrown when error occurs while installing or starting the synthetic bundle fragment
      */
@@ -232,10 +230,7 @@ public class SyntheticBundleInstaller {
         String bundlePath = BUNDLE_POOL_PATH + "/" + testBundleName + "/";
         byte[] syntheticBundleBytes = createSyntheticBundle(bundleContext.getBundle(), bundlePath, testBundleName,
                 extensionsToInclude);
-
-        Bundle syntheticBundle = bundleContext.installBundle(testBundleName,
-                new ByteArrayInputStream(syntheticBundleBytes));
-        return syntheticBundle;
+        return bundleContext.installBundle(testBundleName, new ByteArrayInputStream(syntheticBundleBytes));
     }
 
     private static boolean isBundleAvailable(BundleContext context, String bsn) {
@@ -251,15 +246,15 @@ public class SyntheticBundleInstaller {
     }
 
     private static boolean isXmlThingTypeBundleAvailable(BundleContext context) {
-        return isBundleAvailable(context, "org.openhab.core.thing.xml");
+        return isBundleAvailable(context, "org.openhab.core.thing");
     }
 
-    private static boolean isXmlBindingInfoBundleAvailable(BundleContext context) {
-        return isBundleAvailable(context, "org.openhab.core.binding.xml");
+    private static boolean isXmlAddonInfoBundleAvailable(BundleContext context) {
+        return isBundleAvailable(context, "org.openhab.core.addon");
     }
 
     private static boolean isXmlConfigBundleAvailable(BundleContext context) {
-        return isBundleAvailable(context, "org.openhab.core.config.xml");
+        return isBundleAvailable(context, "org.openhab.core.config");
     }
 
     /**
@@ -271,8 +266,8 @@ public class SyntheticBundleInstaller {
         if (isXmlThingTypeBundleAvailable(context)) {
             waitForReadyMarker(context, XML_THING_TYPE, bundle);
         }
-        if (isXmlBindingInfoBundleAvailable(context)) {
-            waitForReadyMarker(context, XML_BINDING_INFO, bundle);
+        if (isXmlAddonInfoBundleAvailable(context)) {
+            waitForReadyMarker(context, XML_ADDON_INFO, bundle);
         }
         if (isXmlConfigBundleAvailable(context)) {
             waitForReadyMarker(context, XML_CONFIG, bundle);
@@ -289,8 +284,8 @@ public class SyntheticBundleInstaller {
         ReadyService readyService = (ReadyService) context.getService(readyServiceRef);
         ReadyMarker expected = new ReadyMarker(marker, identifier);
         while (!readyService.isReady(expected)) {
-            if (System.nanoTime() - startTime > TimeUnit.SECONDS.toNanos(WAIT_TIMOUT)) {
-                fail(MessageFormat.format("Timout waiting for marker {0} at bundle {1}", marker, identifier));
+            if (System.nanoTime() - startTime > TimeUnit.SECONDS.toNanos(WAIT_TIMEOUT)) {
+                fail(MessageFormat.format("Timeout waiting for marker {0} at bundle {1}", marker, identifier));
             }
             try {
                 Thread.sleep(100);
@@ -396,8 +391,7 @@ public class SyntheticBundleInstaller {
     private static String convertToFileEntry(URI baseURI, URL entryURL) throws URISyntaxException {
         URI entryURI = entryURL.toURI();
         URI relativeURI = baseURI.relativize(entryURI);
-        String fileEntry = relativeURI.toString();
-        return fileEntry;
+        return relativeURI.toString();
     }
 
     private static Manifest getManifest(Bundle bundle, String bundlePath) throws IOException {

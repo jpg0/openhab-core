@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -29,12 +29,17 @@ import org.openhab.core.config.discovery.usbserial.UsbSerialDeviceInformation;
 @NonNullByDefault
 public class DeltaUsbSerialScanner {
 
+    // All access must be guarded by "this"
     private Set<UsbSerialDeviceInformation> lastScanResult = new HashSet<>();
 
     private final UsbSerialScanner usbSerialScanner;
 
     public DeltaUsbSerialScanner(UsbSerialScanner usbSerialScanner) {
         this.usbSerialScanner = usbSerialScanner;
+    }
+
+    public synchronized Set<UsbSerialDeviceInformation> getLastScanResult() {
+        return Set.copyOf(lastScanResult);
     }
 
     /**
@@ -75,7 +80,7 @@ public class DeltaUsbSerialScanner {
     /**
      * Delta between two subsequent scan results.
      */
-    class Delta<T> {
+    static class Delta<T> {
 
         private final Set<T> added;
         private final Set<T> removed;

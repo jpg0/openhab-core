@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,8 +16,8 @@ import static java.nio.file.Files.*;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -52,6 +52,8 @@ import org.slf4j.LoggerFactory;
  * {@link UsbSerialDeviceInformation}.
  *
  * @author Henning Sudbrock - Initial contribution
+ * @author Gwendal Roulleau - Adding /serial/by-id scan to discover the symlinks inside and use their more
+ *         human-readable links
  */
 @Component(configurationPid = "discovery.usbserial.linuxsysfs.usbserialscanner")
 @NonNullByDefault
@@ -64,9 +66,11 @@ public class SysfsUsbSerialScanner implements UsbSerialScanner {
 
     private static final String SYSFS_TTY_DEVICES_DIRECTORY_DEFAULT = "/sys/class/tty";
     private static final String DEV_DIRECTORY_DEFAULT = "/dev";
+    private static final String SERIAL_BY_ID_DIRECTORY = "/serial/by-id";
 
     private String sysfsTtyDevicesDirectory = SYSFS_TTY_DEVICES_DIRECTORY_DEFAULT;
     private String devDirectory = DEV_DIRECTORY_DEFAULT;
+    private String devSerialByIdDirectory = DEV_DIRECTORY_DEFAULT + SERIAL_BY_ID_DIRECTORY;
 
     private static final String SYSFS_FILENAME_USB_VENDOR_ID = "idVendor";
     private static final String SYSFS_FILENAME_USB_PRODUCT_ID = "idProduct";
@@ -122,25 +126,48 @@ public class SysfsUsbSerialScanner implements UsbSerialScanner {
 
     @Override
     public boolean canPerformScans() {
-        return isReadable(Paths.get(sysfsTtyDevicesDirectory)) && isReadable(Paths.get(devDirectory));
+        return isReadable(Path.of(sysfsTtyDevicesDirectory)) && isReadable(Path.of(devDirectory));
     }
 
     /**
      * Gets the set of all found serial ports, by searching through the tty devices directory in the sysfs and
      * checking for each found serial port if the device file in the devices folder is both readable and writable.
+     * Also search in the serial/by-id directory for symlinks with more user-friendly name.
      *
      * @throws IOException If there is a problem reading files from the sysfs tty devices directory.
      */
     private Set<SerialPortInfo> getSerialPortInfos() throws IOException {
         Set<SerialPortInfo> result = new HashSet<>();
 
-        try (DirectoryStream<Path> sysfsTtyPaths = newDirectoryStream(Paths.get(sysfsTtyDevicesDirectory))) {
+        try (DirectoryStream<Path> sysfsTtyPaths = newDirectoryStream(Path.of(sysfsTtyDevicesDirectory))) {
             for (Path sysfsTtyPath : sysfsTtyPaths) {
                 String serialPortName = sysfsTtyPath.getFileName().toString();
-                Path devicePath = Paths.get(devDirectory).resolve(serialPortName);
-                Path sysfsDevicePath = getSysfsDevicePath(sysfsTtyPath);
+                Path devicePath = Path.of(devDirectory).resolve(serialPortName);
+                Path sysfsDevicePath = getRealDevicePath(sysfsTtyPath);
                 if (sysfsDevicePath != null && isReadable(devicePath) && isWritable(devicePath)) {
                     result.add(new SerialPortInfo(devicePath, sysfsDevicePath));
+                }
+            }
+        }
+
+        // optionally compute links and their corresponding SerialInfo :
+        Path devSerialDir = Path.of(devSerialByIdDirectory);
+        if (exists(devSerialDir) && isDirectory(devSerialDir) && isReadable(devSerialDir)) {
+            // browse serial/by-id directory :
+            try (DirectoryStream<Path> directoryStream = newDirectoryStream(devSerialDir)) {
+                for (Path devLinkPath : directoryStream) {
+                    if (Files.isSymbolicLink(devLinkPath)) {
+                        Path devicePath = getRealDevicePath(devLinkPath);
+                        if (devicePath != null) {
+                            String serialPortName = devicePath.getFileName().toString();
+                            // get the corresponding real sysinfo special dir :
+                            Path sysfsDevicePath = getRealDevicePath(
+                                    Path.of(sysfsTtyDevicesDirectory).resolve(serialPortName));
+                            if (sysfsDevicePath != null && isReadable(devicePath) && isWritable(devicePath)) {
+                                result.add(new SerialPortInfo(devLinkPath, sysfsDevicePath));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -149,17 +176,18 @@ public class SysfsUsbSerialScanner implements UsbSerialScanner {
     }
 
     /**
-     * In the sysfs, the directory 'class/tty' contains a symbolic link for every serial port style device, i.e., also
-     * for serial devices. This symbolic link points to the directory for that device within the sysfs device tree. This
-     * method returns the directory to which this symbolic link points for a given serial port.
+     * In the sysfs or serial-by-id directory, we can found a symbolic link for every serial port style device, i.e.,
+     * also for serial devices. This symbolic link points to the directory for that device within the sysfs device tree,
+     * or directly to the device in the case of serial-by-id directory. This method returns the real path to which this
+     * symbolic link points for a given serial port.
      * <p/>
      * If the symbolic link cannot be converted to the real path, null is returned and a warning is logged.
      */
-    private @Nullable Path getSysfsDevicePath(Path ttyFile) {
+    private @Nullable Path getRealDevicePath(Path ttyFile) {
         try {
             return ttyFile.toRealPath();
         } catch (IOException e) {
-            logger.warn("Could not find the device path for {} in the sysfs: {}", ttyFile, e.getMessage());
+            logger.warn("Could not find the device path for {}. Error is: {}", ttyFile, e.getMessage());
             return null;
         }
     }
@@ -193,7 +221,10 @@ public class SysfsUsbSerialScanner implements UsbSerialScanner {
      * of a USB device.
      */
     private @Nullable Path getUsbInterfaceParentPath(Path sysfsPath) {
-        if (sysfsPath.getFileName() == null) {
+        if (sysfsPath.toString().indexOf('-') == -1) {
+            // a fast path to avoid pattern matching for dozens of not matching directories
+            return null;
+        } else if (sysfsPath.getFileName() == null) {
             return null;
         } else if (SYSFS_USB_INTERFACE_DIRECTORY_PATTERN.matcher(sysfsPath.getFileName().toString()).matches()) {
             return sysfsPath;
@@ -256,19 +287,18 @@ public class SysfsUsbSerialScanner implements UsbSerialScanner {
         if (configurationIsChanged) {
             sysfsTtyDevicesDirectory = newSysfsTtyDevicesDirectory;
             devDirectory = newDevDirectory;
+            devSerialByIdDirectory = devDirectory + SERIAL_BY_ID_DIRECTORY;
         }
 
         if (!canPerformScans()) {
-            String logString = String.format(
-                    "Cannot perform scans with this configuration: sysfsTtyDevicesDirectory: {}, devDirectory: {}",
-                    sysfsTtyDevicesDirectory, devDirectory);
+            String message = "Cannot perform scans with this configuration: sysfsTtyDevicesDirectory: {}, devDirectory: {}";
 
             if (configurationIsChanged) {
                 // Warn if the configuration was actively changed
-                logger.warn(logString);
+                logger.warn(message, sysfsTtyDevicesDirectory, devDirectory);
             } else {
                 // Otherwise, only debug log - so that, in particular, on Non-Linux systems users do not see warning
-                logger.debug(logString);
+                logger.debug(message, sysfsTtyDevicesDirectory, devDirectory);
             }
         }
     }

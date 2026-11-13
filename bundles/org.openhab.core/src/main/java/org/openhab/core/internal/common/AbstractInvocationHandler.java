@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,10 +14,9 @@ package org.openhab.core.internal.common;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -90,37 +89,38 @@ abstract class AbstractInvocationHandler<T> {
 
     void handleExecutionException(Method method, ExecutionException e) {
         Throwable cause = e.getCause();
-        if (cause instanceof DuplicateExecutionException) {
-            handleDuplicate(method, (DuplicateExecutionException) cause);
-        } else if (cause instanceof InvocationTargetException) {
-            handleException(method, (InvocationTargetException) cause);
+        if (cause instanceof DuplicateExecutionException exception) {
+            handleDuplicate(method, exception);
+        } else if (cause instanceof InvocationTargetException exception) {
+            handleException(method, exception);
         }
     }
 
     void handleException(Method method, InvocationTargetException e) {
         Throwable cause = e.getCause();
         logger.error(MSG_ERROR, toString(method), target, cause == null ? "" : cause.getMessage(), e.getCause());
-        if (exceptionHandler != null) {
-            exceptionHandler.accept(cause == null ? e : cause);
+        Consumer<Throwable> localConsumer = exceptionHandler;
+        if (localConsumer != null) {
+            localConsumer.accept(cause == null ? e : cause);
         }
     }
 
     void handleDuplicate(Method method, DuplicateExecutionException e) {
-        Thread thread = e.getCallable().getThread();
+        Thread thread = Objects.requireNonNull(e.getCallable().getThread());
         logger.debug(MSG_DUPLICATE, toString(method), target, toString(e.getCallable().getMethod()), thread.getName(),
-                thread.getId(), thread.getState().toString(), getStacktrace(thread));
+                thread.threadId(), thread.getState().toString(), getStacktrace(thread));
     }
 
     void handleTimeout(Method method, Invocation invocation) {
         final Thread thread = invocation.getThread();
         if (thread != null) {
             logger.debug(MSG_TIMEOUT_R, timeout, toString(invocation.getInvocationStack()), thread.getName(),
-                    thread.getId(), thread.getState().toString(), getStacktrace(thread));
+                    thread.threadId(), thread.getState().toString(), getStacktrace(thread));
         } else {
             logger.debug(MSG_TIMEOUT_Q, timeout, toString(invocation.getInvocationStack()));
         }
-        if (timeoutHandler != null) {
-            timeoutHandler.run();
+        if (timeoutHandler instanceof Runnable handler) {
+            handler.run();
         }
     }
 
@@ -130,13 +130,8 @@ abstract class AbstractInvocationHandler<T> {
     }
 
     private String getStacktrace(final Thread thread) {
-        StackTraceElement[] elements = AccessController.doPrivileged(new PrivilegedAction<StackTraceElement[]>() {
-            @Override
-            public StackTraceElement[] run() {
-                return thread.getStackTrace();
-            }
-        });
-        return Arrays.stream(elements).map(element -> "\tat " + element.toString()).collect(Collectors.joining("\n"));
+        StackTraceElement[] elements = thread.getStackTrace();
+        return Arrays.stream(elements).map(element -> "\tat " + element).collect(Collectors.joining("\n"));
     }
 
     String toString(Method method) {

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -41,8 +41,7 @@ public class DimmerItemTest {
     private static BigDecimal getState(final Item item, Class<? extends State> typeClass) {
         final State state = item.getStateAs(typeClass);
         final String str = state.toString();
-        final BigDecimal result = new BigDecimal(str);
-        return result;
+        return new BigDecimal(str);
     }
 
     @Test
@@ -50,7 +49,7 @@ public class DimmerItemTest {
         final BigDecimal origin = new BigDecimal(25);
         final DimmerItem item = createDimmerItem(new PercentType(origin));
         final BigDecimal result = getState(item, PercentType.class);
-        assertEquals(origin.compareTo(result), 0);
+        assertEquals(0, origin.compareTo(result));
     }
 
     @Test

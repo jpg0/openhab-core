@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,10 +12,16 @@
  */
 package org.openhab.core.io.rest.core.internal.item;
 
+import java.security.Principal;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -38,20 +44,24 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Request;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.ResponseBuilder;
 import javax.ws.rs.core.Response.Status;
+import javax.ws.rs.core.SecurityContext;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.auth.Role;
+import org.openhab.core.common.registry.RegistryChangedRunnableListener;
+import org.openhab.core.events.AbstractEvent;
 import org.openhab.core.events.EventPublisher;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.io.rest.DTOMapper;
 import org.openhab.core.io.rest.JSONResponse;
 import org.openhab.core.io.rest.LocaleService;
@@ -68,23 +78,32 @@ import org.openhab.core.items.ItemBuilderFactory;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.ManagedItemProvider;
+import org.openhab.core.items.ManagedMetadataProvider;
 import org.openhab.core.items.Metadata;
 import org.openhab.core.items.MetadataKey;
 import org.openhab.core.items.MetadataRegistry;
 import org.openhab.core.items.dto.GroupItemDTO;
+import org.openhab.core.items.dto.ItemDTO;
 import org.openhab.core.items.dto.ItemDTOMapper;
 import org.openhab.core.items.dto.MetadataDTO;
 import org.openhab.core.items.events.ItemEventFactory;
+import org.openhab.core.library.items.DateTimeItem;
 import org.openhab.core.library.items.RollershutterItem;
 import org.openhab.core.library.items.SwitchItem;
+import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.RawType;
 import org.openhab.core.library.types.UpDownType;
+import org.openhab.core.semantics.ItemSemanticsProblem;
+import org.openhab.core.semantics.SemanticTagRegistry;
+import org.openhab.core.semantics.SemanticsPredicates;
+import org.openhab.core.semantics.SemanticsService;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.openhab.core.types.TypeParser;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.jaxrs.whiteboard.JaxrsWhiteboardConstants;
 import org.osgi.service.jaxrs.whiteboard.propertytypes.JSONRequired;
@@ -101,6 +120,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -127,6 +147,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Stefan Triller - Added bulk item add method
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Mark Herwege - Added option to retrieve item groups with item REST call
  */
 @Component
 @JaxrsResource
@@ -137,6 +158,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 @Tag(name = ItemResource.PATH_ITEMS)
 @NonNullByDefault
 public class ItemResource implements RESTResource {
+    private static final String REST_SOURCE = "org.openhab.core.io.rest";
 
     /** The URI path to this resource */
     public static final String PATH_ITEMS = "items";
@@ -162,7 +184,6 @@ public class ItemResource implements RESTResource {
     }
 
     private final Logger logger = LoggerFactory.getLogger(ItemResource.class);
-
     private final DTOMapper dtoMapper;
     private final EventPublisher eventPublisher;
     private final ItemBuilderFactory itemBuilderFactory;
@@ -170,7 +191,18 @@ public class ItemResource implements RESTResource {
     private final LocaleService localeService;
     private final ManagedItemProvider managedItemProvider;
     private final MetadataRegistry metadataRegistry;
+    private final ManagedMetadataProvider managedMetadataProvider;
     private final MetadataSelectorMatcher metadataSelectorMatcher;
+    private final SemanticTagRegistry semanticTagRegistry;
+    private final SemanticsService semanticsService;
+    private final TimeZoneProvider timeZoneProvider;
+
+    private final RegistryChangedRunnableListener<Item> resetLastModifiedItemChangeListener = new RegistryChangedRunnableListener<>(
+            () -> lastModified = null);
+    private final RegistryChangedRunnableListener<Metadata> resetLastModifiedMetadataChangeListener = new RegistryChangedRunnableListener<>(
+            () -> lastModified = null);
+
+    private @Nullable Date lastModified = null;
 
     @Activate
     public ItemResource(//
@@ -181,7 +213,10 @@ public class ItemResource implements RESTResource {
             final @Reference LocaleService localeService, //
             final @Reference ManagedItemProvider managedItemProvider,
             final @Reference MetadataRegistry metadataRegistry,
-            final @Reference MetadataSelectorMatcher metadataSelectorMatcher) {
+            final @Reference ManagedMetadataProvider managedMetadataProvider,
+            final @Reference MetadataSelectorMatcher metadataSelectorMatcher,
+            final @Reference SemanticTagRegistry semanticTagRegistry,
+            final @Reference SemanticsService semanticsService, final @Reference TimeZoneProvider timeZoneProvider) {
         this.dtoMapper = dtoMapper;
         this.eventPublisher = eventPublisher;
         this.itemBuilderFactory = itemBuilderFactory;
@@ -189,7 +224,20 @@ public class ItemResource implements RESTResource {
         this.localeService = localeService;
         this.managedItemProvider = managedItemProvider;
         this.metadataRegistry = metadataRegistry;
+        this.managedMetadataProvider = managedMetadataProvider;
         this.metadataSelectorMatcher = metadataSelectorMatcher;
+        this.semanticTagRegistry = semanticTagRegistry;
+        this.semanticsService = semanticsService;
+        this.timeZoneProvider = timeZoneProvider;
+
+        this.itemRegistry.addRegistryChangeListener(resetLastModifiedItemChangeListener);
+        this.metadataRegistry.addRegistryChangeListener(resetLastModifiedMetadataChangeListener);
+    }
+
+    @Deactivate
+    void deactivate() {
+        this.itemRegistry.removeRegistryChangeListener(resetLastModifiedItemChangeListener);
+        this.metadataRegistry.removeRegistryChangeListener(resetLastModifiedMetadataChangeListener);
     }
 
     private UriBuilder uriBuilder(final UriInfo uriInfo, final HttpHeaders httpHeaders) {
@@ -202,54 +250,138 @@ public class ItemResource implements RESTResource {
     @RolesAllowed({ Role.USER, Role.ADMIN })
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getItems", summary = "Get all available items.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = EnrichedItemDTO.class)))) })
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(oneOf = {
+                    EnrichedItemDTO.class, EnrichedGroupItemDTO.class })))) })
     public Response getItems(final @Context UriInfo uriInfo, final @Context HttpHeaders httpHeaders,
+            @Context Request request,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
             @QueryParam("type") @Parameter(description = "item type filter") @Nullable String type,
             @QueryParam("tags") @Parameter(description = "item tag filter") @Nullable String tags,
-            @QueryParam("metadata") @Parameter(description = "metadata selector - a comma separated list or a regular expression (suppressed if no value given)") @Nullable String namespaceSelector,
+            @DefaultValue(".*") @QueryParam("metadata") @Parameter(description = "metadata selector - a comma separated list or a regular expression (returns all if no value given)") @Nullable String namespaceSelector,
             @DefaultValue("false") @QueryParam("recursive") @Parameter(description = "get member items recursively") boolean recursive,
-            @QueryParam("fields") @Parameter(description = "limit output to the given fields (comma separated)") @Nullable String fields) {
+            @DefaultValue("false") @QueryParam("parents") @Parameter(description = "get parent group items recursively") boolean parents,
+            @QueryParam("fields") @Parameter(description = "limit output to the given fields (comma separated)") @Nullable String fields,
+            @DefaultValue("false") @QueryParam("staticDataOnly") @Parameter(description = "provides a cacheable list of values not expected to change regularly and checks the If-Modified-Since header, all other parameters are ignored except \"metadata\"") boolean staticDataOnly) {
         final Locale locale = localeService.getLocale(language);
+        final ZoneId zoneId = timeZoneProvider.getTimeZone();
         final Set<String> namespaces = splitAndFilterNamespaces(namespaceSelector, locale);
 
         final UriBuilder uriBuilder = uriBuilder(uriInfo, httpHeaders);
 
+        if (staticDataOnly) {
+            if (lastModified != null) {
+                Response.ResponseBuilder responseBuilder = request.evaluatePreconditions(lastModified);
+                if (responseBuilder != null) {
+                    // send 304 Not Modified
+                    return responseBuilder.build();
+                }
+            } else {
+                lastModified = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
+            }
+
+            Stream<EnrichedItemDTO> itemStream = getItems(type, tags).stream() //
+                    .map(item -> EnrichedItemDTOMapper.map(item, false, null, uriBuilder, locale, zoneId)) //
+                    .peek(dto -> addMetadata(dto, namespaces, null)) //
+                    .peek(dto -> dto.editable = isEditable(dto));
+            itemStream = dtoMapper.limitToFields(itemStream,
+                    "name,label,type,groupType,function,category,editable,groupNames,link,tags,metadata,commandDescription,stateDescription");
+
+            return Response.ok(new Stream2JSONInputStream(itemStream)).lastModified(lastModified)
+                    .cacheControl(RESTConstants.CACHE_CONTROL).build();
+        }
+
         Stream<EnrichedItemDTO> itemStream = getItems(type, tags).stream() //
-                .map(item -> EnrichedItemDTOMapper.map(item, recursive, null, uriBuilder, locale)) //
-                .peek(dto -> addMetadata(dto, namespaces, null)) //
-                .peek(dto -> dto.editable = isEditable(dto.name));
+                .map(item -> EnrichedItemDTOMapper.map(item, recursive, null, uriBuilder, locale, zoneId)) //
+                .peek(dto -> {
+                    if (parents) {
+                        addParents(dto, uriInfo, httpHeaders, locale, zoneId);
+                    }
+                }).peek(dto -> addMetadata(dto, namespaces, null)) //
+                .peek(dto -> dto.editable = isEditable(dto)) //
+                .peek(dto -> {
+                    if (dto instanceof EnrichedGroupItemDTO enrichedGroupItemDTO) {
+                        for (EnrichedItemDTO member : enrichedGroupItemDTO.members) {
+                            member.editable = isEditable(member);
+                        }
+                    }
+                    if (dto.parents != null) {
+                        for (EnrichedItemDTO parent : dto.parents) {
+                            parent.editable = isEditable(parent);
+                        }
+                    }
+                });
+
         itemStream = dtoMapper.limitToFields(itemStream, fields);
         return Response.ok(new Stream2JSONInputStream(itemStream)).build();
     }
 
+    /**
+     *
+     * @param itemName name of the item
+     * @return the namesspace of that item
+     */
     @GET
     @RolesAllowed({ Role.USER, Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/metadata/namespaces")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "getItemNamespaces", summary = "Gets the namespace of an item.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "404", description = "Item not found") })
+    public Response getItemNamespaces(@PathParam("itemName") @Parameter(description = "item name") String itemName,
+            @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language) {
+        final Item item = getItem(itemName);
+
+        if (item != null) {
+            final Collection<String> namespaces = metadataRegistry.getAllNamespaces(itemName);
+            return Response.ok(new Stream2JSONInputStream(namespaces.stream())).build();
+        } else {
+            return getItemNotFoundResponse(itemName);
+        }
+    }
+
+    @GET
+    @RolesAllowed({ Role.USER, Role.ADMIN })
+    @Path("/{itemName: [a-zA-Z_0-9]+}")
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getItemByName", summary = "Gets a single item.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedItemDTO.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(oneOf = {
+                    EnrichedItemDTO.class, EnrichedGroupItemDTO.class }))),
             @ApiResponse(responseCode = "404", description = "Item not found") })
-    public Response getItemData(final @Context UriInfo uriInfo, final @Context HttpHeaders httpHeaders,
+    public Response getItemByName(final @Context UriInfo uriInfo, final @Context HttpHeaders httpHeaders,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
-            @QueryParam("metadata") @Parameter(description = "metadata selector - a comma separated list or a regular expression (suppressed if no value given)") @Nullable String namespaceSelector,
+            @DefaultValue(".*") @QueryParam("metadata") @Parameter(description = "metadata selector - a comma separated list or a regular expression (returns all if no value given)") @Nullable String namespaceSelector,
             @DefaultValue("true") @QueryParam("recursive") @Parameter(description = "get member items if the item is a group item") boolean recursive,
-            @PathParam("itemname") @Parameter(description = "item name") String itemname) {
+            @DefaultValue("false") @QueryParam("parents") @Parameter(description = "get parent group items recursively") boolean parents,
+            @PathParam("itemName") @Parameter(description = "item name") String itemName) {
         final Locale locale = localeService.getLocale(language);
+        final ZoneId zoneId = timeZoneProvider.getTimeZone();
         final Set<String> namespaces = splitAndFilterNamespaces(namespaceSelector, locale);
 
         // get item
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         // if it exists
         if (item != null) {
             EnrichedItemDTO dto = EnrichedItemDTOMapper.map(item, recursive, null, uriBuilder(uriInfo, httpHeaders),
-                    locale);
+                    locale, zoneId);
+            if (parents) {
+                addParents(dto, uriInfo, httpHeaders, locale, zoneId);
+            }
             addMetadata(dto, namespaces, null);
-            dto.editable = isEditable(dto.name);
+            dto.editable = isEditable(dto);
+            if (dto instanceof EnrichedGroupItemDTO enrichedGroupItemDTO) {
+                for (EnrichedItemDTO member : enrichedGroupItemDTO.members) {
+                    member.editable = isEditable(member);
+                }
+            }
+            if (dto.parents != null) {
+                for (EnrichedItemDTO parent : dto.parents) {
+                    parent.editable = isEditable(parent);
+                }
+            }
             return JSONResponse.createResponse(Status.OK, dto, null);
         } else {
-            return getItemNotFoundResponse(itemname);
+            return getItemNotFoundResponse(itemName);
         }
     }
 
@@ -259,56 +391,62 @@ public class ItemResource implements RESTResource {
 
     /**
      *
-     * @param itemname
-     * @return
+     * @param itemName item name to get the state from
+     * @return the state of the item as mime-type text/plain
      */
     @GET
     @RolesAllowed({ Role.USER, Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/state")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/state")
     @Produces(MediaType.TEXT_PLAIN)
     @Operation(operationId = "getItemState", summary = "Gets the state of an item.", responses = {
             @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
             @ApiResponse(responseCode = "404", description = "Item not found") })
-    public Response getPlainItemState(@PathParam("itemname") @Parameter(description = "item name") String itemname) {
+    public Response getPlainItemState(@PathParam("itemName") @Parameter(description = "item name") String itemName) {
         // get item
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         // if it exists
         if (item != null) {
+            if (item instanceof DateTimeItem dateTimeItem) {
+                DateTimeType dateTime = dateTimeItem.getStateAs(DateTimeType.class);
+                if (dateTime != null) {
+                    return Response.ok(dateTime.toFullString(timeZoneProvider.getTimeZone())).build();
+                }
+            }
             // we cannot use JSONResponse.createResponse() bc. MediaType.TEXT_PLAIN
             // return JSONResponse.createResponse(Status.OK, item.getState().toString(), null);
             return Response.ok(item.getState().toFullString()).build();
         } else {
-            return getItemNotFoundResponse(itemname);
+            return getItemNotFoundResponse(itemName);
         }
     }
 
     /**
      *
-     * @param itemname
-     * @return
+     * @param itemName the item from which to get the binary state
+     * @return the binary state of the item
      */
     @GET
     @RolesAllowed({ Role.USER, Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/state")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/state")
     @Operation(operationId = "getItemState", summary = "Gets the state of an item.", responses = {
             @ApiResponse(responseCode = "200", description = "OK"),
             @ApiResponse(responseCode = "400", description = "Item state is not RawType"),
             @ApiResponse(responseCode = "404", description = "Item not found"),
             @ApiResponse(responseCode = "415", description = "MediaType not supported by item state") })
     public Response getBinaryItemState(@HeaderParam("Accept") @Nullable String mediaType,
-            @PathParam("itemname") @Parameter(description = "item name") String itemname) {
+            @PathParam("itemName") @Parameter(description = "item name") String itemName) {
         List<String> acceptedMediaTypes = Arrays.stream(Objects.requireNonNullElse(mediaType, "").split(","))
-                .peek(String::trim).collect(Collectors.toList());
-        // get item
-        Item item = getItem(itemname);
+                .map(String::trim).toList();
+
+        Item item = getItem(itemName);
 
         // if it exists
         if (item != null) {
             State state = item.getState();
-            if (state instanceof RawType) {
-                String mimeType = ((RawType) state).getMimeType();
-                byte[] data = ((RawType) state).getBytes();
+            if (state instanceof RawType type) {
+                String mimeType = type.getMimeType();
+                byte[] data = type.getBytes();
                 if ((acceptedMediaTypes.contains("image/*") && mimeType.startsWith("image/"))
                         || acceptedMediaTypes.contains(mimeType)) {
                     return Response.ok(data).type(mimeType).build();
@@ -326,20 +464,53 @@ public class ItemResource implements RESTResource {
 
     @PUT
     @RolesAllowed({ Role.USER, Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/state")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/state")
     @Consumes(MediaType.TEXT_PLAIN)
-    @Operation(operationId = "updateItemState", summary = "Updates the state of an item.", responses = {
-            @ApiResponse(responseCode = "202", description = "Accepted"),
-            @ApiResponse(responseCode = "404", description = "Item not found"),
-            @ApiResponse(responseCode = "400", description = "Item state null") })
-    public Response putItemState(
+    @Operation(operationId = "updateItemState", summary = "Updates the state of an item.", requestBody = @RequestBody(description = "Valid item state (e.g., ON, OFF) either as plain text or JSON", required = true, content = {
+            @Content(mediaType = MediaType.TEXT_PLAIN, schema = @Schema(type = "string", example = "ON")),
+            @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(type = "string", example = "{ \"value\": \"ON\", \"source\": null }")) }), responses = {
+                    @ApiResponse(responseCode = "202", description = "Accepted"),
+                    @ApiResponse(responseCode = "404", description = "Item not found"),
+                    @ApiResponse(responseCode = "400", description = "State cannot be parsed") })
+    public Response putItemStatePlain(
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
-            @PathParam("itemname") @Parameter(description = "item name") String itemname,
-            @Parameter(description = "valid item state (e.g. ON, OFF)", required = true) String value) {
+            @HeaderParam("X-OpenHAB-Source") @Parameter(description = "the source of the event; takes priority over the query parameter or JSON body if multiple are set") @Nullable String headerSource,
+            @PathParam("itemName") @Parameter(description = "item name") String itemName,
+            @Parameter(description = "valid item state (e.g. ON, OFF)", required = true) String value,
+            @QueryParam("source") @Parameter(description = "the source of the event") @Nullable String querySource,
+            @Context SecurityContext securityContext) {
+        String source = headerSource != null ? headerSource : querySource;
+        return sendItemStateInternal(language, itemName, value, source, securityContext);
+    }
+
+    @PUT
+    @RolesAllowed({ Role.USER, Role.ADMIN })
+    @Path("/{itemName: [a-zA-Z_0-9]+}/state")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response putItemStateJson(@HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Nullable String language,
+            @HeaderParam("X-OpenHAB-Source") @Nullable String headerSource,
+            @QueryParam("source") @Nullable String querySource, @PathParam("itemName") String itemName,
+            @Context SecurityContext securityContext, ValueContainer valueContainer) {
+        String source;
+        if (headerSource != null) {
+            source = headerSource;
+        } else if (valueContainer.source() != null) {
+            source = valueContainer.source();
+        } else {
+            source = querySource;
+        }
+        return sendItemStateInternal(language, itemName, valueContainer.value(), source, securityContext);
+    }
+
+    private Response sendItemStateInternal(@Nullable String language, String itemName, String value,
+            @Nullable String source, SecurityContext securityContext) {
         final Locale locale = localeService.getLocale(language);
+        final ZoneId zoneId = timeZoneProvider.getTimeZone();
+
+        String eventSource = buildSource(source, securityContext);
 
         // get Item
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         // if Item exists
         if (item != null) {
@@ -348,30 +519,61 @@ public class ItemResource implements RESTResource {
 
             if (state != null) {
                 // set State and report OK
-                eventPublisher.post(ItemEventFactory.createStateEvent(itemname, state));
-                return getItemResponse(null, Status.ACCEPTED, null, locale, null);
+                eventPublisher.post(ItemEventFactory.createStateEvent(itemName, state, eventSource));
+                return getItemResponse(null, Status.ACCEPTED, null, locale, zoneId, null);
             } else {
                 // State could not be parsed
                 return JSONResponse.createErrorResponse(Status.BAD_REQUEST, "State could not be parsed: " + value);
             }
         } else {
             // Item does not exist
-            return getItemNotFoundResponse(itemname);
+            return getItemNotFoundResponse(itemName);
         }
     }
 
     @POST
     @RolesAllowed({ Role.USER, Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}")
     @Consumes(MediaType.TEXT_PLAIN)
-    @Operation(operationId = "sendItemCommand", summary = "Sends a command to an item.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK"),
-            @ApiResponse(responseCode = "404", description = "Item not found"),
-            @ApiResponse(responseCode = "400", description = "Item command null") })
-    public Response postItemCommand(@PathParam("itemname") @Parameter(description = "item name") String itemname,
-            @Parameter(description = "valid item command (e.g. ON, OFF, UP, DOWN, REFRESH)", required = true) String value) {
-        Item item = getItem(itemname);
+    @Operation(operationId = "sendItemCommand", summary = "Sends a command to an item.", requestBody = @RequestBody(description = "Valid item command (e.g., ON, OFF) either as plain text or JSON", required = true, content = {
+            @Content(mediaType = MediaType.TEXT_PLAIN, schema = @Schema(type = "string", example = "ON")),
+            @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(type = "string", example = "{ \"value\": \"ON\", \"source\": \"org.openhab.ios\" }")) }), responses = {
+                    @ApiResponse(responseCode = "200", description = "OK"),
+                    @ApiResponse(responseCode = "404", description = "Item not found"),
+                    @ApiResponse(responseCode = "400", description = "Command cannot be parsed") })
+    public Response postItemCommandPlain(
+            @HeaderParam("X-OpenHAB-Source") @Parameter(description = "the source of the command; takes priority over the query parameter or JSON body if multiple are set") @Nullable String headerSource,
+            @PathParam("itemName") @Parameter(description = "item name") String itemName,
+            @Parameter(description = "valid item command (e.g. ON, OFF, UP, DOWN, REFRESH)", required = true) String value,
+            @QueryParam("source") @Parameter(description = "the source of the command") @Nullable String querySource,
+            @Context SecurityContext securityContext) {
+        String source = headerSource != null ? headerSource : querySource;
+        return sendItemCommandInternal(itemName, value, source, securityContext);
+    }
+
+    @POST
+    @RolesAllowed({ Role.USER, Role.ADMIN })
+    @Path("/{itemName: [a-zA-Z_0-9]+}")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response postItemCommandJson(@HeaderParam("X-OpenHAB-Source") @Nullable String headerSource,
+            @PathParam("itemName") String itemName, @QueryParam("source") @Nullable String querySource,
+            @Context SecurityContext securityContext, ValueContainer valueContainer) {
+        String source;
+        if (headerSource != null) {
+            source = headerSource;
+        } else if (valueContainer.source() != null) {
+            source = valueContainer.source();
+        } else {
+            source = querySource;
+        }
+        return sendItemCommandInternal(itemName, valueContainer.value(), source, securityContext);
+    }
+
+    private Response sendItemCommandInternal(String itemName, String value, @Nullable String source,
+            SecurityContext securityContext) {
+        Item item = getItem(itemName);
         Command command = null;
+        String eventSource = buildSource(source, securityContext);
         if (item != null) {
             if ("toggle".equalsIgnoreCase(value) && (item instanceof SwitchItem || item instanceof RollershutterItem)) {
                 if (OnOffType.ON.equals(item.getStateAs(OnOffType.class))) {
@@ -390,7 +592,7 @@ public class ItemResource implements RESTResource {
                 command = TypeParser.parseCommand(item.getAcceptedCommandTypes(), value);
             }
             if (command != null) {
-                eventPublisher.post(ItemEventFactory.createCommandEvent(itemname, command));
+                eventPublisher.post(ItemEventFactory.createCommandEvent(itemName, command, eventSource));
                 ResponseBuilder resbuilder = Response.ok();
                 resbuilder.type(MediaType.TEXT_PLAIN);
                 return resbuilder.build();
@@ -398,7 +600,7 @@ public class ItemResource implements RESTResource {
                 return Response.status(Status.BAD_REQUEST).build();
             }
         } else {
-            throw new WebApplicationException(404);
+            return getItemNotFoundResponse(itemName);
         }
     }
 
@@ -437,7 +639,7 @@ public class ItemResource implements RESTResource {
 
             return Response.ok(null, MediaType.TEXT_PLAIN).build();
         } catch (ItemNotFoundException e) {
-            return Response.status(Status.NOT_FOUND).build();
+            return getItemNotFoundResponse(itemName);
         }
     }
 
@@ -476,19 +678,19 @@ public class ItemResource implements RESTResource {
 
             return Response.ok(null, MediaType.TEXT_PLAIN).build();
         } catch (ItemNotFoundException e) {
-            return Response.status(Status.NOT_FOUND).build();
+            return getItemNotFoundResponse(itemName);
         }
     }
 
     @DELETE
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}")
     @Operation(operationId = "removeItemFromRegistry", summary = "Removes an item from the registry.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
                     @ApiResponse(responseCode = "404", description = "Item not found or item is not editable.") })
-    public Response removeItem(@PathParam("itemname") @Parameter(description = "item name") String itemname) {
-        if (managedItemProvider.remove(itemname) == null) {
+    public Response removeItem(@PathParam("itemName") @Parameter(description = "item name") String itemName) {
+        if (managedItemProvider.remove(itemName) == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
         return Response.ok(null, MediaType.TEXT_PLAIN).build();
@@ -496,21 +698,21 @@ public class ItemResource implements RESTResource {
 
     @PUT
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/tags/{tag}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/tags/{tag}")
     @Operation(operationId = "addTagToItem", summary = "Adds a tag to an item.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
                     @ApiResponse(responseCode = "404", description = "Item not found."),
                     @ApiResponse(responseCode = "405", description = "Item not editable.") })
-    public Response addTag(@PathParam("itemname") @Parameter(description = "item name") String itemname,
+    public Response addTag(@PathParam("itemName") @Parameter(description = "item name") String itemName,
             @PathParam("tag") @Parameter(description = "tag") String tag) {
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         if (item == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        if (managedItemProvider.get(itemname) == null) {
+        if (managedItemProvider.get(itemName) == null) {
             return Response.status(Status.METHOD_NOT_ALLOWED).build();
         }
 
@@ -522,21 +724,21 @@ public class ItemResource implements RESTResource {
 
     @DELETE
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/tags/{tag}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/tags/{tag}")
     @Operation(operationId = "removeTagFromItem", summary = "Removes a tag from an item.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
                     @ApiResponse(responseCode = "404", description = "Item not found."),
                     @ApiResponse(responseCode = "405", description = "Item not editable.") })
-    public Response removeTag(@PathParam("itemname") @Parameter(description = "item name") String itemname,
+    public Response removeTag(@PathParam("itemName") @Parameter(description = "item name") String itemName,
             @PathParam("tag") @Parameter(description = "tag") String tag) {
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         if (item == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        if (managedItemProvider.get(itemname) == null) {
+        if (managedItemProvider.get(itemName) == null) {
             return Response.status(Status.METHOD_NOT_ALLOWED).build();
         }
 
@@ -548,96 +750,158 @@ public class ItemResource implements RESTResource {
 
     @PUT
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/metadata/{namespace}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}/metadata/{namespace}")
     @Consumes(MediaType.APPLICATION_JSON)
     @Operation(operationId = "addMetadataToItem", summary = "Adds metadata to an item.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = { //
                     @ApiResponse(responseCode = "200", description = "OK"), //
                     @ApiResponse(responseCode = "201", description = "Created"), //
-                    @ApiResponse(responseCode = "400", description = "Metadata value empty."), //
                     @ApiResponse(responseCode = "404", description = "Item not found."), //
-                    @ApiResponse(responseCode = "405", description = "Metadata not editable.") })
-    public Response addMetadata(@PathParam("itemname") @Parameter(description = "item name") String itemname,
+                    @ApiResponse(responseCode = "405", description = "Metadata not editable."),
+                    @ApiResponse(responseCode = "503", description = "Managed provider not available.") })
+    public Response addMetadata(@PathParam("itemName") @Parameter(description = "item name") String itemName,
             @PathParam("namespace") @Parameter(description = "namespace") String namespace,
             @Parameter(description = "metadata", required = true) MetadataDTO metadata) {
-        Item item = getItem(itemname);
+        Item item = getItem(itemName);
 
         if (item == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
         String value = metadata.value;
-        if (value == null || value.isEmpty()) {
-            return Response.status(Status.BAD_REQUEST).build();
+        if (value == null) {
+            value = "";
         }
 
-        MetadataKey key = new MetadataKey(namespace, itemname);
+        MetadataKey key = new MetadataKey(namespace, itemName);
         Metadata md = new Metadata(key, value, metadata.config);
-        if (metadataRegistry.get(key) == null) {
-            metadataRegistry.add(md);
-            return Response.status(Status.CREATED).type(MediaType.TEXT_PLAIN).build();
-        } else {
-            metadataRegistry.update(md);
-            return Response.ok(null, MediaType.TEXT_PLAIN).build();
+        try {
+            if (metadataRegistry.get(key) == null) {
+                metadataRegistry.add(md);
+                return Response.status(Status.CREATED).type(MediaType.TEXT_PLAIN).build();
+            } else {
+                if (metadataRegistry.update(md) == null) {
+                    // Exists, but not managed
+                    return Response.status(Status.METHOD_NOT_ALLOWED).build();
+                }
+                return Response.ok(null, MediaType.TEXT_PLAIN).build();
+            }
+        } catch (UnsupportedOperationException e) {
+            // Trying to add to a reserved namespace that is in an unmanaged provider
+            return JSONResponse.createErrorResponse(Status.METHOD_NOT_ALLOWED, e.getMessage());
+        } catch (IllegalStateException e) {
+            // There is no managed provider available
+            return Response.status(Status.SERVICE_UNAVAILABLE).build();
         }
     }
 
     @DELETE
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}/metadata/{namespace}")
-    @Operation(operationId = "removeMetadataFromItem", summary = "Removes metadata from an item.", security = {
+    @Path("/{itemName: [a-zA-Z_0-9]+}/metadata")
+    @Operation(operationId = "removeAllMetadataFromItem", summary = "Removes all managed metadata from an item.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
-                    @ApiResponse(responseCode = "404", description = "Item not found."),
-                    @ApiResponse(responseCode = "405", description = "Meta data not editable.") })
-    public Response removeMetadata(@PathParam("itemname") @Parameter(description = "item name") String itemname,
-            @PathParam("namespace") @Parameter(description = "namespace") String namespace) {
-        Item item = getItem(itemname);
+                    @ApiResponse(responseCode = "404", description = "Item not found.") })
+    public Response removeAllMetadata(@PathParam("itemName") @Parameter(description = "item name") String itemName) {
+        Item item = getItem(itemName);
 
         if (item == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        MetadataKey key = new MetadataKey(namespace, itemname);
-        if (metadataRegistry.get(key) != null) {
-            if (metadataRegistry.remove(key) == null) {
-                return Response.status(Status.CONFLICT).build();
-            }
-        } else {
+        metadataRegistry.removeItemMetadata(itemName);
+        return Response.ok(null, MediaType.TEXT_PLAIN).build();
+    }
+
+    @DELETE
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/{itemName: [a-zA-Z_0-9]+}/metadata/{namespace}")
+    @Operation(operationId = "removeMetadataFromItem", summary = "Removes metadata in a specific namespace from an item.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK"),
+                    @ApiResponse(responseCode = "404", description = "Item or namespace not found."),
+                    @ApiResponse(responseCode = "405", description = "Metadata not editable."),
+                    @ApiResponse(responseCode = "503", description = "Managed provider not available.") })
+    public Response removeMetadata(@PathParam("itemName") @Parameter(description = "item name") String itemName,
+            @PathParam("namespace") @Parameter(description = "namespace") String namespace) {
+        Item item = getItem(itemName);
+
+        if (item == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        return Response.ok(null, MediaType.TEXT_PLAIN).build();
+        MetadataKey key = new MetadataKey(namespace, itemName);
+        try {
+            if (metadataRegistry.get(key) != null) {
+                Metadata removedMetadata = metadataRegistry.remove(key);
+                if (removedMetadata != null) {
+                    return Response.ok(null, MediaType.TEXT_PLAIN).build();
+                }
+                if (metadataRegistry.get(key) != null) {
+                    // Exists, but not managed, and not removed in the mean time
+                    return Response.status(Status.METHOD_NOT_ALLOWED).build();
+                }
+            }
+            return Response.status(Status.NOT_FOUND).build();
+        } catch (UnsupportedOperationException e) {
+            // Trying to remove from a reserved namespace that is in an unmanaged provider
+            return JSONResponse.createErrorResponse(Status.METHOD_NOT_ALLOWED, e.getMessage());
+        } catch (IllegalStateException e) {
+            // There is no managed provider available
+            return Response.status(Status.SERVICE_UNAVAILABLE).build();
+        }
+    }
+
+    @POST
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/metadata/purge")
+    @Operation(operationId = "purgeDatabase", summary = "Remove unused/orphaned metadata.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK") })
+    public Response purge() {
+        Collection<String> itemNames = itemRegistry.stream().map(Item::getName)
+                .collect(Collectors.toCollection(HashSet::new));
+
+        metadataRegistry.getAll().stream().filter(md -> !itemNames.contains(md.getUID().getItemName())).forEach(md -> {
+            try {
+                metadataRegistry.remove(md.getUID());
+            } catch (UnsupportedOperationException | IllegalStateException e) {
+                // ignore metadata that cannot be removed
+            }
+        });
+        return Response.ok().build();
     }
 
     /**
      * Create or Update an item by supplying an item bean.
      *
-     * @param itemname
+     * @param itemName the item name
      * @param item the item bean.
-     * @return
+     * @return Response configured to represent the Item in depending on the status
      */
     @PUT
     @RolesAllowed({ Role.ADMIN })
-    @Path("/{itemname: [a-zA-Z_0-9]+}")
+    @Path("/{itemName: [a-zA-Z_0-9]+}")
     @Consumes(MediaType.APPLICATION_JSON)
-    @Operation(operationId = "addOrUpdateItemInRegistry", summary = "Adds a new item to the registry or updates the existing item.", security = {
-            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
-                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedItemDTO.class))),
-                    @ApiResponse(responseCode = "201", description = "Item created."),
-                    @ApiResponse(responseCode = "400", description = "Payload invalid."),
-                    @ApiResponse(responseCode = "404", description = "Item not found or name in path invalid."),
-                    @ApiResponse(responseCode = "405", description = "Item not editable.") })
+    @Operation(operationId = "addOrUpdateItemInRegistry", summary = "Adds a new item to the registry or updates the existing item.", requestBody = @RequestBody(description = "item data", required = true, content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(oneOf = {
+            ItemDTO.class, GroupItemDTO.class }))), security = {
+                    @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedItemDTO.class))),
+                            @ApiResponse(responseCode = "201", description = "Item created."),
+                            @ApiResponse(responseCode = "400", description = "Payload invalid."),
+                            @ApiResponse(responseCode = "404", description = "Item not found or name in path invalid."),
+                            @ApiResponse(responseCode = "405", description = "Item not editable.") })
     public Response createOrUpdateItem(final @Context UriInfo uriInfo, final @Context HttpHeaders httpHeaders,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
-            @PathParam("itemname") @Parameter(description = "item name") String itemname,
+            @PathParam("itemName") @Parameter(description = "item name") String itemName,
             @Parameter(description = "item data", required = true) @Nullable GroupItemDTO item) {
         final Locale locale = localeService.getLocale(language);
+        final ZoneId zoneId = timeZoneProvider.getTimeZone();
 
         // If we didn't get an item bean, then return!
         if (item == null) {
             return Response.status(Status.BAD_REQUEST).build();
-        } else if (!itemname.equalsIgnoreCase((item.name))) {
+        } else if (!itemName.equalsIgnoreCase((item.name))) {
             logger.warn(
                     "Received HTTP PUT request at '{}' with an item name '{}' that does not match the one in the url.",
                     uriInfo.getPath(), item.name);
@@ -653,21 +917,21 @@ public class ItemResource implements RESTResource {
             }
 
             // Save the item
-            if (getItem(itemname) == null) {
+            if (getItem(itemName) == null) {
                 // item does not yet exist, create it
                 managedItemProvider.add(newItem);
-                return getItemResponse(uriBuilder(uriInfo, httpHeaders), Status.CREATED, itemRegistry.get(itemname),
-                        locale, null);
-            } else if (managedItemProvider.get(itemname) != null) {
+                return getItemResponse(uriBuilder(uriInfo, httpHeaders), Status.CREATED, itemRegistry.get(itemName),
+                        locale, zoneId, null);
+            } else if (managedItemProvider.get(itemName) != null) {
                 // item already exists as a managed item, update it
                 managedItemProvider.update(newItem);
-                return getItemResponse(uriBuilder(uriInfo, httpHeaders), Status.OK, itemRegistry.get(itemname), locale,
-                        null);
+                return getItemResponse(uriBuilder(uriInfo, httpHeaders), Status.OK, itemRegistry.get(itemName), locale,
+                        zoneId, null);
             } else {
                 // Item exists but cannot be updated
-                logger.warn("Cannot update existing item '{}', because is not managed.", itemname);
+                logger.warn("Cannot update existing item '{}', because is not managed.", itemName);
                 return JSONResponse.createErrorResponse(Status.METHOD_NOT_ALLOWED,
-                        "Cannot update non-managed Item " + itemname);
+                        "Cannot update non-managed Item " + itemName);
             }
         } catch (IllegalArgumentException e) {
             logger.warn("Received HTTP PUT request at '{}' with an invalid item name '{}'.", uriInfo.getPath(),
@@ -685,10 +949,11 @@ public class ItemResource implements RESTResource {
     @PUT
     @RolesAllowed({ Role.ADMIN })
     @Consumes(MediaType.APPLICATION_JSON)
-    @Operation(operationId = "addOrUpdateItemsInRegistry", summary = "Adds a list of items to the registry or updates the existing items.", security = {
-            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
-                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
-                    @ApiResponse(responseCode = "400", description = "Payload is invalid.") })
+    @Operation(operationId = "addOrUpdateItemsInRegistry", summary = "Adds a list of items to the registry or updates the existing items.", requestBody = @RequestBody(description = "array of item data", required = true, content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(oneOf = {
+            ItemDTO.class, GroupItemDTO.class })))), security = {
+                    @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+                            @ApiResponse(responseCode = "400", description = "Payload is invalid.") })
     public Response createOrUpdateItems(
             @Parameter(description = "array of item data", required = true) GroupItemDTO @Nullable [] items) {
         // If we didn't get an item list bean, then return!
@@ -756,6 +1021,52 @@ public class ItemResource implements RESTResource {
         return JSONResponse.createResponse(Status.OK, responseList, null);
     }
 
+    @GET
+    @RolesAllowed({ Role.USER, Role.ADMIN })
+    @Path("/{itemName: \\w+}/semantic/{semanticClass: \\w+}")
+    @Operation(operationId = "getSemanticItem", summary = "Gets the item which defines the requested semantics of an item.", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedItemDTO.class))),
+            @ApiResponse(responseCode = "404", description = "Item not found") })
+    public Response getSemanticItem(final @Context UriInfo uriInfo, final @Context HttpHeaders httpHeaders,
+            @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
+            @PathParam("itemName") @Parameter(description = "item name") String itemName,
+            @PathParam("semanticClass") @Parameter(description = "semantic class") String semanticClassName) {
+        final Locale locale = localeService.getLocale(language);
+        final ZoneId zoneId = timeZoneProvider.getTimeZone();
+
+        Class<? extends org.openhab.core.semantics.Tag> semanticClass = semanticTagRegistry
+                .getTagClassById(semanticClassName);
+        if (semanticClass == null) {
+            return Response.status(Status.NOT_FOUND).build();
+        }
+
+        Item foundItem = findParentByTag(getItem(itemName), SemanticsPredicates.isA(semanticClass));
+        if (foundItem == null) {
+            return Response.status(Status.NOT_FOUND).build();
+        }
+
+        EnrichedItemDTO dto = EnrichedItemDTOMapper.map(foundItem, false, null, uriBuilder(uriInfo, httpHeaders),
+                locale, zoneId);
+        dto.editable = isEditable(dto);
+        return JSONResponse.createResponse(Status.OK, dto, null);
+    }
+
+    @GET
+    @RolesAllowed({ Role.ADMIN })
+    @Produces({ MediaType.APPLICATION_JSON })
+    @Path("semantics/health")
+    @Operation(operationId = "getSemanticsHealth", summary = "Gets configuration problems with item semantics.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = ItemSemanticsProblem.class)))),
+                    @ApiResponse(responseCode = "404", description = "Item not found.") })
+    public Response getSemanticsHealth(@Context HttpHeaders headers) {
+        List<ItemSemanticsProblem> semanticsProblems = this.itemRegistry.stream().flatMap(item -> {
+            return semanticsService.getItemSemanticsProblems(item).stream()
+                    .map(p -> p.setEditable(isItemEditable(p.item())));
+        }).toList();
+        return JSONResponse.createResponse(Status.OK, semanticsProblems, null);
+    }
+
     private JsonObject buildStatusObject(String itemName, String status, @Nullable String message) {
         JsonObject jo = new JsonObject();
         jo.addProperty("name", itemName);
@@ -764,41 +1075,55 @@ public class ItemResource implements RESTResource {
         return jo;
     }
 
+    private @Nullable Item findParentByTag(@Nullable Item item, Predicate<Item> predicate) {
+        if (item == null) {
+            return null;
+        }
+
+        if (predicate.test(item)) {
+            return item;
+        }
+
+        // check parents
+        return item.getGroupNames().stream().map(this::getItem).map(i -> findParentByTag(i, predicate))
+                .filter(Objects::nonNull).findAny().orElse(null);
+    }
+
     /**
-     * helper: Response to be sent to client if a Thing cannot be found
+     * helper: Response to be sent to client if an item cannot be found
      *
-     * @param thingUID
+     * @param itemName item name that could not be found
      * @return Response configured for 'item not found'
      */
-    private static Response getItemNotFoundResponse(String itemname) {
-        String message = "Item " + itemname + " does not exist!";
+    private static Response getItemNotFoundResponse(String itemName) {
+        String message = "Item " + itemName + " does not exist!";
         return JSONResponse.createResponse(Status.NOT_FOUND, null, message);
     }
 
     /**
-     * Prepare a response representing the Item depending in the status.
+     * Prepare a response representing the Item depending on the status.
      *
      * @param uriBuilder the URI builder
-     * @param status
+     * @param status http status
      * @param item can be null
      * @param locale the locale
      * @param errormessage optional message in case of error
      * @return Response configured to represent the Item in depending on the status
      */
     private Response getItemResponse(final @Nullable UriBuilder uriBuilder, Status status, @Nullable Item item,
-            Locale locale, @Nullable String errormessage) {
-        Object entity = null != item ? EnrichedItemDTOMapper.map(item, true, null, uriBuilder, locale) : null;
+            Locale locale, ZoneId zoneId, @Nullable String errormessage) {
+        Object entity = null != item ? EnrichedItemDTOMapper.map(item, true, null, uriBuilder, locale, zoneId) : null;
         return JSONResponse.createResponse(status, entity, errormessage);
     }
 
     /**
      * convenience shortcut
      *
-     * @param itemname
-     * @return Item addressed by itemname
+     * @param itemName the name of the item to be retrieved
+     * @return Item addressed by itemName
      */
-    private @Nullable Item getItem(String itemname) {
-        return itemRegistry.get(itemname);
+    private @Nullable Item getItem(String itemName) {
+        return itemRegistry.get(itemName);
     }
 
     private Collection<Item> getItems(@Nullable String type, @Nullable String tags) {
@@ -830,12 +1155,18 @@ public class ItemResource implements RESTResource {
                 MetadataDTO mdDto = new MetadataDTO();
                 mdDto.value = md.getValue();
                 mdDto.config = md.getConfiguration().isEmpty() ? null : md.getConfiguration();
+                mdDto.editable = isEditable(key);
                 metadata.put(namespace, mdDto);
             }
         }
-        if (dto instanceof EnrichedGroupItemDTO) {
-            for (EnrichedItemDTO member : ((EnrichedGroupItemDTO) dto).members) {
+        if (dto instanceof EnrichedGroupItemDTO tO) {
+            for (EnrichedItemDTO member : tO.members) {
                 addMetadata(member, namespaces, filter);
+            }
+        }
+        if (dto.parents != null) {
+            for (EnrichedItemDTO parent : dto.parents) {
+                addMetadata(parent, namespaces, filter);
             }
         }
         if (!metadata.isEmpty()) {
@@ -844,7 +1175,39 @@ public class ItemResource implements RESTResource {
         }
     }
 
-    private boolean isEditable(String itemName) {
+    private void addParents(EnrichedItemDTO dto, UriInfo uriInfo, HttpHeaders httpHeaders, Locale locale,
+            ZoneId zoneId) {
+        dto.parents = dto.groupNames.stream() //
+                .map(groupName -> getItem(groupName)).filter(Objects::nonNull) //
+                .map(parentItem -> EnrichedItemDTOMapper.map(parentItem, false, null, uriBuilder(uriInfo, httpHeaders),
+                        locale, zoneId)) //
+                .peek(parentEnrichedItemDto -> addParents(parentEnrichedItemDto, uriInfo, httpHeaders, locale, zoneId)) //
+                .toArray(size -> new EnrichedItemDTO[size]);
+    }
+
+    private boolean isEditable(EnrichedItemDTO item) {
+        return isItemEditable(item.name);
+    }
+
+    private boolean isItemEditable(String itemName) {
         return managedItemProvider.get(itemName) != null;
+    }
+
+    private boolean isEditable(MetadataKey metadataKey) {
+        return managedMetadataProvider.get(metadataKey) != null;
+    }
+
+    private String buildSource(@Nullable String source, SecurityContext securityContext) {
+        String username;
+        Principal principal = securityContext.getUserPrincipal();
+        if (principal != null) {
+            username = principal.getName();
+        } else {
+            username = null;
+        }
+        return AbstractEvent.buildDelegatedSource(source, REST_SOURCE, username);
+    }
+
+    private record ValueContainer(String value, @Nullable String source) {
     }
 }

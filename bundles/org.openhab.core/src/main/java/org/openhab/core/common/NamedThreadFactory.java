@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,9 @@ package org.openhab.core.common;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+
 /**
  * Thread factory that applies a thread name constructed by a supplied identifier.
  *
@@ -25,12 +28,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * @author Markus Rathgeb - Initial contribution
  */
+@NonNullByDefault
 public class NamedThreadFactory implements ThreadFactory {
 
     private final boolean daemonize;
     private final int priority;
 
-    private final ThreadGroup group;
+    private final @Nullable ThreadGroup group;
     private final AtomicInteger threadNumber = new AtomicInteger(1);
     private final String namePrefix;
 
@@ -77,13 +81,11 @@ public class NamedThreadFactory implements ThreadFactory {
         this.daemonize = daemonize;
         this.priority = priority;
         this.namePrefix = "OH-" + id + "-";
-        final SecurityManager securityManager = System.getSecurityManager();
-        this.group = securityManager != null ? securityManager.getThreadGroup()
-                : Thread.currentThread().getThreadGroup();
+        this.group = Thread.currentThread().getThreadGroup();
     }
 
     @Override
-    public Thread newThread(Runnable runnable) {
+    public Thread newThread(@Nullable Runnable runnable) {
         final Thread thread = new Thread(group, runnable, namePrefix + threadNumber.getAndIncrement(), 0);
         if (thread.isDaemon() != daemonize) {
             thread.setDaemon(daemonize);

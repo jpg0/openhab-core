@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.model.script.engine;
 
+import java.io.Serial;
 import java.util.List;
 
 import org.eclipse.emf.ecore.resource.Resource.Diagnostic;
@@ -26,6 +27,7 @@ import org.eclipse.xtext.validation.Issue;
  */
 public class ScriptParsingException extends ScriptException {
 
+    @Serial
     private static final long serialVersionUID = -3784970293118871807L;
 
     public ScriptParsingException(String message, String scriptAsString) {
@@ -38,11 +40,9 @@ public class ScriptParsingException extends ScriptException {
 
     public ScriptParsingException addDiagnosticErrors(List<Diagnostic> errors) {
         for (Diagnostic emfDiagnosticError : errors) {
-            if (emfDiagnosticError instanceof AbstractDiagnostic) {
-                AbstractDiagnostic e = (AbstractDiagnostic) emfDiagnosticError;
+            if (emfDiagnosticError instanceof AbstractDiagnostic e) {
                 this.getErrors().add(new ScriptError(e.getMessage(), e.getLine(), e.getOffset(), e.getLength()));
-            } else if (emfDiagnosticError instanceof ExceptionDiagnostic) {
-                ExceptionDiagnostic e = (ExceptionDiagnostic) emfDiagnosticError;
+            } else if (emfDiagnosticError instanceof ExceptionDiagnostic e) {
                 this.getErrors().add(new ScriptError(e.getMessage(), e.getLine(), e.getOffset(), e.getLength()));
             } else {
                 this.getErrors().add(new ScriptError(emfDiagnosticError.getMessage(), -1, -1, -1));
@@ -53,11 +53,9 @@ public class ScriptParsingException extends ScriptException {
 
     public ScriptParsingException addValidationIssues(Iterable<Issue> validationErrors) {
         for (Issue validationError : validationErrors) {
-            this.getErrors().add(
-                    new ScriptError(validationError.getMessage(), validationError.getLineNumber(), validationError
-                            .getOffset(), validationError.getLength()));
+            this.getErrors().add(new ScriptError(validationError.getMessage(), validationError.getLineNumber(),
+                    validationError.getOffset(), validationError.getLength()));
         }
         return this;
     }
-
 }

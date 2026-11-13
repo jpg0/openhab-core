@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.library.CoreItemFactory;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.HSBType;
@@ -25,6 +26,7 @@ import org.openhab.core.library.types.PercentType;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
 import org.openhab.core.types.State;
+import org.openhab.core.types.TimeSeries;
 import org.openhab.core.types.UnDefType;
 
 /**
@@ -44,8 +46,24 @@ public class ColorItem extends DimmerItem {
         super(CoreItemFactory.COLOR, name);
     }
 
+    /**
+     * Send an HSBType command to the item.
+     *
+     * @param command the command to be sent
+     */
     public void send(HSBType command) {
-        internalSend(command);
+        internalSend(command, null);
+    }
+
+    /**
+     * Send an HSBType command to the item.
+     *
+     * @param command the command to be sent
+     * @param source the source of the command. See
+     *            https://www.openhab.org/docs/developer/utils/events.html#the-core-events
+     */
+    public void send(HSBType command, @Nullable String source) {
+        internalSend(command, source);
     }
 
     @Override
@@ -59,37 +77,48 @@ public class ColorItem extends DimmerItem {
     }
 
     @Override
-    public void setState(State state) {
+    public void setState(State state, @Nullable String source) {
         if (isAcceptedState(ACCEPTED_DATA_TYPES, state)) {
             State currentState = this.state;
 
-            if (currentState instanceof HSBType) {
-                DecimalType hue = ((HSBType) currentState).getHue();
-                PercentType saturation = ((HSBType) currentState).getSaturation();
+            if (currentState instanceof HSBType hsbType) {
+                DecimalType hue = hsbType.getHue();
+                PercentType saturation = hsbType.getSaturation();
                 // we map ON/OFF values to dark/bright, so that the hue and saturation values are not changed
                 if (state == OnOffType.OFF) {
-                    applyState(new HSBType(hue, saturation, PercentType.ZERO));
+                    applyState(new HSBType(hue, saturation, PercentType.ZERO), source);
                 } else if (state == OnOffType.ON) {
-                    applyState(new HSBType(hue, saturation, PercentType.HUNDRED));
-                } else if (state instanceof PercentType && !(state instanceof HSBType)) {
-                    applyState(new HSBType(hue, saturation, (PercentType) state));
-                } else if (state instanceof DecimalType && !(state instanceof HSBType)) {
-                    applyState(new HSBType(hue, saturation,
-                            new PercentType(((DecimalType) state).toBigDecimal().multiply(BigDecimal.valueOf(100)))));
+                    applyState(new HSBType(hue, saturation, PercentType.HUNDRED), source);
+                } else if (state instanceof PercentType percentType && !(state instanceof HSBType)) {
+                    applyState(new HSBType(hue, saturation, percentType), source);
+                } else if (state instanceof DecimalType decimalType && !(state instanceof HSBType)) {
+                    applyState(
+                            new HSBType(hue, saturation,
+                                    new PercentType(decimalType.toBigDecimal().multiply(BigDecimal.valueOf(100)))),
+                            source);
                 } else {
-                    applyState(state);
+                    applyState(state, source);
                 }
             } else {
                 // try conversion
                 State convertedState = state.as(HSBType.class);
                 if (convertedState != null) {
-                    applyState(convertedState);
+                    applyState(convertedState, source);
                 } else {
-                    applyState(state);
+                    applyState(state, source);
                 }
             }
         } else {
             logSetTypeError(state);
+        }
+    }
+
+    @Override
+    public void setTimeSeries(TimeSeries timeSeries) {
+        if (timeSeries.getStates().allMatch(s -> s.state() instanceof HSBType)) {
+            applyTimeSeries(timeSeries);
+        } else {
+            logSetTypeError(timeSeries);
         }
     }
 }

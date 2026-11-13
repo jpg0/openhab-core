@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,15 +16,12 @@ import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.thing.ChannelUID;
@@ -43,19 +40,13 @@ public class LinkEventOSGiTest extends JavaOSGiTest {
     private @NonNullByDefault({}) ItemChannelLinkRegistry itemChannelLinkRegistry;
     private @NonNullByDefault({}) ItemChannelLinkEventSubscriber eventSubscriber;
 
-    class ItemChannelLinkEventSubscriber implements EventSubscriber {
+    static class ItemChannelLinkEventSubscriber implements EventSubscriber {
 
         private @Nullable Event lastReceivedEvent;
 
         @Override
         public Set<String> getSubscribedEventTypes() {
-            return Stream.of(ItemChannelLinkAddedEvent.TYPE, ItemChannelLinkRemovedEvent.TYPE)
-                    .collect(Collectors.toSet());
-        }
-
-        @Override
-        public @Nullable EventFilter getEventFilter() {
-            return null;
+            return Set.of(ItemChannelLinkAddedEvent.TYPE, ItemChannelLinkRemovedEvent.TYPE);
         }
 
         @Override

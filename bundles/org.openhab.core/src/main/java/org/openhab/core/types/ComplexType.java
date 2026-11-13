@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,5 +30,5 @@ public interface ComplexType extends Type {
      *
      * @return all constituents with their names
      */
-    public SortedMap<String, PrimitiveType> getConstituents();
+    SortedMap<String, PrimitiveType> getConstituents();
 }

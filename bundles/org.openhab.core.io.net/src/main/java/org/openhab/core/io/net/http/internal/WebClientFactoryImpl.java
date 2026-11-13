@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,13 +12,10 @@
  */
 package org.openhab.core.io.net.http.internal;
 
-import java.security.AccessController;
+import java.nio.ByteBuffer;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivilegedActionException;
-import java.security.PrivilegedExceptionAction;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Pattern;
 
 import javax.net.ssl.SSLContext;
@@ -27,7 +24,20 @@ import javax.net.ssl.TrustManager;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.client.HttpDestination;
+import org.eclipse.jetty.client.HttpExchange;
 import org.eclipse.jetty.client.HttpProxy;
+import org.eclipse.jetty.client.api.Connection;
+import org.eclipse.jetty.client.http.HttpChannelOverHTTP;
+import org.eclipse.jetty.client.http.HttpClientTransportOverHTTP;
+import org.eclipse.jetty.client.http.HttpConnectionOverHTTP;
+import org.eclipse.jetty.client.http.HttpReceiverOverHTTP;
+import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpVersion;
+import org.eclipse.jetty.http.PreEncodedHttpField;
+import org.eclipse.jetty.http2.client.HTTP2Client;
+import org.eclipse.jetty.io.EndPoint;
+import org.eclipse.jetty.util.Promise;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
@@ -49,6 +59,7 @@ import org.slf4j.LoggerFactory;
  * @author Michael Bock - Initial contribution
  * @author Kai Kreuzer - added web socket support
  * @author Martin van Wingerden - Add support for ESHTrustManager
+ * @author Andrew Fiddian-Green - Added support for HTTP2 client creation
  */
 @Component(immediate = true, configurationPid = "org.openhab.webclient")
 @NonNullByDefault
@@ -79,6 +90,9 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
     private int minThreadsCustom;
     private int maxThreadsCustom;
     private int keepAliveTimeoutCustom; // in s
+
+    private boolean hpackLoadTestDone = false;
+    private @Nullable HttpClientInitializationException hpackException = null;
 
     @Activate
     public WebClientFactoryImpl(final @Reference ExtensibleTrustManager extensibleTrustManager) {
@@ -122,21 +136,38 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
             commonWebSocketClient = null;
             logger.debug("Jetty shared web socket client stopped");
         }
+        if (threadPool != null) {
+            try {
+                threadPool.stop();
+            } catch (Exception e) {
+                logger.error("error while stopping shared Jetty thread pool", e);
+            }
+        }
         threadPool = null;
     }
 
     @Override
     public HttpClient createHttpClient(String consumerName) {
+        return createHttpClient(consumerName, null);
+    }
+
+    @Override
+    public HttpClient createHttpClient(String consumerName, @Nullable SslContextFactory sslContextFactory) {
         logger.debug("http client for consumer {} requested", consumerName);
         checkConsumerName(consumerName);
-        return createHttpClientInternal(consumerName, false, null);
+        return createHttpClientInternal(consumerName, sslContextFactory, false, null);
     }
 
     @Override
     public WebSocketClient createWebSocketClient(String consumerName) {
+        return createWebSocketClient(consumerName, null);
+    }
+
+    @Override
+    public WebSocketClient createWebSocketClient(String consumerName, @Nullable SslContextFactory sslContextFactory) {
         logger.debug("web socket client for consumer {} requested", consumerName);
         checkConsumerName(consumerName);
-        return createWebSocketClientInternal(consumerName, false, null);
+        return createWebSocketClientInternal(consumerName, sslContextFactory, false, null);
     }
 
     @Override
@@ -153,12 +184,24 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
         return commonWebSocketClient;
     }
 
+    private int calculateDefaultMaxThreads(int base, int max, int cpuFactor) {
+        int cpus = Runtime.getRuntime().availableProcessors();
+
+        // scale a bit with CPU count
+        int cpuBased = Math.max(base, cpus * cpuFactor);
+
+        // keep a sane upper bound for small clients
+        return Math.min(cpuBased, max);
+    }
+
     private void getConfigParameters(Map<String, Object> parameters) {
         minThreadsShared = getConfigParameter(parameters, CONFIG_MIN_THREADS_SHARED, 10);
-        maxThreadsShared = getConfigParameter(parameters, CONFIG_MAX_THREADS_SHARED, 40);
+        maxThreadsShared = getConfigParameter(parameters, CONFIG_MAX_THREADS_SHARED,
+                calculateDefaultMaxThreads(40, 80, 3));
         keepAliveTimeoutShared = getConfigParameter(parameters, CONFIG_KEEP_ALIVE_SHARED, 300);
         minThreadsCustom = getConfigParameter(parameters, CONFIG_MIN_THREADS_CUSTOM, 5);
-        maxThreadsCustom = getConfigParameter(parameters, CONFIG_MAX_THREADS_CUSTOM, 10);
+        maxThreadsCustom = getConfigParameter(parameters, CONFIG_MAX_THREADS_CUSTOM,
+                calculateDefaultMaxThreads(10, 32, 2));
         keepAliveTimeoutCustom = getConfigParameter(parameters, CONFIG_KEEP_ALIVE_CUSTOM, 300);
     }
 
@@ -171,12 +214,12 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
         if (value == null) {
             return defaultValue;
         }
-        if (value instanceof Integer) {
-            return (Integer) value;
+        if (value instanceof Integer integerValue) {
+            return integerValue;
         }
-        if (value instanceof String) {
+        if (value instanceof String string) {
             try {
-                return Integer.parseInt((String) value);
+                return Integer.parseInt(string);
             } catch (NumberFormatException e) {
                 logger.warn("ignoring invalid value {} for parameter {}", value, parameter);
                 return defaultValue;
@@ -188,160 +231,141 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
     }
 
     private synchronized void initialize() {
-        if (threadPool == null || commonHttpClient == null || commonWebSocketClient == null) {
-            try {
-                AccessController.doPrivileged(new PrivilegedExceptionAction<@Nullable Void>() {
-                    @Override
-                    public @Nullable Void run() {
-                        if (threadPool == null) {
-                            threadPool = createThreadPool("common", minThreadsShared, maxThreadsShared,
-                                    keepAliveTimeoutShared);
-                        }
-
-                        if (commonHttpClient == null) {
-                            commonHttpClient = createHttpClientInternal("common", true, threadPool);
-                            // we need to set the stop timeout AFTER the client has been started, because
-                            // otherwise the Jetty client sets it back to the default value.
-                            // We need the stop timeout in order to prevent blocking the deactivation of this
-                            // component, see https://github.com/eclipse/smarthome/issues/6632
-                            threadPool.setStopTimeout(0);
-                            logger.debug("Jetty shared http client created");
-                        }
-
-                        if (commonWebSocketClient == null) {
-                            commonWebSocketClient = createWebSocketClientInternal("common", true, threadPool);
-                            logger.debug("Jetty shared web socket client created");
-                        }
-
-                        return null;
-                    }
-                });
-            } catch (PrivilegedActionException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException) {
-                    throw (RuntimeException) cause;
-                } else {
-                    throw new HttpClientInitializationException(
-                            "unexpected checked exception during initialization of the jetty client", cause);
+        try {
+            if (threadPool == null) {
+                threadPool = createThreadPool("common", minThreadsShared, maxThreadsShared, keepAliveTimeoutShared);
+                // The pool is shared between the http client and the web socket client. Start it
+                // ourselves so both Jetty containers treat it as an unmanaged bean and neither
+                // stops it while the other client is still using it (see the shared-bean rule in
+                // Jetty's ContainerLifeCycle javadoc). It is stopped explicitly in deactivate().
+                try {
+                    threadPool.start();
+                    // Set the stop timeout right after starting the pool we now own. We need the
+                    // stop timeout in order to prevent blocking the deactivation of this
+                    // component, see https://github.com/eclipse/smarthome/issues/6632
+                    threadPool.setStopTimeout(0);
+                } catch (Exception e) {
+                    // roll back so a later initialize() retry recreates the pool
+                    // instead of reusing a dead one
+                    threadPool = null;
+                    throw e;
                 }
             }
+
+            if (commonHttpClient == null) {
+                commonHttpClient = createHttpClientInternal("common", null, true, threadPool);
+                logger.debug("Jetty shared http client created");
+            }
+
+            if (commonWebSocketClient == null) {
+                commonWebSocketClient = createWebSocketClientInternal("common", null, true, threadPool);
+                logger.debug("Jetty shared web socket client created");
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new HttpClientInitializationException(
+                    "unexpected checked exception during initialization of the jetty client", e);
         }
     }
 
-    private HttpClient createHttpClientInternal(String consumerName, boolean startClient,
-            @Nullable QueuedThreadPool threadPool) {
+    private HttpClient createHttpClientInternal(String consumerName, @Nullable SslContextFactory sslContextFactory,
+            boolean startClient, @Nullable QueuedThreadPool threadPool) {
         try {
-            return AccessController.doPrivileged(new PrivilegedExceptionAction<HttpClient>() {
-                @Override
-                public HttpClient run() {
-                    logger.debug("creating http client for consumer {}", consumerName);
+            logger.debug("creating http client for consumer {}", consumerName);
 
-                    HttpClient httpClient = new HttpClient(createSslContextFactory());
+            HttpClient httpClient = new HttpClient(new CustomHttpClientTransportOverHTTP(),
+                    sslContextFactory != null ? sslContextFactory : createSslContextFactory());
 
-                    // If proxy is set as property (standard Java property), provide the proxy information to Jetty HTTP
-                    // Client
-                    String httpProxyHost = System.getProperty("http.proxyHost");
-                    String httpsProxyHost = System.getProperty("https.proxyHost");
+            // If proxy is set as property (standard Java property), provide the proxy information to Jetty HTTP
+            // Client
+            String httpProxyHost = System.getProperty("http.proxyHost");
+            String httpsProxyHost = System.getProperty("https.proxyHost");
 
-                    if (httpProxyHost != null) {
-                        String sProxyPort = System.getProperty("http.proxyPort");
-                        if (sProxyPort != null) {
-                            try {
-                                int port = Integer.parseInt(sProxyPort);
-                                httpClient.getProxyConfiguration().getProxies().add(new HttpProxy(httpProxyHost, port));
-                            } catch (NumberFormatException ex) {
-                                // this was not a correct port. Ignoring.
-                                logger.debug(
-                                        "HTTP Proxy detected (http.proxyHost), but invalid proxyport. Ignoring proxy.");
-                            }
-                        }
-                    } else if (httpsProxyHost != null) {
-                        String sProxyPort = System.getProperty("https.proxyPort");
-                        if (sProxyPort != null) {
-                            try {
-                                int port = Integer.parseInt(sProxyPort);
-                                httpClient.getProxyConfiguration().getProxies()
-                                        .add(new HttpProxy(httpsProxyHost, port));
-                            } catch (NumberFormatException ex) {
-                                // this was not a correct port. Ignoring.
-                                logger.debug(
-                                        "HTTP Proxy detected (https.proxyHost), but invalid proxyport. Ignoring proxy.");
-                            }
-                        }
+            if (httpProxyHost != null) {
+                String sProxyPort = System.getProperty("http.proxyPort");
+                if (sProxyPort != null) {
+                    try {
+                        int port = Integer.parseInt(sProxyPort);
+                        httpClient.getProxyConfiguration().getProxies().add(new HttpProxy(httpProxyHost, port));
+                    } catch (NumberFormatException ex) {
+                        // this was not a correct port. Ignoring.
+                        logger.debug("HTTP Proxy detected (http.proxyHost), but invalid proxyport. Ignoring proxy.");
                     }
-
-                    httpClient.setMaxConnectionsPerDestination(2);
-
-                    if (threadPool != null) {
-                        httpClient.setExecutor(threadPool);
-                    } else {
-                        final QueuedThreadPool queuedThreadPool = createThreadPool(consumerName, minThreadsCustom,
-                                maxThreadsCustom, keepAliveTimeoutCustom);
-                        httpClient.setExecutor(queuedThreadPool);
-                    }
-
-                    if (startClient) {
-                        try {
-                            httpClient.start();
-                        } catch (Exception e) {
-                            logger.error("Could not start Jetty http client", e);
-                            throw new HttpClientInitializationException("Could not start Jetty http client", e);
-                        }
-                    }
-
-                    return httpClient;
                 }
-            });
-        } catch (PrivilegedActionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException) {
-                throw (RuntimeException) cause;
-            } else {
-                throw new HttpClientInitializationException(
-                        "unexpected checked exception during initialization of the Jetty http client", cause);
+            } else if (httpsProxyHost != null) {
+                String sProxyPort = System.getProperty("https.proxyPort");
+                if (sProxyPort != null) {
+                    try {
+                        int port = Integer.parseInt(sProxyPort);
+                        httpClient.getProxyConfiguration().getProxies().add(new HttpProxy(httpsProxyHost, port));
+                    } catch (NumberFormatException ex) {
+                        // this was not a correct port. Ignoring.
+                        logger.debug("HTTP Proxy detected (https.proxyHost), but invalid proxyport. Ignoring proxy.");
+                    }
+                }
             }
+
+            httpClient.setMaxConnectionsPerDestination(2);
+
+            if (threadPool != null) {
+                httpClient.setExecutor(threadPool);
+            } else {
+                final QueuedThreadPool queuedThreadPool = createThreadPool(consumerName, minThreadsCustom,
+                        maxThreadsCustom, keepAliveTimeoutCustom);
+                httpClient.setExecutor(queuedThreadPool);
+            }
+
+            if (startClient) {
+                try {
+                    httpClient.start();
+                } catch (Exception e) {
+                    logger.error("Could not start Jetty http client", e);
+                    throw new HttpClientInitializationException("Could not start Jetty http client", e);
+                }
+            }
+
+            return httpClient;
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new HttpClientInitializationException(
+                    "unexpected checked exception during initialization of the Jetty http client", e);
         }
     }
 
-    private WebSocketClient createWebSocketClientInternal(String consumerName, boolean startClient,
-            @Nullable QueuedThreadPool threadPool) {
+    private WebSocketClient createWebSocketClientInternal(String consumerName,
+            @Nullable SslContextFactory sslContextFactory, boolean startClient, @Nullable QueuedThreadPool threadPool) {
         try {
-            return AccessController.doPrivileged(new PrivilegedExceptionAction<WebSocketClient>() {
-                @Override
-                public WebSocketClient run() {
-                    logger.debug("creating web socket client for consumer {}", consumerName);
+            logger.debug("creating web socket client for consumer {}", consumerName);
 
-                    HttpClient httpClient = new HttpClient(createSslContextFactory());
-                    if (threadPool != null) {
-                        httpClient.setExecutor(threadPool);
-                    } else {
-                        final QueuedThreadPool queuedThreadPool = createThreadPool(consumerName, minThreadsCustom,
-                                maxThreadsCustom, keepAliveTimeoutCustom);
-                        httpClient.setExecutor(queuedThreadPool);
-                    }
-
-                    WebSocketClient webSocketClient = new WebSocketClient(httpClient);
-
-                    if (startClient) {
-                        try {
-                            webSocketClient.start();
-                        } catch (Exception e) {
-                            logger.error("Could not start Jetty web socket client", e);
-                            throw new HttpClientInitializationException("Could not start Jetty web socket client", e);
-                        }
-                    }
-
-                    return webSocketClient;
-                }
-            });
-        } catch (PrivilegedActionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException) {
-                throw (RuntimeException) cause;
+            HttpClient httpClient = new HttpClient(
+                    sslContextFactory != null ? sslContextFactory : createSslContextFactory());
+            if (threadPool != null) {
+                httpClient.setExecutor(threadPool);
             } else {
-                throw new HttpClientInitializationException(
-                        "unexpected checked exception during initialization of the Jetty web socket client", cause);
+                final QueuedThreadPool queuedThreadPool = createThreadPool(consumerName, minThreadsCustom,
+                        maxThreadsCustom, keepAliveTimeoutCustom);
+                httpClient.setExecutor(queuedThreadPool);
             }
+
+            WebSocketClient webSocketClient = new WebSocketClient(httpClient);
+
+            if (startClient) {
+                try {
+                    webSocketClient.start();
+                } catch (Exception e) {
+                    logger.error("Could not start Jetty web socket client", e);
+                    throw new HttpClientInitializationException("Could not start Jetty web socket client", e);
+                }
+            }
+
+            return webSocketClient;
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new HttpClientInitializationException(
+                    "unexpected checked exception during initialization of the Jetty web socket client", e);
         }
     }
 
@@ -354,7 +378,6 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
     }
 
     private void checkConsumerName(String consumerName) {
-        Objects.requireNonNull(consumerName, "consumerName must not be null");
         if (consumerName.length() < MIN_CONSUMER_NAME_LENGTH) {
             throw new IllegalArgumentException(
                     "consumerName " + consumerName + " too short, minimum " + MIN_CONSUMER_NAME_LENGTH);
@@ -383,5 +406,94 @@ public class WebClientFactoryImpl implements HttpClientFactory, WebSocketFactory
         }
 
         return sslContextFactory;
+    }
+
+    @Override
+    public HTTP2Client createHttp2Client(String consumerName) {
+        return createHttp2Client(consumerName, null);
+    }
+
+    @Override
+    public HTTP2Client createHttp2Client(String consumerName, @Nullable SslContextFactory sslContextFactory) {
+        logger.debug("http client for consumer {} requested", consumerName);
+        checkConsumerName(consumerName);
+        return createHttp2ClientInternal(consumerName, sslContextFactory);
+    }
+
+    private HTTP2Client createHttp2ClientInternal(String consumerName, @Nullable SslContextFactory sslContextFactory) {
+        try {
+            logger.debug("creating HTTP/2 client for consumer {}", consumerName);
+
+            if (!hpackLoadTestDone) {
+                try {
+                    PreEncodedHttpField field = new PreEncodedHttpField(HttpHeader.C_METHOD, "PUT");
+                    ByteBuffer bytes = ByteBuffer.allocate(32);
+                    field.putTo(bytes, HttpVersion.HTTP_2);
+                    hpackException = null;
+                } catch (Exception e) {
+                    hpackException = new HttpClientInitializationException("Jetty HTTP/2 hpack module not loaded", e);
+                }
+                hpackLoadTestDone = true;
+            }
+            if (hpackException != null) {
+                throw hpackException;
+            }
+
+            HTTP2Client http2Client = new HTTP2Client();
+            http2Client.addBean(sslContextFactory != null ? sslContextFactory : createSslContextFactory());
+            http2Client.setExecutor(
+                    createThreadPool(consumerName, minThreadsCustom, maxThreadsCustom, keepAliveTimeoutCustom));
+
+            return http2Client;
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new HttpClientInitializationException(
+                    "unexpected checked exception during initialization of the Jetty HTTP/2 client", e);
+        }
+    }
+
+    /**
+     * Extends the default {@link HttpClientTransportOverHTTP} but exposes the underling {@link EndPoint} of each
+     * request/response.
+     * It mimics the way it's done in higher Jetty Http client versions.
+     */
+    private static class CustomHttpClientTransportOverHTTP extends HttpClientTransportOverHTTP {
+        @Override
+        @NonNullByDefault({})
+        protected HttpConnectionOverHTTP newHttpConnection(EndPoint endPoint, HttpDestination destination,
+                Promise<Connection> promise) {
+            return new HttpConnectionOverHTTP(endPoint, destination, promise) {
+                @Override
+                protected HttpChannelOverHTTP newHttpChannel() {
+                    return new HttpChannelOverHTTP(this) {
+                        @Override
+                        protected HttpReceiverOverHTTP newHttpReceiver() {
+                            return new CustomHttpReceiverOverHTTP(this);
+                        }
+                    };
+                }
+            };
+        }
+
+        private static class CustomHttpReceiverOverHTTP extends HttpReceiverOverHTTP {
+            private final HttpChannelOverHTTP channel;
+
+            public CustomHttpReceiverOverHTTP(HttpChannelOverHTTP channel) {
+                super(channel);
+                this.channel = channel;
+            }
+
+            @Override
+            public boolean headerComplete() {
+                HttpExchange exchange = getHttpExchange();
+                if (exchange != null) {
+                    // Store the EndPoint is case of upgrades
+                    exchange.getRequest().getConversation().setAttribute(EndPoint.class.getName(),
+                            channel.getHttpConnection().getEndPoint());
+                }
+                return super.headerComplete();
+            }
+        }
     }
 }

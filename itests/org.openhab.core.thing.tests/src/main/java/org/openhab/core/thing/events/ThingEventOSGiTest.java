@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -23,7 +23,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.thing.Thing;
@@ -41,18 +40,13 @@ import org.openhab.core.thing.type.ThingTypeBuilder;
 @NonNullByDefault
 public class ThingEventOSGiTest extends JavaOSGiTest {
 
-    class ThingEventSubscriber implements EventSubscriber {
+    static class ThingEventSubscriber implements EventSubscriber {
 
         private @Nullable Event lastReceivedEvent;
 
         @Override
         public Set<String> getSubscribedEventTypes() {
             return Set.of(ThingAddedEvent.TYPE, ThingUpdatedEvent.TYPE, ThingRemovedEvent.TYPE);
-        }
-
-        @Override
-        public @Nullable EventFilter getEventFilter() {
-            return null;
         }
 
         @Override

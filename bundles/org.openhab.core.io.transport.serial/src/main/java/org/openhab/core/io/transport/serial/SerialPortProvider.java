@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,19 +30,19 @@ public interface SerialPortProvider {
      * Gets the {@link SerialPortIdentifier} if it is available or null otherwise.
      *
      * @param portName The ports name.
-     * @return The created {@link SerialPort}.
-     * @throws NoSuchPortException If the serial port does not exist.
+     * @return The created {@link SerialPort} or <code>null</code> if the serial port does not exist.
      * @throws UnsupportedCommOperationException
      * @throws PortInUseException
      */
-    public @Nullable SerialPortIdentifier getPortIdentifier(URI portName);
+    @Nullable
+    SerialPortIdentifier getPortIdentifier(URI portName);
 
     /**
      * Gets all protocol types which this provider is able to create.
      *
      * @return The protocol type.
      */
-    public Stream<ProtocolType> getAcceptedProtocols();
+    Stream<ProtocolType> getAcceptedProtocols();
 
     /**
      * Gets all the available {@link SerialPortIdentifier}s for this {@link SerialPortProvider}.
@@ -51,5 +51,5 @@ public interface SerialPortProvider {
      *
      * @return The available ports
      */
-    public Stream<SerialPortIdentifier> getSerialPortIdentifiers();
+    Stream<SerialPortIdentifier> getSerialPortIdentifiers();
 }

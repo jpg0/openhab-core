@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,8 @@ package org.openhab.core.model.thing.test.hue;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
 import java.util.stream.Stream;
@@ -120,13 +121,13 @@ public class GenericThingProviderTest4 extends JavaOSGiTest {
         hueThingHandlerFactory = new TestHueThingHandlerFactoryX(componentContextMock) {
             @Override
             protected @Nullable ThingHandler createHandler(final Thing thing) {
-                if (thing instanceof Bridge) {
-                    return new TestBridgeHandler((Bridge) thing);
+                if (thing instanceof Bridge bridge) {
+                    return new TestBridgeHandler(bridge);
                 } else {
                     return new BaseThingHandler(thing) {
                         @Override
                         public void handleCommand(ChannelUID arg0, Command arg1) {
-                        };
+                        }
 
                         @Override
                         public void initialize() {

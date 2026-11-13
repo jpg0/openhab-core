@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,8 +17,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.stream.Collectors;
+import java.util.List;
 import java.util.stream.Stream;
 import java.util.stream.Stream.Builder;
 
@@ -39,8 +38,7 @@ public class BitUtilitiesExtractStringTest {
     }
 
     public static Collection<Object[]> data() {
-        return Collections.unmodifiableList(Stream.of(
-                new Object[] { "", shortArrayToRegisterArray(0), 0, 0, StandardCharsets.UTF_8 },
+        return List.of(new Object[] { "", shortArrayToRegisterArray(0), 0, 0, StandardCharsets.UTF_8 },
                 new Object[] { "hello", shortArrayToRegisterArray(0x6865, 0x6c6c, 0x6f00), 0, 5,
                         StandardCharsets.UTF_8 },
                 new Object[] { "he", shortArrayToRegisterArray(0x6865, 0x6c6c, 0x6f00), 0, 2, StandardCharsets.UTF_8 }, // limited
@@ -76,8 +74,7 @@ public class BitUtilitiesExtractStringTest {
                         StandardCharsets.UTF_8 },
                 // out of bounds
                 new Object[] { IllegalArgumentException.class, shortArrayToRegisterArray(0, 0), 0, 5,
-                        StandardCharsets.UTF_8 })
-                .collect(Collectors.toList()));
+                        StandardCharsets.UTF_8 });
     }
 
     public static Stream<Object[]> dataWithByteVariations() {
@@ -99,18 +96,17 @@ public class BitUtilitiesExtractStringTest {
                 streamBuilder.add(
                         new Object[] { expected, offset, bytesOffsetted, origByteIndex + offset, length, charset });
             }
-            Stream<Object[]> variations = streamBuilder.build();
-            return variations;
+            return streamBuilder.build();
         });
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SuppressWarnings("unchecked")
     @ParameterizedTest
     @MethodSource("data")
     public void testExtractStringFromRegisters(Object expectedResult, ModbusRegisterArray registers, int index,
             int length, Charset charset) {
-        if (expectedResult instanceof Class && Exception.class.isAssignableFrom((Class) expectedResult)) {
-            assertThrows((Class) expectedResult,
+        if (expectedResult instanceof Class class1 && Exception.class.isAssignableFrom(class1)) {
+            assertThrows(class1,
                     () -> ModbusBitUtilities.extractStringFromRegisters(registers, index, length, charset));
             return;
         } else {
@@ -120,14 +116,13 @@ public class BitUtilitiesExtractStringTest {
         }
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SuppressWarnings("unchecked")
     @ParameterizedTest
     @MethodSource("dataWithByteVariations")
     public void testExtractStringFromBytes(Object expectedResult, int byteOffset, byte[] bytes, int byteIndex,
             int length, Charset charset) {
-        if (expectedResult instanceof Class && Exception.class.isAssignableFrom((Class) expectedResult)) {
-            assertThrows((Class) expectedResult,
-                    () -> ModbusBitUtilities.extractStringFromBytes(bytes, byteIndex, length, charset));
+        if (expectedResult instanceof Class class1 && Exception.class.isAssignableFrom(class1)) {
+            assertThrows(class1, () -> ModbusBitUtilities.extractStringFromBytes(bytes, byteIndex, length, charset));
             return;
         } else {
             String actualState = ModbusBitUtilities.extractStringFromBytes(bytes, byteIndex, length, charset);

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,12 +14,11 @@ package org.openhab.core.io.monitor.internal;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.service.ReadyMarker;
 import org.openhab.core.service.ReadyMarkerFilter;
@@ -65,12 +64,6 @@ public class EventLogger implements EventSubscriber, ReadyTracker {
     }
 
     @Override
-    @Nullable
-    public EventFilter getEventFilter() {
-        return null;
-    }
-
-    @Override
     public void receive(Event event) {
         Logger logger = getLogger(event.getType());
         logger.trace("Received event of type '{}' under the topic '{}' with payload: '{}'", event.getType(),
@@ -81,13 +74,8 @@ public class EventLogger implements EventSubscriber, ReadyTracker {
     }
 
     private Logger getLogger(String eventType) {
-        String loggerName = "openhab.event." + eventType;
-        Logger logger = eventLoggers.get(loggerName);
-        if (logger == null) {
-            logger = LoggerFactory.getLogger(loggerName);
-            eventLoggers.put(loggerName, logger);
-        }
-        return logger;
+        return Objects.requireNonNull(
+                eventLoggers.computeIfAbsent(eventType, type -> LoggerFactory.getLogger("openhab.event." + eventType)));
     }
 
     @Override

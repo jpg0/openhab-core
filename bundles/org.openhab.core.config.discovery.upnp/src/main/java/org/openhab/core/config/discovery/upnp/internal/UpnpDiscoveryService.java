@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.Nullable;
 import org.jupnp.UpnpService;
+import org.jupnp.model.message.header.RootDeviceHeader;
 import org.jupnp.model.meta.LocalDevice;
 import org.jupnp.model.meta.RemoteDevice;
 import org.jupnp.model.types.UDN;
@@ -112,11 +113,12 @@ public class UpnpDiscoveryService extends AbstractDiscoveryService
 
         Collection<RemoteDevice> devices = upnpService.getRegistry().getRemoteDevices();
         for (RemoteDevice device : devices) {
+            if (!device.isRoot() && !participant.notifyChildDevices()) {
+                continue;
+            }
             DiscoveryResult result = participant.createResult(device);
             if (result != null) {
-                final DiscoveryResult resultNew = getLocalizedDiscoveryResult(result,
-                        FrameworkUtil.getBundle(participant.getClass()));
-                thingDiscovered(resultNew);
+                thingDiscovered(result, FrameworkUtil.getBundle(participant.getClass()));
             }
         }
     }
@@ -148,9 +150,14 @@ public class UpnpDiscoveryService extends AbstractDiscoveryService
     protected void startScan() {
         for (RemoteDevice device : upnpService.getRegistry().getRemoteDevices()) {
             remoteDeviceAdded(upnpService.getRegistry(), device);
+
+            for (RemoteDevice childDevice : device.getEmbeddedDevices()) {
+                remoteDeviceAdded(upnpService.getRegistry(), childDevice);
+            }
         }
         upnpService.getRegistry().addListener(this);
         upnpService.getControlPoint().search();
+        upnpService.getControlPoint().search(new RootDeviceHeader());
     }
 
     @Override
@@ -165,15 +172,16 @@ public class UpnpDiscoveryService extends AbstractDiscoveryService
     @Override
     public void remoteDeviceAdded(Registry registry, RemoteDevice device) {
         for (UpnpDiscoveryParticipant participant : participants) {
+            if (!device.isRoot() && !participant.notifyChildDevices()) {
+                continue;
+            }
             try {
                 DiscoveryResult result = participant.createResult(device);
                 if (result != null) {
                     if (participant.getRemovalGracePeriodSeconds(device) > 0) {
                         cancelRemovalTask(device.getIdentity().getUdn());
                     }
-                    final DiscoveryResult resultNew = getLocalizedDiscoveryResult(result,
-                            FrameworkUtil.getBundle(participant.getClass()));
-                    thingDiscovered(resultNew);
+                    thingDiscovered(result, FrameworkUtil.getBundle(participant.getClass()));
                 }
             } catch (Exception e) {
                 logger.error("Participant '{}' threw an exception", participant.getClass().getName(), e);
@@ -194,6 +202,9 @@ public class UpnpDiscoveryService extends AbstractDiscoveryService
     @Override
     public void remoteDeviceRemoved(Registry registry, RemoteDevice device) {
         for (UpnpDiscoveryParticipant participant : participants) {
+            if (!device.isRoot() && !participant.notifyChildDevices()) {
+                continue;
+            }
             try {
                 ThingUID thingUID = participant.getThingUID(device);
                 if (thingUID != null) {

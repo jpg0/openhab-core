@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,14 +20,20 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 import java.text.DecimalFormatSymbols;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.TimeZone;
 
 import javax.measure.quantity.Temperature;
 
-import org.eclipse.emf.common.util.BasicEList;
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,10 +41,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.openhab.core.i18n.LocaleProvider;
+import org.openhab.core.i18n.TimeZoneProvider;
+import org.openhab.core.i18n.TranslationProvider;
 import org.openhab.core.items.GroupItem;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.items.Metadata;
+import org.openhab.core.items.MetadataKey;
+import org.openhab.core.items.MetadataRegistry;
 import org.openhab.core.library.items.CallItem;
 import org.openhab.core.library.items.ColorItem;
 import org.openhab.core.library.items.ContactItem;
@@ -58,19 +70,31 @@ import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
-import org.openhab.core.model.sitemap.sitemap.ColorArray;
-import org.openhab.core.model.sitemap.sitemap.Colorpicker;
-import org.openhab.core.model.sitemap.sitemap.Group;
-import org.openhab.core.model.sitemap.sitemap.Image;
-import org.openhab.core.model.sitemap.sitemap.Mapping;
-import org.openhab.core.model.sitemap.sitemap.Mapview;
-import org.openhab.core.model.sitemap.sitemap.Selection;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.SitemapFactory;
-import org.openhab.core.model.sitemap.sitemap.Slider;
-import org.openhab.core.model.sitemap.sitemap.Switch;
-import org.openhab.core.model.sitemap.sitemap.Text;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.sitemap.Button;
+import org.openhab.core.sitemap.Buttongrid;
+import org.openhab.core.sitemap.Chart;
+import org.openhab.core.sitemap.Colorpicker;
+import org.openhab.core.sitemap.Condition;
+import org.openhab.core.sitemap.Default;
+import org.openhab.core.sitemap.Frame;
+import org.openhab.core.sitemap.Group;
+import org.openhab.core.sitemap.Image;
+import org.openhab.core.sitemap.Mapping;
+import org.openhab.core.sitemap.Mapview;
+import org.openhab.core.sitemap.NestedSitemap;
+import org.openhab.core.sitemap.Parent;
+import org.openhab.core.sitemap.Rule;
+import org.openhab.core.sitemap.Selection;
+import org.openhab.core.sitemap.Setpoint;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Slider;
+import org.openhab.core.sitemap.Switch;
+import org.openhab.core.sitemap.Text;
+import org.openhab.core.sitemap.Webview;
+import org.openhab.core.sitemap.Widget;
+import org.openhab.core.sitemap.internal.registry.SitemapFactoryImpl;
+import org.openhab.core.sitemap.registry.SitemapFactory;
+import org.openhab.core.sitemap.registry.SitemapRegistry;
 import org.openhab.core.types.CommandDescriptionBuilder;
 import org.openhab.core.types.CommandOption;
 import org.openhab.core.types.State;
@@ -80,34 +104,118 @@ import org.openhab.core.types.StateOption;
 import org.openhab.core.types.UnDefType;
 import org.openhab.core.types.util.UnitUtils;
 import org.openhab.core.ui.items.ItemUIProvider;
+import org.openhab.core.ui.items.ItemUIRegistry.WidgetLabelSource;
 
 /**
  * @author Kai Kreuzer - Initial contribution
+ * @author Laurent Garnier - Tests updated to consider multiple AND conditions + tests added for getVisiblity
+ * @author Laurent Garnier - Tests added for getCategory
+ * @author Mark Herwege - Implement sitemap registry
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 @NonNullByDefault
 public class ItemUIRegistryImplTest {
 
+    @Nullable
+    private static TimeZone initialTimeZone;
+
     // we need to get the decimal separator of the default locale for our tests
     private static final char SEP = (new DecimalFormatSymbols().getDecimalSeparator());
     private static final String ITEM_NAME = "Item";
+    private static final String GROUP_ITEM_NAME = "GroupItem";
+    private static final String SITEMAP_NAME = "Sitemap";
+    private static final String DEFAULT_TIME_ZONE = "GMT-6";
 
     private @NonNullByDefault({}) ItemUIRegistryImpl uiRegistry;
 
     private @Mock @NonNullByDefault({}) ItemRegistry registryMock;
+    private @Mock @NonNullByDefault({}) MetadataRegistry metadataRegistryMock;
+    private @Mock @NonNullByDefault({}) SitemapFactory sitemapFactoryMock;
+    private @Mock @NonNullByDefault({}) SitemapRegistry sitemapRegistryMock;
+    private @Mock @NonNullByDefault({}) TimeZoneProvider timeZoneProviderMock;
+    private @Mock @NonNullByDefault({}) LocaleProvider localeProviderMock;
+    private @Mock @NonNullByDefault({}) TranslationProvider translationProviderMock;
+    private @Mock @NonNullByDefault({}) Sitemap sitemapMock;
     private @Mock @NonNullByDefault({}) Widget widgetMock;
     private @Mock @NonNullByDefault({}) Item itemMock;
 
+    private @Mock @NonNullByDefault({}) GroupItem groupItemMock;
+    private @Mock @NonNullByDefault({}) SwitchItem switchItemMock; // Will have Switch as default widget
+    private @Mock @NonNullByDefault({}) DimmerItem dimmerItemMock; // Will have Slider as default widget
+    private @Mock @NonNullByDefault({}) ContactItem contactItemMock; // Will have Text as default widget
+
+    @BeforeAll
+    public static void setUpClass() {
+        initialTimeZone = TimeZone.getDefault();
+    }
+
+    @AfterAll
+    @SuppressWarnings("PMD.SetDefaultTimeZone")
+    public static void tearDownClass() {
+        // Set the default time zone to its initial value.
+        TimeZone.setDefault(initialTimeZone);
+    }
+
+    private @Mock @NonNullByDefault({}) Frame frameMock;
+    private @Mock @NonNullByDefault({}) Group groupMock;
+    private @Mock @NonNullByDefault({}) Text textMock;
+    private @Mock @NonNullByDefault({}) Colorpicker colorpickerMock;
+    private @Mock @NonNullByDefault({}) Image imageMock;
+    private @Mock @NonNullByDefault({}) Mapview mapviewMock;
+    private @Mock @NonNullByDefault({}) Slider sliderMock;
+    private @Mock @NonNullByDefault({}) Switch switchMock;
+    private @Mock @NonNullByDefault({}) Selection selectionMock;
+    private @Mock @NonNullByDefault({}) Setpoint setpointMock;
+    private @Mock @NonNullByDefault({}) Chart chartMock;
+    private @Mock @NonNullByDefault({}) Webview webviewMock;
+    private @Mock @NonNullByDefault({}) Buttongrid buttongridMock;
+    private @Mock @NonNullByDefault({}) Button buttonMock;
+    private @Mock @NonNullByDefault({}) Mapping mappingMock;
+    private @Mock @NonNullByDefault({}) NestedSitemap nestedSitemapMock;
+
     @BeforeEach
+    @SuppressWarnings("PMD.SetDefaultTimeZone")
     public void setup() throws Exception {
-        uiRegistry = new ItemUIRegistryImpl(registryMock);
+        uiRegistry = spy(new ItemUIRegistryImpl(registryMock, metadataRegistryMock, sitemapFactoryMock,
+                sitemapRegistryMock, timeZoneProviderMock, localeProviderMock, translationProviderMock));
 
         when(widgetMock.getItem()).thenReturn(ITEM_NAME);
         when(registryMock.getItem(ITEM_NAME)).thenReturn(itemMock);
+        when(timeZoneProviderMock.getTimeZone()).thenReturn(ZoneId.of(DEFAULT_TIME_ZONE));
 
-        // Set default time zone to GMT-6
-        TimeZone.setDefault(TimeZone.getTimeZone("GMT-6"));
+        TimeZone.setDefault(TimeZone.getTimeZone(DEFAULT_TIME_ZONE));
+
+        setupSitemapFactoryMock();
+        setupGroupItemMock();
+    }
+
+    private void setupSitemapFactoryMock() {
+        when(sitemapFactoryMock.createWidget("Group")).thenReturn(groupMock);
+        when(sitemapFactoryMock.createWidget("Text")).thenReturn(textMock);
+        when(sitemapFactoryMock.createWidget("Colorpicker")).thenReturn(colorpickerMock);
+        when(sitemapFactoryMock.createWidget("Image")).thenReturn(imageMock);
+        when(sitemapFactoryMock.createWidget("Mapview")).thenReturn(mapviewMock);
+        when(sitemapFactoryMock.createWidget("Slider")).thenReturn(sliderMock);
+        when(sitemapFactoryMock.createWidget("Switch")).thenReturn(switchMock);
+        when(sitemapFactoryMock.createWidget("Selection")).thenReturn(selectionMock);
+        when(sitemapFactoryMock.createWidget("Sitemap")).thenReturn(nestedSitemapMock);
+
+        when(sitemapFactoryMock.createMapping()).thenReturn(mappingMock);
+    }
+
+    private void setupGroupItemMock() throws Exception {
+        when(switchItemMock.getName()).thenReturn("Zebra");
+        when(switchItemMock.getLabel()).thenReturn("Alpha");
+        when(switchMock.getItem()).thenReturn("Zebra");
+        when(dimmerItemMock.getName()).thenReturn("Alpha");
+        when(dimmerItemMock.getLabel()).thenReturn("Zebra");
+        when(sliderMock.getItem()).thenReturn("Alpha");
+        when(contactItemMock.getName()).thenReturn("Mango"); // No label
+        when(textMock.getItem()).thenReturn("Mango");
+        when(groupItemMock.getMembers()).thenReturn(Set.of(switchItemMock, dimmerItemMock, contactItemMock));
+        when(registryMock.getItem(GROUP_ITEM_NAME)).thenReturn(groupItemMock);
+        when(groupMock.getItem()).thenReturn(GROUP_ITEM_NAME);
     }
 
     @Test
@@ -115,8 +223,8 @@ public class ItemUIRegistryImplTest {
         String testLabel = "This is a plain text";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        String label = uiRegistry.getLabel(widgetMock);
-        assertEquals(testLabel, label);
+        assertEquals(testLabel, uiRegistry.getLabel(widgetMock));
+        assertEquals(WidgetLabelSource.SITEMAP_WIDGET, uiRegistry.getLabelSource(widgetMock));
     }
 
     @Test
@@ -234,7 +342,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%.3f " + UnitUtils.UNIT_PLACEHOLDER + "]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " °C"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " °C"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3" + SEP + "333 °C]", label);
     }
@@ -254,7 +362,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%.0f " + UnitUtils.UNIT_PLACEHOLDER + "]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " °C"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " °C"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3 °C]", label);
     }
@@ -264,7 +372,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%d %%]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " %"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " %"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3 %]", label);
     }
@@ -274,7 +382,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%.0f %%]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " %"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " %"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3 %]", label);
     }
@@ -294,7 +402,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%d " + UnitUtils.UNIT_PLACEHOLDER + "]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " %"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " %"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3 %]", label);
     }
@@ -304,7 +412,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%.0f " + UnitUtils.UNIT_PLACEHOLDER + "]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(itemMock.getState()).thenReturn(new QuantityType<>("" + 10f / 3f + " %"));
+        when(itemMock.getState()).thenReturn(new QuantityType<>(10f / 3f + " %"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [3 %]", label);
     }
@@ -449,14 +557,14 @@ public class ItemUIRegistryImplTest {
     @Test
     public void getLabelWidgetWithoutLabelAndItem() {
         Widget w = mock(Widget.class);
-        String label = uiRegistry.getLabel(w);
-        assertEquals("", label);
+        assertEquals("", uiRegistry.getLabel(w));
+        assertEquals(WidgetLabelSource.NONE, uiRegistry.getLabelSource(w));
     }
 
     @Test
     public void getLabelWidgetWithoutLabel() {
-        String label = uiRegistry.getLabel(widgetMock);
-        assertEquals(ITEM_NAME, label);
+        assertEquals(ITEM_NAME, uiRegistry.getLabel(widgetMock));
+        assertEquals(WidgetLabelSource.ITEM_NAME, uiRegistry.getLabelSource(widgetMock));
     }
 
     @Test
@@ -464,8 +572,8 @@ public class ItemUIRegistryImplTest {
         ItemUIProvider provider = mock(ItemUIProvider.class);
         uiRegistry.addItemUIProvider(provider);
         when(provider.getLabel(anyString())).thenReturn("ProviderLabel");
-        String label = uiRegistry.getLabel(widgetMock);
-        assertEquals("ProviderLabel", label);
+        assertEquals("ProviderLabel", uiRegistry.getLabel(widgetMock));
+        assertEquals(WidgetLabelSource.ITEM_LABEL, uiRegistry.getLabelSource(widgetMock));
         uiRegistry.removeItemUIProvider(provider);
     }
 
@@ -524,7 +632,7 @@ public class ItemUIRegistryImplTest {
         String testLabel = "Label [%s]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
-        when(widgetMock.eClass()).thenReturn(SitemapFactory.eINSTANCE.createText().eClass());
+        when(widgetMock.getWidgetType()).thenReturn("Text");
         when(registryMock.getItem(ITEM_NAME)).thenThrow(new ItemNotFoundException(ITEM_NAME));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [-]", label);
@@ -553,7 +661,10 @@ public class ItemUIRegistryImplTest {
 
     @Test
     public void getWidgetUnknownPageId() throws ItemNotFoundException {
-        Sitemap sitemap = SitemapFactory.eINSTANCE.createSitemap();
+        when(sitemapFactoryMock.createSitemap(SITEMAP_NAME)).thenReturn(sitemapMock);
+        when(sitemapMock.getWidgets()).thenReturn(List.of());
+
+        Sitemap sitemap = sitemapFactoryMock.createSitemap(SITEMAP_NAME);
         when(registryMock.getItem("unknown")).thenThrow(new ItemNotFoundException("unknown"));
         Widget w = uiRegistry.getWidget(sitemap, "unknown");
         assertNull(w);
@@ -580,7 +691,7 @@ public class ItemUIRegistryImplTest {
 
         Switch switchWidget = mock(Switch.class);
         when(switchWidget.getItem()).thenReturn("myItem");
-        when(switchWidget.getMappings()).thenReturn(new BasicEList<>());
+        when(switchWidget.getMappings()).thenReturn(new ArrayList<>());
 
         State stateForSwitch = uiRegistry.getState(switchWidget);
 
@@ -601,7 +712,7 @@ public class ItemUIRegistryImplTest {
         when(switchWidget.getItem()).thenReturn("myItem");
 
         Mapping mapping = mock(Mapping.class);
-        BasicEList<Mapping> mappings = new BasicEList<>();
+        List<Mapping> mappings = new ArrayList<>();
         mappings.add(mapping);
         when(switchWidget.getMappings()).thenReturn(mappings);
 
@@ -625,7 +736,7 @@ public class ItemUIRegistryImplTest {
 
         State stateForSlider = uiRegistry.getState(sliderWidget);
 
-        assertTrue(stateForSlider instanceof PercentType);
+        assertInstanceOf(PercentType.class, stateForSlider);
 
         PercentType pt = (PercentType) stateForSlider;
 
@@ -683,7 +794,7 @@ public class ItemUIRegistryImplTest {
     }
 
     @Test
-    public void getLabelLabelWithMappedOption() {
+    public void getLabelStringItemLabelWithMappedOption() {
         String testLabel = "Label";
 
         StateDescription stateDescription = mock(StateDescription.class);
@@ -700,7 +811,7 @@ public class ItemUIRegistryImplTest {
     }
 
     @Test
-    public void getLabelLabelWithUnmappedOption() {
+    public void getLabelStringItemLabelWithUnmappedOption() {
         String testLabel = "Label";
 
         StateDescription stateDescription = mock(StateDescription.class);
@@ -714,6 +825,78 @@ public class ItemUIRegistryImplTest {
         when(itemMock.getState()).thenReturn(new StringType("State"));
         String label = uiRegistry.getLabel(widgetMock);
         assertEquals("Label [State]", label);
+    }
+
+    @Test
+    public void getLabelStringItemLabelWithMappedOptionButInappropriatePattern() {
+        String testLabel = "Label";
+
+        StateDescription stateDescription = mock(StateDescription.class);
+        List<StateOption> options = new ArrayList<>();
+        options.add(new StateOption("State0", "This is the state 0"));
+        options.add(new StateOption("State1", "This is the state 1"));
+        when(widgetMock.getLabel()).thenReturn(testLabel);
+        when(itemMock.getStateDescription()).thenReturn(stateDescription);
+        when(stateDescription.getPattern()).thenReturn("Value: %f");
+        when(stateDescription.getOptions()).thenReturn(options);
+        when(itemMock.getState()).thenReturn(new StringType("State0"));
+        String label = uiRegistry.getLabel(widgetMock);
+        assertEquals("Label [This is the state 0]", label);
+    }
+
+    @Test
+    public void getLabelNumberItemLabelWithMappedOption() {
+        String testLabel = "Label";
+
+        StateDescription stateDescription = mock(StateDescription.class);
+        List<StateOption> options = new ArrayList<>();
+        options.add(new StateOption("0", "This is the state number 0"));
+        options.add(new StateOption("1", "This is the state number 1"));
+        when(widgetMock.getLabel()).thenReturn(testLabel);
+        when(itemMock.getStateDescription()).thenReturn(stateDescription);
+        when(stateDescription.getPattern()).thenReturn("%s");
+        when(stateDescription.getOptions()).thenReturn(options);
+        when(itemMock.getState()).thenReturn(new DecimalType(1));
+        String label = uiRegistry.getLabel(widgetMock);
+        assertEquals("Label [This is the state number 1]", label);
+    }
+
+    @Test
+    public void getLabelNumberItemLabelWithUnmappedOption() {
+        String testLabel = "Label";
+
+        StateDescription stateDescription = mock(StateDescription.class);
+        List<StateOption> options = new ArrayList<>();
+        options.add(new StateOption("0", "This is the state number 0"));
+        options.add(new StateOption("1", "This is the state number 1"));
+        when(widgetMock.getLabel()).thenReturn(testLabel);
+        when(itemMock.getStateDescription()).thenReturn(stateDescription);
+        when(stateDescription.getPattern()).thenReturn("%s");
+        when(stateDescription.getOptions()).thenReturn(options);
+        when(itemMock.getState()).thenReturn(new DecimalType(2));
+        String label = uiRegistry.getLabel(widgetMock);
+        assertEquals("Label [2]", label);
+    }
+
+    @Test
+    public void getLabelNumberItemLabelWithMappedOptionButInappropriatePattern() {
+        String testLabel = "Label";
+
+        StateDescription stateDescription = mock(StateDescription.class);
+        List<StateOption> options = new ArrayList<>();
+        options.add(new StateOption("0", "This is the state number 0"));
+        options.add(new StateOption("1", "This is the state number 1"));
+        when(widgetMock.getLabel()).thenReturn(testLabel);
+        when(itemMock.getStateDescription()).thenReturn(stateDescription);
+        when(stateDescription.getPattern()).thenReturn("Value: %f");
+        when(stateDescription.getOptions()).thenReturn(options);
+        when(itemMock.getState()).thenReturn(new DecimalType(0));
+        String label = uiRegistry.getLabel(widgetMock);
+        assertEquals("Label [This is the state number 0]", label);
+
+        when(stateDescription.getPattern()).thenReturn("Value: %d");
+        label = uiRegistry.getLabel(widgetMock);
+        assertEquals("Label [This is the state number 0]", label);
     }
 
     @Test
@@ -731,23 +914,71 @@ public class ItemUIRegistryImplTest {
     }
 
     @Test
+    public void getLabelFailingTransformation() throws ItemNotFoundException {
+        String testLabel = "Memory [FOO(echo %s):__%d__]";
+        Widget w = mock(Widget.class);
+        Item item = mock(Item.class);
+        when(w.getLabel()).thenReturn(testLabel);
+        when(w.getItem()).thenReturn(ITEM_NAME);
+        when(registryMock.getItem(ITEM_NAME)).thenReturn(item);
+        when(item.getState()).thenReturn(new DecimalType(11));
+        String label = uiRegistry.getLabel(w);
+        assertEquals("Memory [11]", label);
+    }
+
+    @Test
+    public void getLabelFailingTransformationWithNullState() throws ItemNotFoundException {
+        String testLabel = "Memory [FOO(echo %s):__%d__]";
+        Widget w = mock(Widget.class);
+        Item item = mock(Item.class);
+        when(w.getLabel()).thenReturn(testLabel);
+        when(w.getItem()).thenReturn(ITEM_NAME);
+        when(registryMock.getItem(ITEM_NAME)).thenReturn(item);
+        when(item.getState()).thenReturn(UnDefType.NULL);
+        String label = uiRegistry.getLabel(w);
+        assertEquals("Memory [-]", label);
+    }
+
+    @Test
+    public void getLabelFailingTransformationWithUndefState() throws ItemNotFoundException {
+        String testLabel = "Memory [FOO(echo %s):__%d__]";
+        Widget w = mock(Widget.class);
+        Item item = mock(Item.class);
+        when(w.getLabel()).thenReturn(testLabel);
+        when(w.getItem()).thenReturn(ITEM_NAME);
+        when(registryMock.getItem(ITEM_NAME)).thenReturn(item);
+        when(item.getState()).thenReturn(UnDefType.UNDEF);
+        String label = uiRegistry.getLabel(w);
+        assertEquals("Memory [-]", label);
+    }
+
+    @Test
     public void getLabelColorLabelWithDecimalValue() {
         String testLabel = "Label [%.3f]";
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
 
-        ColorArray colorArray = mock(ColorArray.class);
-        when(colorArray.getState()).thenReturn("21");
-        when(colorArray.getCondition()).thenReturn("<");
-        when(colorArray.getArg()).thenReturn("yellow");
-        BasicEList<ColorArray> colorArrays = new BasicEList<>();
-        colorArrays.add(colorArray);
-        when(widgetMock.getLabelColor()).thenReturn(colorArrays);
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("21");
+        when(condition.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("yellow");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        when(widgetMock.getLabelColor()).thenReturn(rules);
 
         when(itemMock.getState()).thenReturn(new DecimalType(10f / 3f));
 
         String color = uiRegistry.getLabelColor(widgetMock);
         assertEquals("yellow", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(21f));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertNull(color);
     }
 
     @Test
@@ -756,18 +987,27 @@ public class ItemUIRegistryImplTest {
 
         when(widgetMock.getLabel()).thenReturn(testLabel);
 
-        ColorArray colorArray = mock(ColorArray.class);
-        when(colorArray.getState()).thenReturn("20");
-        when(colorArray.getCondition()).thenReturn("==");
-        when(colorArray.getArg()).thenReturn("yellow");
-        BasicEList<ColorArray> colorArrays = new BasicEList<>();
-        colorArrays.add(colorArray);
-        when(widgetMock.getLabelColor()).thenReturn(colorArrays);
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("20");
+        when(condition.getCondition()).thenReturn("==");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("yellow");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        when(widgetMock.getLabelColor()).thenReturn(rules);
 
         when(itemMock.getState()).thenReturn(new QuantityType<>("20 °C"));
 
         String color = uiRegistry.getLabelColor(widgetMock);
         assertEquals("yellow", color);
+
+        when(itemMock.getState()).thenReturn(new QuantityType<>("20.1 °C"));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertNull(color);
     }
 
     @Test
@@ -789,7 +1029,8 @@ public class ItemUIRegistryImplTest {
 
         defaultWidget = uiRegistry.getDefaultWidget(DimmerItem.class, ITEM_NAME);
         assertThat(defaultWidget, is(instanceOf(Slider.class)));
-        assertThat(((Slider) defaultWidget).isSwitchEnabled(), is(true));
+        verify(sliderMock).setSwitchEnabled(true);
+        verify(sliderMock).setReleaseOnly(true);
 
         defaultWidget = uiRegistry.getDefaultWidget(ImageItem.class, ITEM_NAME);
         assertThat(defaultWidget, is(instanceOf(Image.class)));
@@ -797,15 +1038,16 @@ public class ItemUIRegistryImplTest {
         defaultWidget = uiRegistry.getDefaultWidget(LocationItem.class, ITEM_NAME);
         assertThat(defaultWidget, is(instanceOf(Mapview.class)));
 
-        defaultWidget = uiRegistry.getDefaultWidget(PlayerItem.class, ITEM_NAME);
-        assertThat(defaultWidget, is(instanceOf(Switch.class)));
-        assertThat(((Switch) defaultWidget).getMappings(), hasSize(4));
-
         defaultWidget = uiRegistry.getDefaultWidget(RollershutterItem.class, ITEM_NAME);
         assertThat(defaultWidget, is(instanceOf(Switch.class)));
 
         defaultWidget = uiRegistry.getDefaultWidget(SwitchItem.class, ITEM_NAME);
         assertThat(defaultWidget, is(instanceOf(Switch.class)));
+
+        when(switchMock.getMappings()).thenReturn(new ArrayList<Mapping>());
+        defaultWidget = uiRegistry.getDefaultWidget(PlayerItem.class, ITEM_NAME);
+        assertThat(defaultWidget, is(instanceOf(Switch.class)));
+        assertThat(((Switch) defaultWidget).getMappings(), hasSize(4));
     }
 
     @Test
@@ -917,5 +1159,1287 @@ public class ItemUIRegistryImplTest {
         String unit = uiRegistry.getUnitForWidget(widgetMock);
 
         assertThat(unit, is(equalTo("°C")));
+    }
+
+    @Test
+    public void getLabelColorDefaultColor() {
+        String testLabel = "Label [%.3f]";
+
+        when(widgetMock.getLabel()).thenReturn(testLabel);
+
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("18");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("21");
+        when(condition2.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        conditions.add(condition2);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("yellow");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        Condition condition3 = mock(Condition.class);
+        when(condition3.getArgument()).thenReturn("21");
+        when(condition3.getCondition()).thenReturn(">=");
+        Condition condition4 = mock(Condition.class);
+        when(condition4.getArgument()).thenReturn("24");
+        when(condition4.getCondition()).thenReturn("<");
+        List<Condition> conditions2 = new ArrayList<>();
+        conditions2.add(condition3);
+        conditions2.add(condition4);
+        Rule rule2 = mock(Rule.class);
+        when(rule2.getConditions()).thenReturn(conditions2);
+        when(rule2.getValue()).thenReturn("red");
+        rules.add(rule2);
+        List<Condition> conditions5 = new ArrayList<>();
+        Rule rule3 = mock(Rule.class);
+        when(rule3.getConditions()).thenReturn(conditions5);
+        when(rule3.getValue()).thenReturn("blue");
+        rules.add(rule3);
+        when(widgetMock.getLabelColor()).thenReturn(rules);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+
+        String color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("yellow", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("red", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getLabelColor(widgetMock);
+        assertEquals("blue", color);
+    }
+
+    @Test
+    public void getValueColor() {
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("18");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("21");
+        when(condition2.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        conditions.add(condition2);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("yellow");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        Condition condition3 = mock(Condition.class);
+        when(condition3.getArgument()).thenReturn("21");
+        when(condition3.getCondition()).thenReturn(">=");
+        Condition condition4 = mock(Condition.class);
+        when(condition4.getArgument()).thenReturn("24");
+        when(condition4.getCondition()).thenReturn("<");
+        List<Condition> conditions2 = new ArrayList<>();
+        conditions2.add(condition3);
+        conditions2.add(condition4);
+        Rule rule2 = mock(Rule.class);
+        when(rule2.getConditions()).thenReturn(conditions2);
+        when(rule2.getValue()).thenReturn("red");
+        rules.add(rule2);
+        List<Condition> conditions5 = new ArrayList<>();
+        Rule rule3 = mock(Rule.class);
+        when(rule3.getConditions()).thenReturn(conditions5);
+        when(rule3.getValue()).thenReturn("blue");
+        rules.add(rule3);
+        when(widgetMock.getValueColor()).thenReturn(rules);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+
+        String color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("yellow", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+
+        color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("red", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getValueColor(widgetMock);
+        assertEquals("blue", color);
+    }
+
+    @Test
+    public void getIconColor() {
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("18");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("21");
+        when(condition2.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        conditions.add(condition2);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("yellow");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        Condition condition3 = mock(Condition.class);
+        when(condition3.getArgument()).thenReturn("21");
+        when(condition3.getCondition()).thenReturn(">=");
+        Condition condition4 = mock(Condition.class);
+        when(condition4.getArgument()).thenReturn("24");
+        when(condition4.getCondition()).thenReturn("<");
+        List<Condition> conditions2 = new ArrayList<>();
+        conditions2.add(condition3);
+        conditions2.add(condition4);
+        Rule rule2 = mock(Rule.class);
+        when(rule2.getConditions()).thenReturn(conditions2);
+        when(rule2.getValue()).thenReturn("red");
+        rules.add(rule2);
+        List<Condition> conditions5 = new ArrayList<>();
+        Rule rule3 = mock(Rule.class);
+        when(rule3.getConditions()).thenReturn(conditions5);
+        when(rule3.getValue()).thenReturn("blue");
+        rules.add(rule3);
+        when(widgetMock.getIconColor()).thenReturn(rules);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+
+        String color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("yellow", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+
+        color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("red", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("blue", color);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(17.5));
+
+        color = uiRegistry.getIconColor(widgetMock);
+        assertEquals("blue", color);
+    }
+
+    @Test
+    public void getVisibility() {
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("21");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("24");
+        when(condition2.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        conditions.add(condition2);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        when(widgetMock.getVisibility()).thenReturn(rules);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+
+        assertFalse(uiRegistry.getVisiblity(widgetMock));
+
+        when(itemMock.getState()).thenReturn(new DecimalType(21.0));
+
+        assertTrue(uiRegistry.getVisiblity(widgetMock));
+
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+
+        assertTrue(uiRegistry.getVisiblity(widgetMock));
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        assertFalse(uiRegistry.getVisiblity(widgetMock));
+    }
+
+    @Test
+    public void getConfirmCmd() {
+        when(widgetMock.getConfirmCmd()).thenReturn(true);
+        assertEquals(ItemUIRegistryImpl.DEFAULT_COMMAND_CONFIRM_MESSAGE,
+                uiRegistry.getCommandConfirmMessage(widgetMock));
+
+        when(widgetMock.getConfirmCmd()).thenReturn(false);
+        assertNull(uiRegistry.getCommandConfirmMessage(widgetMock));
+
+        String message = "Are you absolutely sure?";
+        Rule rule = mock(Rule.class);
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        List<Condition> conditions = new ArrayList<>();
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn(message);
+        when(widgetMock.getConfirmCmdRules()).thenReturn(rules);
+        assertEquals(message, uiRegistry.getCommandConfirmMessage(widgetMock));
+
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("21");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("24");
+        when(condition2.getCondition()).thenReturn("<");
+        conditions.add(condition);
+        conditions.add(condition2);
+        when(rule.getValue()).thenReturn(null);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+        assertNull(uiRegistry.getCommandConfirmMessage(mapviewMock));
+
+        when(itemMock.getState()).thenReturn(new DecimalType(21.0));
+        assertEquals(ItemUIRegistryImpl.DEFAULT_COMMAND_CONFIRM_MESSAGE,
+                uiRegistry.getCommandConfirmMessage(widgetMock));
+
+        when(rule.getValue()).thenReturn(message);
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+        assertEquals(message, uiRegistry.getCommandConfirmMessage(widgetMock));
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+        assertNull(uiRegistry.getCommandConfirmMessage(widgetMock));
+    }
+
+    @Test
+    public void getCategoryWhenIconSetWithoutRules() {
+        when(widgetMock.getWidgetType()).thenReturn("Text");
+        when(widgetMock.getIcon()).thenReturn("temperature");
+        when(widgetMock.isStaticIcon()).thenReturn(false);
+        when(widgetMock.getIconRules()).thenReturn(List.of());
+
+        String icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("temperature", icon);
+    }
+
+    @Test
+    public void getCategoryWhenIconSetWithRules() {
+        when(widgetMock.getWidgetType()).thenReturn("Text");
+        when(widgetMock.getIcon()).thenReturn(null);
+        when(widgetMock.isStaticIcon()).thenReturn(false);
+        Condition condition = mock(Condition.class);
+        when(condition.getArgument()).thenReturn("21");
+        when(condition.getCondition()).thenReturn(">=");
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getArgument()).thenReturn("24");
+        when(condition2.getCondition()).thenReturn("<");
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        conditions.add(condition2);
+        Rule rule = mock(Rule.class);
+        when(rule.getConditions()).thenReturn(conditions);
+        when(rule.getValue()).thenReturn("temperature");
+        List<Rule> rules = new ArrayList<>();
+        rules.add(rule);
+        List<Condition> conditions2 = new ArrayList<>();
+        Rule rule2 = mock(Rule.class);
+        when(rule2.getConditions()).thenReturn(conditions2);
+        when(rule2.getValue()).thenReturn("humidity");
+        rules.add(rule2);
+        when(widgetMock.getIconRules()).thenReturn(rules);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(20.9));
+
+        String icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("humidity", icon);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(21.0));
+
+        icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("temperature", icon);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(23.5));
+
+        icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("temperature", icon);
+
+        when(itemMock.getState()).thenReturn(new DecimalType(24.0));
+
+        icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("humidity", icon);
+    }
+
+    @Test
+    public void getCategoryWhenStaticIconSet() {
+        when(widgetMock.getWidgetType()).thenReturn("Text");
+        when(widgetMock.getIcon()).thenReturn("temperature");
+        when(widgetMock.isStaticIcon()).thenReturn(true);
+        when(widgetMock.getIconRules()).thenReturn(List.of());
+
+        String icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("temperature", icon);
+    }
+
+    @Test
+    public void getCategoryWhenIconSetOnItem() {
+        when(widgetMock.getWidgetType()).thenReturn("Text");
+        when(widgetMock.getIcon()).thenReturn(null);
+        when(widgetMock.isStaticIcon()).thenReturn(false);
+        when(widgetMock.getIconRules()).thenReturn(List.of());
+
+        when(itemMock.getCategory()).thenReturn("temperature");
+
+        String icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("temperature", icon);
+    }
+
+    @Test
+    public void getCategoryDefaultIcon() {
+        when(widgetMock.getWidgetType()).thenReturn("Text");
+        when(widgetMock.getIcon()).thenReturn(null);
+        when(widgetMock.isStaticIcon()).thenReturn(false);
+        when(widgetMock.getIconRules()).thenReturn(List.of());
+
+        when(itemMock.getCategory()).thenReturn(null);
+
+        String icon = uiRegistry.getCategory(widgetMock);
+        assertEquals("text", icon);
+    }
+
+    @Test
+    public void getWidgetId() throws ItemNotFoundException {
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(frameMock.getWidgets()).thenReturn(
+                List.of(switchMock, sliderMock, groupMock, colorpickerMock, imageMock, mapviewMock, selectionMock,
+                        setpointMock, chartMock, webviewMock, textMock, buttongridMock, nestedSitemapMock));
+        when(buttongridMock.getWidgets()).thenReturn(List.of(buttonMock));
+        when(frameMock.getParent()).thenReturn(sitemapMock);
+        when(switchMock.getParent()).thenReturn(frameMock);
+        when(sliderMock.getParent()).thenReturn(frameMock);
+        when(groupMock.getParent()).thenReturn(frameMock);
+        when(colorpickerMock.getParent()).thenReturn(frameMock);
+        when(imageMock.getParent()).thenReturn(frameMock);
+        when(mapviewMock.getParent()).thenReturn(frameMock);
+        when(selectionMock.getParent()).thenReturn(frameMock);
+        when(setpointMock.getParent()).thenReturn(frameMock);
+        when(chartMock.getParent()).thenReturn(frameMock);
+        when(webviewMock.getParent()).thenReturn(frameMock);
+        when(textMock.getParent()).thenReturn(frameMock);
+        when(buttongridMock.getParent()).thenReturn(frameMock);
+        when(buttonMock.getParent()).thenReturn(buttongridMock);
+        when(nestedSitemapMock.getParent()).thenReturn(frameMock);
+
+        assertEquals("1_0", uiRegistry.getWidgetId(frameMock));
+        assertEquals("1_00", uiRegistry.getWidgetId(switchMock));
+        assertEquals("1_01", uiRegistry.getWidgetId(sliderMock));
+        assertEquals("1_02", uiRegistry.getWidgetId(groupMock));
+        assertEquals("1_03", uiRegistry.getWidgetId(colorpickerMock));
+        assertEquals("1_04", uiRegistry.getWidgetId(imageMock));
+        assertEquals("1_05", uiRegistry.getWidgetId(mapviewMock));
+        assertEquals("1_06", uiRegistry.getWidgetId(selectionMock));
+        assertEquals("1_07", uiRegistry.getWidgetId(setpointMock));
+        assertEquals("1_08", uiRegistry.getWidgetId(chartMock));
+        assertEquals("1_09", uiRegistry.getWidgetId(webviewMock));
+        assertEquals("2_0010", uiRegistry.getWidgetId(textMock));
+        assertEquals("2_0011", uiRegistry.getWidgetId(buttongridMock));
+        assertEquals("2_001100", uiRegistry.getWidgetId(buttonMock));
+        assertEquals("2_0012", uiRegistry.getWidgetId(nestedSitemapMock));
+    }
+
+    @Test
+    public void getWidget() throws ItemNotFoundException {
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(frameMock.getWidgets()).thenReturn(List.of(switchMock, buttongridMock));
+        when(buttongridMock.getWidgets()).thenReturn(List.of(buttonMock));
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        assertEquals(frameMock, uiRegistry.getWidget(sitemapMock, "1_0"));
+        assertEquals(switchMock, uiRegistry.getWidget(sitemapMock, "1_00"));
+        assertEquals(buttongridMock, uiRegistry.getWidget(sitemapMock, "1_01"));
+        assertEquals(buttonMock, uiRegistry.getWidget(sitemapMock, "1_010"));
+        assertEquals(frameMock, uiRegistry.getWidget(sitemapMock, "2_00"));
+        assertEquals(switchMock, uiRegistry.getWidget(sitemapMock, "2_0000"));
+        assertEquals(buttongridMock, uiRegistry.getWidget(sitemapMock, "2_0001"));
+        assertEquals(buttonMock, uiRegistry.getWidget(sitemapMock, "2_000100"));
+        assertEquals(frameMock, uiRegistry.getWidget(sitemapMock, "3_000"));
+        assertEquals(switchMock, uiRegistry.getWidget(sitemapMock, "3_000000"));
+        assertEquals(buttongridMock, uiRegistry.getWidget(sitemapMock, "3_000001"));
+        assertEquals(buttonMock, uiRegistry.getWidget(sitemapMock, "3_000001000"));
+        assertEquals(frameMock, uiRegistry.getWidget(sitemapMock, "00"));
+        assertEquals(switchMock, uiRegistry.getWidget(sitemapMock, "0000"));
+        assertEquals(buttongridMock, uiRegistry.getWidget(sitemapMock, "0001"));
+        assertEquals(buttonMock, uiRegistry.getWidget(sitemapMock, "000100"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "1_1"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "1_02"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "1_011"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "2_0"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "2_000"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "2_01"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "2_0002"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "2_000101"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "0"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "000"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "01"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "0002"));
+        assertNull(uiRegistry.getWidget(sitemapMock, "000101"));
+    }
+
+    private void setSorting(String mode) throws Exception {
+        uiRegistry.modified(Map.of("groupMembersSorting", mode));
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByName() throws Exception {
+        setSorting("NAME");
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        assertEquals(List.of("Alpha", "Mango", "Zebra"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLabel() throws Exception {
+        setSorting("LABEL");
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // switchItem label "Alpha", dimmerItem label "Zebra", contactItem no label -> falls back to name "Mango"
+        assertEquals(List.of("Zebra", "Mango", "Alpha"), // Alpha(label) < Mango(name-fallback) < Zebra(label)
+                children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByMetadataWithValues() throws Exception {
+        setSorting("METADATA");
+        setOrderMetadata(switchItemMock.getName(), "2");
+        setOrderMetadata(dimmerItemMock.getName(), "1");
+        setOrderMetadata(contactItemMock.getName(), "3");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        assertEquals(List.of("Alpha", "Zebra", "Mango"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByMetadataMissingValuesGoLast() throws Exception {
+        setSorting("METADATA");
+        setOrderMetadata(dimmerItemMock.getName(), "1"); // only one member has metadata
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // memberB (has metadata) first, then remaining two by name fallback: Mango, Zebra
+        assertEquals(List.of("Alpha", "Mango", "Zebra"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByMetadataStringNumericComparison() throws Exception {
+        setSorting("METADATA");
+        setOrderMetadata(switchItemMock.getName(), "10");
+        setOrderMetadata(dimmerItemMock.getName(), "2");
+        setOrderMetadata(contactItemMock.getName(), "1");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        assertEquals(List.of("Mango", "Alpha", "Zebra"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLocationHierarchySameParentUsesOwnWidgetOrder() throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("Kitchen", "LivingRoom", "Garage");
+        setLocationMetadata("Kitchen", "GroundFloor");
+        setLocationMetadata("LivingRoom", "GroundFloor");
+        setLocationMetadata("Garage", "GroundFloor");
+        setOrderMetadata("Kitchen", "2");
+        setOrderMetadata("LivingRoom", "1");
+        setOrderMetadata("Garage", "3");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        assertEquals(List.of("LivingRoom", "Kitchen", "Garage"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLocationHierarchyDifferentParentsUsesParentOrder() throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("Kitchen", "Zzz_Bedroom", "Garage");
+        setLocationMetadata("Kitchen", "GroundFloor");
+        setLocationMetadata("Zzz_Bedroom", "FirstFloor");
+        setLocationMetadata("Garage", "GroundFloor");
+        setOrderMetadata("GroundFloor", "2");
+        setOrderMetadata("FirstFloor", "1");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // FirstFloor (order 1) < GroundFloor (order 2) => Bedroom before the GroundFloor rooms.
+        // Among the two GroundFloor siblings (Kitchen, Garage) with no own widgetOrder,
+        // falls back to label/name: "Garage" < "Kitchen".
+        assertEquals(List.of("Zzz_Bedroom", "Garage", "Kitchen"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLocationHierarchyThreeLevelsDivergesAtGrandparent() throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("RoomA", "RoomB", "RoomC");
+        setLocationMetadata("RoomA", "Floor1");
+        setLocationMetadata("RoomB", "Floor2");
+        setLocationMetadata("RoomC", "Floor2");
+        setLocationMetadata("Floor1", "Home");
+        setLocationMetadata("Floor2", "Home");
+        setOrderMetadata("Floor1", "2");
+        setOrderMetadata("Floor2", "1");
+        setOrderMetadata("RoomB", "2");
+        setOrderMetadata("RoomC", "1");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // Floor2 (order 1) beats Floor1 (order 2) => RoomB/RoomC before RoomA.
+        // Within Floor2, siblings RoomB (order 2) vs RoomC (order 1) => RoomC before RoomB.
+        assertEquals(List.of("RoomC", "RoomB", "RoomA"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLocationHierarchyDifferentDepth() throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("RoomA", "RoomB", "RoomC");
+        setLocationMetadata("RoomA", "FirstFloor");
+        setLocationMetadata("RoomB", "FirstFloor");
+        setLocationMetadata("FirstFloor", "Home");
+        setLocationMetadata("RoomC", "Home");
+        setOrderMetadata("RoomA", "10");
+        setOrderMetadata("RoomB", "9");
+        setOrderMetadata("FirstFloor", "1");
+        setOrderMetadata("RoomC", "2");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // FirstFloor & RoomC are both depth 1 -> compared by own widgetOrder (1 < 2).
+        assertEquals(List.of("RoomB", "RoomA", "RoomC"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByLocationHierarchyDifferentDepthShallowFirst() throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("RoomA", "RoomB", "RoomC");
+        setLocationMetadata("RoomA", "Upstairs");
+        setLocationMetadata("RoomB", "FirstFloor");
+        setLocationMetadata("FirstFloor", "Upstairs");
+        setLocationMetadata("Upstairs", "Home");
+        setLocationMetadata("RoomC", "Home");
+        setOrderMetadata("Upstairs", "1");
+        setOrderMetadata("RoomC", "2");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        // RoomA (depth 2) vs RoomB (depth 3): comparison is between RoomA and FirstFloor (depth 2), FirstFloor (and
+        // therefore RoomB) comes first
+        // RoomC (depth 1) compares to Upstairs -> widgetOrder of Upstairs (1) < RoomC (2)
+        assertEquals(List.of("RoomB", "RoomA", "RoomC"), children.stream().map(Widget::getItem).toList());
+    }
+
+    @Test
+    public void testDynamicGroupChildrenSortByMetadataMixedLocationAndNonLocationFallsBackToWidgetOrder()
+            throws Exception {
+        setSorting("METADATA");
+        setupThreeLocationMembers("Kitchen", "TemperatureSensor", "Garage");
+        setLocationMetadata("Kitchen", "GroundFloor");
+        setLocationMetadata("Garage", "GroundFloor");
+        setOrderMetadata("Kitchen", "1");
+        setOrderMetadata("Garage", "2");
+
+        List<Widget> children = uiRegistry.getChildren(groupMock);
+        assertEquals(List.of("Kitchen", "Garage", "TemperatureSensor"),
+                children.stream().map(Widget::getItem).toList());
+    }
+
+    private void setOrderMetadata(String itemName, String value) {
+        MetadataKey key = new MetadataKey(ItemUIRegistryImpl.WIDGET_ORDER_KEY, itemName);
+        when(metadataRegistryMock.get(key)).thenReturn(new Metadata(key, value, null));
+    }
+
+    private void setLocationMetadata(String itemName, @Nullable String parentName) {
+        MetadataKey key = new MetadataKey(ItemUIRegistryImpl.SEMANTICS_KEY, itemName);
+        Map<String, Object> config = parentName != null
+                ? Map.of(ItemUIRegistryImpl.SEMANTICS_PARENT_LOCATION_CONFIG, parentName)
+                : Map.of();
+        // Value just needs to start with SEMANTICS_LOCATION for isLocationContext to be true.
+        when(metadataRegistryMock.get(key))
+                .thenReturn(new Metadata(key, ItemUIRegistryImpl.SEMANTICS_LOCATION + "_Room", config));
+    }
+
+    private void setupThreeLocationMembers(String name1, String name2, String name3) throws Exception {
+        GroupItem groupItem1 = new GroupItem(name1);
+        GroupItem groupItem2 = new GroupItem(name2);
+        GroupItem groupItem3 = new GroupItem(name3);
+        Group group1Mock = mock(Group.class);
+        Group group2Mock = mock(Group.class);
+        Group group3Mock = mock(Group.class);
+        when(groupItemMock.getMembers()).thenReturn(Set.of(groupItem1, groupItem2, groupItem3));
+        when(group1Mock.getItem()).thenReturn(name1);
+        when(group2Mock.getItem()).thenReturn(name2);
+        when(group3Mock.getItem()).thenReturn(name3);
+        doReturn(group1Mock).when(uiRegistry).getDefaultWidget(GroupItem.class, name1);
+        doReturn(group2Mock).when(uiRegistry).getDefaultWidget(GroupItem.class, name2);
+        doReturn(group3Mock).when(uiRegistry).getDefaultWidget(GroupItem.class, name3);
+    }
+
+    @Test
+    public void nestedSitemapDefinedByName() throws ItemNotFoundException {
+        // Use a real SitemapFactoryImpl to create real widget instances for the target sitemap, so that parent/child
+        // relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        // prepare a target sitemap that will be returned by the sitemap registry
+        Sitemap targetSitemap = mock(Sitemap.class);
+        when(targetSitemap.getLabel()).thenReturn("TargetSitemapLabel");
+        when(targetSitemap.getIcon()).thenReturn("targetIcon");
+
+        // create a concrete child widget inside the target sitemap (real impl via factory impl)
+        Widget sourceChild = sitemapFactory.createWidget(SitemapFactory.SWITCH, targetSitemap);
+        assertNotNull(sourceChild);
+        sourceChild.setLabel("childLabel");
+        List<Widget> sourceChildren = List.of(sourceChild);
+        when(targetSitemap.getWidgets()).thenReturn(sourceChildren);
+
+        when(sitemapRegistryMock.get("target")).thenReturn(targetSitemap);
+        when(nestedSitemapMock.getName()).thenReturn("target");
+        // place nestedSitemap inside a frame, and frame inside the top-level sitemap
+        when(frameMock.getWidgets()).thenReturn(List.of(nestedSitemapMock));
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(sitemapMock.getName()).thenReturn(SITEMAP_NAME);
+        when(frameMock.getParent()).thenReturn(sitemapMock);
+        when(nestedSitemapMock.getParent()).thenReturn(frameMock);
+
+        // ensure the factory creates real Widget instances
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        // call getChildren on the frame: this will resolve the nested sitemap into a Text
+        List<Widget> frameChildren = uiRegistry.getChildren(frameMock);
+        // we expect exactly one child (the nested Text)
+        assertThat(frameChildren, hasSize(1));
+        Widget resolvedNested = frameChildren.get(0);
+        assertThat(resolvedNested, is(instanceOf(org.openhab.core.sitemap.Text.class)));
+
+        // The resolved nested Text should have used the target sitemap label/icon when its own label/icon is null
+        // (nested widget mock returns null for getLabel/getIcon unless stubbed)
+        assertEquals("TargetSitemapLabel", resolvedNested.getLabel());
+        assertEquals("targetIcon", resolvedNested.getIcon());
+
+        // Its children should be copies of the target sitemap's widgets and must be retrievable
+        List<Widget> nestedChildren = uiRegistry.getChildren((Parent) resolvedNested);
+        assertThat(nestedChildren, hasSize(sourceChildren.size()));
+
+        // For each nested child we can compute its widget id and then retrieve the same widget via
+        // uiRegistry.getWidget(topSitemap, id)
+        Widget nestedChild = nestedChildren.get(0);
+        String childId = uiRegistry.getWidgetId(nestedChild);
+        assertNotNull(childId);
+
+        // retrieving via top-level sitemap with the child's id must return the same widget object
+        Widget retrieved = uiRegistry.getWidget(sitemapMock, childId);
+        assertSame(nestedChild, retrieved);
+    }
+
+    @Test
+    public void nestedSitemapDefinedByItem() throws ItemNotFoundException {
+        // Use a real SitemapFactoryImpl to create real widget instances for the target sitemap, so that parent/child
+        // relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        // target sitemap to be returned
+        Sitemap targetSitemap = mock(Sitemap.class);
+        when(targetSitemap.getLabel()).thenReturn("ItemBasedSitemapLabel");
+        when(targetSitemap.getIcon()).thenReturn("itemIcon");
+
+        // create source widget inside target sitemap
+        Widget sourceChild = sitemapFactory.createWidget(SitemapFactory.SWITCH, targetSitemap);
+        assertNotNull(sourceChild);
+        when(targetSitemap.getWidgets()).thenReturn(List.of(sourceChild));
+
+        // prepare a backing item whose state holds the sitemap name
+        Item sitemapSelectorItem = mock(Item.class);
+        when(sitemapSelectorItem.getState()).thenReturn(new StringType("itemTarget"));
+        when(registryMock.get("sitemapSelector")).thenReturn(sitemapSelectorItem);
+
+        // sitemapRegistry should return the sitemap whose name is equal to the item state
+        when(sitemapRegistryMock.get("itemTarget")).thenReturn(targetSitemap);
+
+        // nested sitemap widget is defined by item
+        when(nestedSitemapMock.getItem()).thenReturn("sitemapSelector");
+
+        // place nestedSitemap inside a frame and the frame in the top-level sitemap
+        when(frameMock.getWidgets()).thenReturn(List.of(nestedSitemapMock));
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(sitemapMock.getName()).thenReturn(SITEMAP_NAME);
+        when(frameMock.getParent()).thenReturn(sitemapMock);
+        when(nestedSitemapMock.getParent()).thenReturn(frameMock);
+
+        // ensure the factory creates real Widget instances
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        // resolve nested sitemap by calling getChildren on the frame
+        List<Widget> frameChildren = uiRegistry.getChildren(frameMock);
+        assertThat(frameChildren, hasSize(1));
+        Widget resolvedNested = frameChildren.get(0);
+
+        // label/icon should default to sitemap's label/icon
+        assertEquals("ItemBasedSitemapLabel", resolvedNested.getLabel());
+        assertEquals("itemIcon", resolvedNested.getIcon());
+
+        // nested children must be available and retrievable by id
+        List<Widget> nestedChildren = uiRegistry.getChildren((Parent) resolvedNested);
+        assertThat(nestedChildren, hasSize(1));
+        Widget nestedChild = nestedChildren.get(0);
+        String childId = uiRegistry.getWidgetId(nestedChild);
+        assertNotNull(childId);
+        Widget fetched = uiRegistry.getWidget(sitemapMock, childId);
+        assertSame(nestedChild, fetched);
+    }
+
+    @Test
+    public void nestedSitemapCycleAcrossMultipleLevelsIsDetected() throws ItemNotFoundException {
+        // Use a real SitemapFactoryImpl so parent/child relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        // a -> b -> c -> b : cycle entirely below the root "a"
+        Sitemap sitemapA = sitemapFactory.createSitemap("a");
+        NestedSitemap nestedB = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, sitemapA);
+        assertNotNull(nestedB);
+        nestedB.setName("b");
+        nestedB.setLabel("B");
+        sitemapA.setWidgets(new ArrayList<>(List.of(nestedB)));
+
+        Sitemap sitemapB = sitemapFactory.createSitemap("b");
+        NestedSitemap nestedC = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, sitemapB);
+        assertNotNull(nestedC);
+        nestedC.setName("c");
+        nestedC.setLabel("C");
+        sitemapB.setWidgets(new ArrayList<>(List.of(nestedC)));
+
+        Sitemap sitemapC = sitemapFactory.createSitemap("c");
+        NestedSitemap nestedBackToB = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, sitemapC);
+        assertNotNull(nestedBackToB);
+        nestedBackToB.setName("b");
+        nestedBackToB.setLabel("Back to B");
+        sitemapC.setWidgets(new ArrayList<>(List.of(nestedBackToB)));
+
+        when(sitemapRegistryMock.get("a")).thenReturn(sitemapA);
+        when(sitemapRegistryMock.get("b")).thenReturn(sitemapB);
+        when(sitemapRegistryMock.get("c")).thenReturn(sitemapC);
+
+        List<Widget> aChildren = uiRegistry.getChildren(sitemapA);
+        assertThat(aChildren, hasSize(1));
+        Widget resolvedB = aChildren.getFirst();
+        assertThat(resolvedB, is(instanceOf(Text.class)));
+        assertEquals("B", resolvedB.getLabel());
+
+        List<Widget> bChildren = uiRegistry.getChildren((Parent) resolvedB);
+        assertThat(bChildren, hasSize(1));
+        Widget resolvedC = bChildren.getFirst();
+        assertThat(resolvedC, is(instanceOf(Text.class)));
+        assertEquals("C", resolvedC.getLabel());
+
+        List<Widget> cChildren = uiRegistry.getChildren((Parent) resolvedC);
+        assertThat(cChildren, hasSize(1));
+        Widget resolvedBackToB = cChildren.getFirst();
+        assertThat(resolvedBackToB, is(instanceOf(Text.class)));
+        assertEquals("Back to B", resolvedBackToB.getLabel());
+
+        // It must resolve to the empty placeholder (no real recursive expansion of "b"), proving
+        // the cycle was caught rather than re-entering b -> c -> b -> ...
+        Text placeholder = (Text) resolvedBackToB;
+        assertThat(placeholder.getWidgets(), hasSize(1));
+        Widget widget = placeholder.getWidgets().getFirst();
+        assertThat(widget, is(instanceOf(Text.class)));
+        Text text = (Text) widget;
+        assertThat(text.getWidgets(), hasSize(0));
+    }
+
+    @Test
+    public void testRemovingNestedSitemapRecreatesWidgetAndId() throws Exception {
+        // Use a real SitemapFactoryImpl to create real widget instances for the target sitemap, so that parent/child
+        // relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        // Create root sitemap
+        String rootSitemapName = "root";
+        Sitemap root = sitemapFactory.createSitemap(rootSitemapName);
+
+        // Create sitemap nested1 (the nested sitemap) with some child widgets
+        String nestedSitemap1Name = "nested1";
+        Sitemap nestedSitemap1 = sitemapFactory.createSitemap(nestedSitemap1Name);
+        Switch nestedSwitch = Objects
+                .requireNonNull((Switch) sitemapFactory.createWidget(SitemapFactory.SWITCH, nestedSitemap1));
+        Slider nestedSlider = Objects
+                .requireNonNull((Slider) sitemapFactory.createWidget(SitemapFactory.SLIDER, nestedSitemap1));
+        nestedSitemap1.setWidgets(new ArrayList<>(List.of(nestedSwitch, nestedSlider)));
+
+        // Create sitemap nested2 (the nested sitemap) with some child widgets
+        String nestedSitemap2Name = "nested2";
+        Sitemap nestedSitemap2 = sitemapFactory.createSitemap(nestedSitemap2Name);
+        Image nestedImage = Objects
+                .requireNonNull((Image) sitemapFactory.createWidget(SitemapFactory.IMAGE, nestedSitemap2));
+        nestedSitemap2.setWidgets(new ArrayList<>(List.of(nestedImage)));
+
+        // Create nested sitemap widgets in the root that reference "nested1" and "nested2"
+        NestedSitemap nested1 = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, root);
+        assertNotNull(nested1);
+        nested1.setName(nestedSitemap1Name);
+        NestedSitemap nested2 = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, root);
+        assertNotNull(nested2);
+        nested2.setName(nestedSitemap2Name);
+        root.setWidgets(new ArrayList<>(List.of(nested1, nested2)));
+
+        // ensure the factory creates real Widget instances
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        when(sitemapRegistryMock.get(rootSitemapName)).thenReturn(root);
+        when(sitemapRegistryMock.get(nestedSitemap1Name)).thenReturn(nestedSitemap1);
+        when(sitemapRegistryMock.get(nestedSitemap2Name)).thenReturn(nestedSitemap2);
+
+        // Compute the widget id for the nested widget in the root sitemap
+        String id = uiRegistry.getWidgetId(nested1);
+        assertEquals("1_0", id);
+        Widget cachedNestedSitemap = uiRegistry.getWidget(root, "1_0");
+        assertThat(cachedNestedSitemap, is(instanceOf(Text.class)));
+
+        id = uiRegistry.getWidgetId(nestedSwitch);
+        assertEquals("1_0", id); // This is the id in the nested sitemap, not the id in the root sitemap
+        Widget nestedSwitchFromNestedSitemap = uiRegistry.getWidget(nestedSitemap1, "1_0");
+        assertNotNull(nestedSwitchFromNestedSitemap);
+        assertThat(nestedSwitchFromNestedSitemap, is(instanceOf(Switch.class)));
+        assertEquals(nestedSwitch, nestedSwitchFromNestedSitemap);
+
+        Widget cachedNestedSwitchWidget = uiRegistry.getWidget(root, "1_00"); // This is the id of the nested widget in
+                                                                              // the root sitemap, which should be
+                                                                              // cached now
+        assertNotNull(cachedNestedSwitchWidget);
+        assertThat(cachedNestedSwitchWidget, is(instanceOf(Switch.class)));
+        assertThat(cachedNestedSwitchWidget.getParent(), is(sameInstance(cachedNestedSitemap)));
+        id = uiRegistry.getWidgetId(cachedNestedSwitchWidget);
+        assertEquals("1_00", id);
+        Widget cachedNestedSliderWidget = uiRegistry.getWidget(root, "1_01");
+        assertNotNull(cachedNestedSliderWidget);
+        assertThat(cachedNestedSliderWidget, is(instanceOf(Slider.class)));
+        assertThat(cachedNestedSliderWidget.getParent(), is(sameInstance(cachedNestedSitemap)));
+        id = uiRegistry.getWidgetId(cachedNestedSliderWidget);
+        assertEquals("1_01", id);
+        assertTrue(uiRegistry.getDefaultNestedSitemapWidgetsCache().isEmpty());
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet().size(), is(2));
+
+        // Now simulate removal of nested sitemap -> cache invalidation should happen
+        when(sitemapRegistryMock.get(nestedSitemap1Name)).thenReturn(null);
+        uiRegistry.removed(nestedSitemap1);
+        assertNull(sitemapRegistryMock.get(nestedSitemap1Name));
+        assertTrue(uiRegistry.getDefaultNestedSitemapWidgetsCache().isEmpty());
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet().size(), is(1));
+
+        // On next access, the resolved nested sitemap should be gone from the cache, and a new empty Text placeholder
+        // should be created (since the sitemap cannot be resolved anymore)
+        Widget cachedNestedSitemapAfter = uiRegistry.getWidget(root, "1_0");
+        assertNotNull(cachedNestedSitemapAfter);
+        assertThat(cachedNestedSitemapAfter, is(instanceOf(Text.class)));
+        assertNotEquals(cachedNestedSitemap, cachedNestedSitemapAfter);
+        Text textAfter = (Text) cachedNestedSitemapAfter;
+        // There should only be a single child widget (empty Text placeholder, Switch and Slider should be gone)
+        assertThat(textAfter.getWidgets().size(), is(1));
+        assertThat(textAfter.getWidgets().getFirst(), is(instanceOf(Text.class)));
+        assertThat(uiRegistry.getDefaultNestedSitemapWidgetsCache().keySet().size(), is(1));
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet().size(), is(1));
+
+        // Finally, simulate removal of the root sitemap and ensure the cache is cleared for all nested widgets as well
+        when(sitemapRegistryMock.get(rootSitemapName)).thenReturn(null);
+        uiRegistry.removed(root);
+        assertNull(sitemapRegistryMock.get(rootSitemapName));
+        assertTrue(uiRegistry.getNestedSitemapWidgetsCache().isEmpty());
+        assertTrue(uiRegistry.getDefaultNestedSitemapWidgetsCache().isEmpty());
+    }
+
+    @Test
+    public void testRemovingNestedSitemapAlsoInvalidatesDeeplyNestedSitemapCache() throws Exception {
+        // Use a real SitemapFactoryImpl to create real widget instances, so parent/child relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        // root -> nested "B"
+        String rootSitemapName = "root";
+        Sitemap root = sitemapFactory.createSitemap(rootSitemapName);
+        NestedSitemap nestedB = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, root);
+        assertNotNull(nestedB);
+        nestedB.setName("B");
+        root.setWidgets(new ArrayList<>(List.of(nestedB)));
+
+        // B -> nested "C"
+        String sitemapBName = "B";
+        Sitemap sitemapB = sitemapFactory.createSitemap(sitemapBName);
+        NestedSitemap nestedC = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, sitemapB);
+        assertNotNull(nestedC);
+        nestedC.setName("C");
+        sitemapB.setWidgets(new ArrayList<>(List.of(nestedC)));
+
+        // C -> nested "D"
+        String sitemapCName = "C";
+        Sitemap sitemapC = sitemapFactory.createSitemap(sitemapCName);
+        NestedSitemap nestedD = (NestedSitemap) sitemapFactory.createWidget(SitemapFactory.SITEMAP, sitemapC);
+        assertNotNull(nestedD);
+        nestedD.setName("D");
+        sitemapC.setWidgets(new ArrayList<>(List.of(nestedD)));
+
+        // D: leaf sitemap with a simple widget
+        String sitemapDName = "D";
+        Sitemap sitemapD = sitemapFactory.createSitemap(sitemapDName);
+        Image nestedImage = Objects.requireNonNull((Image) sitemapFactory.createWidget(SitemapFactory.IMAGE, sitemapD));
+        sitemapD.setWidgets(new ArrayList<>(List.of(nestedImage)));
+
+        // ensure the factory creates real Widget instances
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        when(sitemapRegistryMock.get(rootSitemapName)).thenReturn(root);
+        when(sitemapRegistryMock.get(sitemapBName)).thenReturn(sitemapB);
+        when(sitemapRegistryMock.get(sitemapCName)).thenReturn(sitemapC);
+        when(sitemapRegistryMock.get(sitemapDName)).thenReturn(sitemapD);
+
+        // Resolve B from root -> caches an entry keyed by nestedB
+        String id = uiRegistry.getWidgetId(nestedB);
+        assertEquals("1_0", id);
+        Widget cachedTextB = uiRegistry.getWidget(root, "1_0");
+        assertNotNull(cachedTextB);
+        assertThat(cachedTextB, is(instanceOf(Text.class)));
+
+        // Resolve C via the copy of nestedC now living under cachedTextB's children
+        Widget nestedCCopy = ((Text) cachedTextB).getWidgets().getFirst();
+        assertThat(nestedCCopy, is(instanceOf(NestedSitemap.class)));
+        String nestedCId = uiRegistry.getWidgetId(nestedCCopy);
+        assertEquals("1_00", nestedCId);
+        Widget cachedTextC = uiRegistry.getWidget(root, "1_00");
+        assertNotNull(cachedTextC);
+        assertThat(cachedTextC, is(instanceOf(Text.class)));
+
+        // Resolve D via the copy of nestedD now living under cachedTextC's children
+        Widget nestedDCopy = ((Text) cachedTextC).getWidgets().getFirst();
+        assertThat(nestedDCopy, is(instanceOf(NestedSitemap.class)));
+        String nestedDId = uiRegistry.getWidgetId(nestedDCopy);
+        assertEquals("1_000", nestedDId);
+        Widget cachedTextD = uiRegistry.getWidget(root, "1_000");
+        assertThat(cachedTextD, is(instanceOf(Text.class)));
+
+        // Sanity check: three resolutions (B, C, D) produced three cache entries before invalidation
+        assertTrue(uiRegistry.getDefaultNestedSitemapWidgetsCache().isEmpty());
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet().size(), is(3));
+
+        // Now remove sitemap B -> should cascade through C's entry and D's entry as well, even though
+        // neither C's nor D's cache key/value directly touches B - only through the intermediate chain
+        when(sitemapRegistryMock.get(sitemapBName)).thenReturn(null);
+        uiRegistry.removed(sitemapB);
+
+        assertTrue(uiRegistry.getNestedSitemapWidgetsCache().isEmpty());
+        assertTrue(uiRegistry.getDefaultNestedSitemapWidgetsCache().isEmpty());
+    }
+
+    @Test
+    public void updatedInvalidatesNestedSitemapCacheEvenWhenSitemapsAreEqual() throws ItemNotFoundException {
+        // Use a real SitemapFactoryImpl to create real widget instances, so parent/child relationships work as expected
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+
+        when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+
+        // ensure the mocked factory delegates to the real one
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        // Two successive versions of the same sitemap. Their equals()/hashCode() are based on name only - simulating a
+        // SitemapProvider whose Sitemap implementation compares equal purely by UID/name - even though their actual
+        // content (label, children) differs, as it would after a real content update.
+        Widget switchChild = Objects.requireNonNull(sitemapFactory.createWidget(SitemapFactory.SWITCH));
+        EqualByNameSitemap targetV1 = new EqualByNameSitemap("target", "LabelV1", "iconV1",
+                new ArrayList<>(List.of(switchChild)));
+
+        Widget imageChild = Objects.requireNonNull(sitemapFactory.createWidget(SitemapFactory.IMAGE));
+        EqualByNameSitemap targetV2 = new EqualByNameSitemap("target", "LabelV2", "iconV2",
+                new ArrayList<>(List.of(imageChild)));
+
+        // Sanity check: same name -> considered equal, but content genuinely differs
+        assertEquals(targetV1, targetV2);
+        assertNotEquals(targetV1.getLabel(), targetV2.getLabel());
+
+        when(sitemapRegistryMock.get("target")).thenReturn(targetV1);
+        when(nestedSitemapMock.getName()).thenReturn("target");
+        when(frameMock.getWidgets()).thenReturn(List.of(nestedSitemapMock));
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(sitemapMock.getName()).thenReturn(SITEMAP_NAME);
+        when(frameMock.getParent()).thenReturn(sitemapMock);
+        when(nestedSitemapMock.getParent()).thenReturn(frameMock);
+
+        // Resolve once: the cache now holds a Text built from targetV1's content
+        List<Widget> childrenBefore = uiRegistry.getChildren(frameMock);
+        assertThat(childrenBefore, hasSize(1));
+        Text resolvedBefore = (Text) childrenBefore.getFirst();
+        assertEquals("LabelV1", resolvedBefore.getLabel());
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet(), hasSize(1));
+
+        // The registry now serves targetV2 and fires an updated() notification, even though
+        // targetV1.equals(targetV2) is true
+        when(sitemapRegistryMock.get("target")).thenReturn(targetV2);
+        uiRegistry.updated(targetV1, targetV2);
+
+        // The cache entry must be gone regardless of the sitemaps comparing equal
+        assertThat(uiRegistry.getNestedSitemapWidgetsCache().keySet(), hasSize(0));
+
+        // Resolving again must reflect the new content, not a stale cached Text
+        List<Widget> childrenAfter = uiRegistry.getChildren(frameMock);
+        assertThat(childrenAfter, hasSize(1));
+        Text resolvedAfter = (Text) childrenAfter.getFirst();
+        assertEquals("LabelV2", resolvedAfter.getLabel());
+        assertNotSame(resolvedBefore, resolvedAfter);
+    }
+
+    /**
+     * A minimal {@link Sitemap} whose equals()/hashCode() are based on name only, to simulate a
+     * {@link org.openhab.core.sitemap.registry.SitemapProvider} implementation whose {@link Sitemap} equality is
+     * only based on UID/name, independent of its actual content.
+     */
+    private static class EqualByNameSitemap implements Sitemap {
+        private String name;
+        private @Nullable String label;
+        private @Nullable String icon;
+        private List<Widget> widgets;
+
+        EqualByNameSitemap(String name, @Nullable String label, @Nullable String icon, List<Widget> widgets) {
+            this.name = name;
+            this.label = label;
+            this.icon = icon;
+            this.widgets = widgets;
+        }
+
+        @Override
+        public String getUID() {
+            return name;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public @Nullable String getLabel() {
+            return label;
+        }
+
+        @Override
+        public void setLabel(@Nullable String label) {
+            this.label = label;
+        }
+
+        @Override
+        public @Nullable String getIcon() {
+            return icon;
+        }
+
+        @Override
+        public void setIcon(@Nullable String icon) {
+            this.icon = icon;
+        }
+
+        @Override
+        public List<Widget> getWidgets() {
+            return widgets;
+        }
+
+        @Override
+        public void setWidgets(List<Widget> widgets) {
+            this.widgets = widgets;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object obj) {
+            if (this == obj) {
+                return true;
+            }
+            if (!(obj instanceof EqualByNameSitemap other)) {
+                return false;
+            }
+            return name.equals(other.name);
+        }
+
+        @Override
+        public int hashCode() {
+            return name.hashCode();
+        }
+    }
+
+    @Test
+    public void getWidgetIdWithUnresolvableDefaultSibling() throws ItemNotFoundException {
+        Default unresolvableDefault = mock(Default.class);
+        Default resolvableDefault = mock(Default.class);
+
+        SwitchItem switchItem = new SwitchItem("Zebra");
+
+        // Make sure lookup in itemRegistry with widget id fails
+        lenient().when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("unknown"));
+        doThrow(new ItemNotFoundException("missingItem")).when(registryMock).getItem("missingItem");
+        doReturn(switchItem).when(registryMock).getItem("Zebra");
+
+        // first Default points at an item that does not exist -> resolveDefault() returns null
+        when(unresolvableDefault.getItem()).thenReturn("missingItem");
+        when(registryMock.get("missingItem")).thenReturn(null);
+
+        // second Default points at a SwitchItem -> resolves to switchMock
+        when(resolvableDefault.getItem()).thenReturn("Zebra");
+        when(registryMock.get("Zebra")).thenReturn(switchItem);
+
+        when(sitemapMock.getWidgets()).thenReturn(List.of(unresolvableDefault, resolvableDefault, sliderMock));
+        when(unresolvableDefault.getParent()).thenReturn(sitemapMock);
+        when(resolvableDefault.getParent()).thenReturn(sitemapMock);
+        when(sliderMock.getParent()).thenReturn(sitemapMock);
+
+        List<Widget> children = uiRegistry.getChildren(sitemapMock);
+        assertEquals(2, children.size(), "unresolvable Default should be dropped from getChildren()");
+
+        Widget resolved = children.get(0);
+        Widget slider = children.get(1);
+
+        String resolvedId = uiRegistry.getWidgetId(resolved);
+        String sliderId = uiRegistry.getWidgetId(slider);
+
+        assertNotEquals(sliderId, resolvedId, "resolved Default and its following sibling must not share a widget id");
+        assertEquals(resolved, uiRegistry.getWidget(sitemapMock, resolvedId));
+        assertEquals(slider, uiRegistry.getWidget(sitemapMock, sliderId));
+    }
+
+    @Test
+    public void getWidgetIdAndGetWidgetAgreeThroughIntermediateNestedSitemapWithMixedSiblings()
+            throws ItemNotFoundException {
+        // Use a real SitemapFactoryImpl so the resolved nested-sitemap Text and its children are real,
+        // navigable widget instances rather than mocks.
+        SitemapFactoryImpl sitemapFactory = new SitemapFactoryImpl();
+        doAnswer(invocation -> {
+            String type = invocation.getArgument(0);
+            return sitemapFactory.createWidget(type);
+        }).when(sitemapFactoryMock).createWidget(anyString());
+
+        // Make sure lookup in itemRegistry with widget id fails
+        lenient().when(registryMock.getItem(anyString())).thenThrow(new ItemNotFoundException("not found"));
+        doThrow(new ItemNotFoundException("missingItem")).when(registryMock).getItem("missingItem");
+
+        // An unresolvable Default sitting *before* the NestedSitemap in the frame -- this is what
+        // forces the NestedSitemap's compacted index to differ from its raw index (raw index 1,
+        // compacted index 0), so the test actually exercises compaction rather than a trivial
+        // singleton list.
+        Default unresolvableDefault = mock(Default.class);
+        when(unresolvableDefault.getItem()).thenReturn("missingItem");
+        when(registryMock.get("missingItem")).thenReturn(null);
+
+        // target sitemap for the nested sitemap widget, containing one real child widget
+        Sitemap targetSitemap = mock(Sitemap.class);
+        when(targetSitemap.getLabel()).thenReturn("NestedLabel");
+        when(targetSitemap.getIcon()).thenReturn("nestedIcon");
+        Widget sourceChild = sitemapFactory.createWidget(SitemapFactory.SWITCH, targetSitemap);
+        assertNotNull(sourceChild);
+        when(targetSitemap.getWidgets()).thenReturn(List.of(sourceChild));
+
+        Item sitemapSelectorItem = mock(Item.class);
+        when(sitemapSelectorItem.getState()).thenReturn(new StringType("nestedTarget"));
+        doReturn(sitemapSelectorItem).when(registryMock).get("sitemapSelector");
+        when(sitemapRegistryMock.get("nestedTarget")).thenReturn(targetSitemap);
+        when(nestedSitemapMock.getItem()).thenReturn("sitemapSelector");
+
+        // Frame contains, in order: an unresolvable Default, the NestedSitemap, and a plain Slider --
+        // mixed widget types so compaction has to actually skip one and match the NestedSitemap by
+        // its *resolved* identity (the cached Text), not its raw identity.
+        when(frameMock.getWidgets()).thenReturn(List.of(unresolvableDefault, nestedSitemapMock, sliderMock));
+        when(sitemapMock.getWidgets()).thenReturn(List.of(frameMock));
+        when(sitemapMock.getName()).thenReturn(SITEMAP_NAME);
+        when(frameMock.getParent()).thenReturn(sitemapMock);
+        when(unresolvableDefault.getParent()).thenReturn(frameMock);
+        when(nestedSitemapMock.getParent()).thenReturn(frameMock);
+        when(sliderMock.getParent()).thenReturn(frameMock);
+
+        // getChildren() should drop the unresolvable Default, leaving [resolvedNestedText, sliderMock].
+        List<Widget> frameChildren = uiRegistry.getChildren(frameMock);
+        assertThat(frameChildren, hasSize(2));
+        Widget resolvedNested = frameChildren.get(0);
+        assertEquals("NestedLabel", resolvedNested.getLabel());
+        assertSame(sliderMock, frameChildren.get(1));
+
+        // Descend into the nested sitemap's own child.
+        List<Widget> nestedChildren = uiRegistry.getChildren((Parent) resolvedNested);
+        assertThat(nestedChildren, hasSize(1));
+        Widget nestedChild = nestedChildren.get(0);
+
+        // Encode the leaf's id. This independently calls resolveDefault()/the NestedSitemap cache
+        // lookup while walking up parents -- the frame-level index must land on the NestedSitemap's
+        // compacted position (0), matched via its resolved (cached) identity, not raw indexOf().
+        String childId = uiRegistry.getWidgetId(nestedChild);
+        assertNotNull(childId);
+
+        // And the slider (compacted index 1, following the same frame-level resolution) must get a
+        // different id that does not collide with the nested child's.
+        String sliderId = uiRegistry.getWidgetId(sliderMock);
+        assertNotEquals(childId, sliderId,
+                "nested sitemap's child and its compacted sibling must not share a widget id");
+
+        // Decode must walk the same compacted frame-level list, resolve the NestedSitemap picked up
+        // at that position, and land back on the exact same child instance.
+        Widget fetchedChild = uiRegistry.getWidget(sitemapMock, childId);
+        assertSame(nestedChild, fetchedChild);
+
+        Widget fetchedSlider = uiRegistry.getWidget(sitemapMock, sliderId);
+        assertSame(sliderMock, fetchedSlider);
     }
 }

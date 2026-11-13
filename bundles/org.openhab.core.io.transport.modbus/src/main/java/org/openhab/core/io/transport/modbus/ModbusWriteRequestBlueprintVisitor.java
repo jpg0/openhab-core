@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -29,12 +29,12 @@ public interface ModbusWriteRequestBlueprintVisitor {
      *
      * @param blueprint
      */
-    public void visit(ModbusWriteCoilRequestBlueprint blueprint);
+    void visit(ModbusWriteCoilRequestBlueprint blueprint);
 
     /**
      * Visit request writing register data
      *
      * @param blueprint
      */
-    public void visit(ModbusWriteRegisterRequestBlueprint blueprint);
+    void visit(ModbusWriteRegisterRequestBlueprint blueprint);
 }

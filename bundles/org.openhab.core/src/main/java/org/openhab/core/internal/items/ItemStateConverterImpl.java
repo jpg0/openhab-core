@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -70,11 +70,8 @@ public class ItemStateConverterImpl implements ItemStateConverter {
             }
         }
 
-        if (item instanceof NumberItem && state instanceof QuantityType) {
-            NumberItem numberItem = (NumberItem) item;
+        if (item instanceof NumberItem numberItem && state instanceof QuantityType quantityState) {
             if (numberItem.getDimension() != null) {
-                QuantityType<?> quantityState = (QuantityType<?>) state;
-
                 // in case the item does define a unit it takes precedence over all other conversions:
                 Unit<?> itemUnit = parseItemUnit(numberItem);
                 if (itemUnit != null) {
@@ -88,14 +85,12 @@ public class ItemStateConverterImpl implements ItemStateConverter {
                 Class<? extends Quantity<?>> dimension = numberItem.getDimension();
                 @SuppressWarnings({ "unchecked", "rawtypes" })
                 // explicit cast to Class<? extends Quantity> as JDK compiler complains
-                Unit<? extends Quantity<?>> conversionUnit = unitProvider
-                        .getUnit((Class<? extends Quantity>) dimension);
+                Unit<? extends Quantity<?>> conversionUnit = dimension == null ? null
+                        : unitProvider.getUnit((Class<? extends Quantity>) dimension);
                 if (conversionUnit != null
                         && UnitUtils.isDifferentMeasurementSystem(conversionUnit, quantityState.getUnit())) {
                     return convertOrUndef(quantityState, conversionUnit);
                 }
-
-                return state;
             } else {
                 State convertedState = state.as(DecimalType.class);
                 if (convertedState != null) {
@@ -110,7 +105,7 @@ public class ItemStateConverterImpl implements ItemStateConverter {
     }
 
     private State convertOrUndef(QuantityType<?> quantityState, Unit<?> targetUnit) {
-        QuantityType<?> converted = quantityState.toUnit(targetUnit);
+        QuantityType<?> converted = quantityState.toInvertibleUnit(targetUnit);
         if (converted != null) {
             return converted;
         }

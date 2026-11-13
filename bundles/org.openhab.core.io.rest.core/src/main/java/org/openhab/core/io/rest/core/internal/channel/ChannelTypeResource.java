@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -79,6 +79,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Yannick Schaus - Added filter to getAll
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Mark Herwege - added unit hint
  */
 @Component
 @JaxrsResource
@@ -139,8 +140,9 @@ public class ChannelTypeResource implements RESTResource {
     @Path("/{channelTypeUID}")
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getChannelTypeByUID", summary = "Gets channel type by UID.", responses = {
-            @ApiResponse(responseCode = "200", description = "Channel type with provided channelTypeUID does not exist.", content = @Content(schema = @Schema(implementation = ChannelTypeDTO.class))),
-            @ApiResponse(responseCode = "404", description = "No content") })
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = ChannelTypeDTO.class))),
+            @ApiResponse(responseCode = "400", description = "Bad request"),
+            @ApiResponse(responseCode = "404", description = "Channel type with provided channelTypeUID does not exist.") })
     public Response getByUID(
             @PathParam("channelTypeUID") @Parameter(description = "channelTypeUID") String channelTypeUID,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language) {
@@ -149,7 +151,7 @@ public class ChannelTypeResource implements RESTResource {
         if (channelType != null) {
             return Response.ok(convertToChannelTypeDTO(channelType, locale)).build();
         } else {
-            return Response.noContent().build();
+            return Response.status(Status.NOT_FOUND).build();
         }
     }
 
@@ -173,11 +175,9 @@ public class ChannelTypeResource implements RESTResource {
 
         Set<String> result = new HashSet<>();
         for (ProfileType profileType : profileTypeRegistry.getProfileTypes()) {
-            if (profileType instanceof TriggerProfileType) {
-                if (((TriggerProfileType) profileType).getSupportedChannelTypeUIDs().contains(ctUID)) {
-                    for (String itemType : profileType.getSupportedItemTypes()) {
-                        result.add(itemType);
-                    }
+            if (profileType instanceof TriggerProfileType type) {
+                if (type.getSupportedChannelTypeUIDs().contains(ctUID)) {
+                    result.addAll(profileType.getSupportedItemTypes());
                 }
             }
         }
@@ -201,8 +201,8 @@ public class ChannelTypeResource implements RESTResource {
                 : configDescriptionDTO.parameterGroups;
 
         return new ChannelTypeDTO(channelType.getUID().toString(), channelType.getLabel(), channelType.getDescription(),
-                channelType.getCategory(), channelType.getItemType(), channelType.getKind(), parameters,
-                parameterGroups, channelType.getState(), channelType.getTags(), channelType.isAdvanced(),
+                channelType.getCategory(), channelType.getItemType(), channelType.getUnitHint(), channelType.getKind(),
+                parameters, parameterGroups, channelType.getState(), channelType.getTags(), channelType.isAdvanced(),
                 channelType.getCommandDescription());
     }
 }

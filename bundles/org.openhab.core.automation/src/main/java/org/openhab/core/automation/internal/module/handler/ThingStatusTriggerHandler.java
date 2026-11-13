@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,12 +12,9 @@
  */
 package org.openhab.core.automation.internal.module.handler;
 
-import java.util.Dictionary;
 import java.util.HashMap;
-import java.util.Hashtable;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -28,6 +25,7 @@ import org.openhab.core.automation.handler.TriggerHandlerCallback;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.events.TopicEventFilter;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.events.ThingStatusInfoChangedEvent;
 import org.openhab.core.thing.events.ThingStatusInfoEvent;
@@ -43,7 +41,7 @@ import org.slf4j.LoggerFactory;
  * @author Christoph Weitkamp - Initial contribution
  */
 @NonNullByDefault
-public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber, EventFilter {
+public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber {
 
     public static final String UPDATE_MODULE_TYPE_ID = "core.ThingStatusUpdateTrigger";
     public static final String CHANGE_MODULE_TYPE_ID = "core.ThingStatusChangeTrigger";
@@ -59,18 +57,16 @@ public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implemen
 
     private final Logger logger = LoggerFactory.getLogger(ThingStatusTriggerHandler.class);
 
-    private final String thingUID;
     private @Nullable final String status;
     private @Nullable final String previousStatus;
     private final Set<String> types;
-    private final BundleContext bundleContext;
 
     private final ServiceRegistration<?> eventSubscriberRegistration;
-    private final Pattern eventTopicFilter;
+    private final TopicEventFilter eventTopicFilter;
 
     public ThingStatusTriggerHandler(Trigger module, BundleContext bundleContext) {
         super(module);
-        this.thingUID = (String) module.getConfiguration().get(CFG_THING_UID);
+        String thingUID = (String) module.getConfiguration().get(CFG_THING_UID);
         this.status = (String) module.getConfiguration().get(CFG_STATUS);
         this.previousStatus = (String) module.getConfiguration().get(CFG_PREVIOUS_STATUS);
         if (UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
@@ -78,14 +74,11 @@ public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implemen
         } else {
             this.types = Set.of(ThingStatusInfoChangedEvent.TYPE);
         }
-        this.bundleContext = bundleContext;
 
-        this.eventTopicFilter = Pattern.compile("^openhab/things/" + thingUID.replace("*", ".*?") + "/.*$");
+        this.eventTopicFilter = new TopicEventFilter(
+                "^openhab/things/" + thingUID.replace("?", ".?").replace("*", ".*?") + "/.*$");
 
-        Dictionary<String, Object> properties = new Hashtable<>();
-        properties.put("event.topics", "openhab/things/" + thingUID + "/*");
-        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this,
-                properties);
+        eventSubscriberRegistration = bundleContext.registerService(EventSubscriber.class.getName(), this, null);
     }
 
     @Override
@@ -95,28 +88,28 @@ public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implemen
 
     @Override
     public @Nullable EventFilter getEventFilter() {
-        return this;
+        return eventTopicFilter;
     }
 
     @Override
     public void receive(Event event) {
         final ModuleHandlerCallback callback = this.callback;
-        if (!(callback instanceof TriggerHandlerCallback)) {
+        if (!(callback instanceof TriggerHandlerCallback thCallback)) {
             return;
         }
 
-        TriggerHandlerCallback thCallback = (TriggerHandlerCallback) callback;
         logger.trace("Received Event: Source: {} Topic: {} Type: {}  Payload: {}", event.getSource(), event.getTopic(),
                 event.getType(), event.getPayload());
         Map<String, Object> values = new HashMap<>();
-        if (event instanceof ThingStatusInfoEvent && UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
-            ThingStatus status = ((ThingStatusInfoEvent) event).getStatusInfo().getStatus();
+        if (event instanceof ThingStatusInfoEvent infoEvent && UPDATE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
+            ThingStatus status = infoEvent.getStatusInfo().getStatus();
             if (statusMatches(this.status, status)) {
                 values.put(OUT_STATUS, status);
             }
-        } else if (event instanceof ThingStatusInfoChangedEvent && CHANGE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
-            ThingStatus newStatus = ((ThingStatusInfoChangedEvent) event).getStatusInfo().getStatus();
-            ThingStatus oldStatus = ((ThingStatusInfoChangedEvent) event).getOldStatusInfo().getStatus();
+        } else if (event instanceof ThingStatusInfoChangedEvent changedEvent
+                && CHANGE_MODULE_TYPE_ID.equals(module.getTypeUID())) {
+            ThingStatus newStatus = changedEvent.getStatusInfo().getStatus();
+            ThingStatus oldStatus = changedEvent.getOldStatusInfo().getStatus();
             if (statusMatches(this.status, newStatus) && statusMatches(this.previousStatus, oldStatus)) {
                 values.put(OUT_NEW_STATUS, newStatus);
                 values.put(OUT_OLD_STATUS, oldStatus);
@@ -143,11 +136,5 @@ public class ThingStatusTriggerHandler extends BaseTriggerModuleHandler implemen
     public void dispose() {
         eventSubscriberRegistration.unregister();
         super.dispose();
-    }
-
-    @Override
-    public boolean apply(Event event) {
-        logger.trace("->FILTER: {}: {}", event.getTopic(), thingUID);
-        return eventTopicFilter.matcher(event.getTopic()).matches();
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -37,6 +37,7 @@ import org.openhab.core.automation.module.provider.i18n.ModuleTypeI18nService;
 import org.openhab.core.automation.type.ActionType;
 import org.openhab.core.automation.type.ModuleType;
 import org.openhab.core.automation.type.ModuleTypeProvider;
+import org.openhab.core.automation.util.ActionInputsHelper;
 import org.openhab.core.common.registry.ProviderChangeListener;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.FrameworkUtil;
@@ -52,6 +53,7 @@ import org.osgi.service.component.annotations.ReferencePolicy;
  * from them
  *
  * @author Stefan Triller - Initial contribution
+ * @author Laurent Garnier - Injected components AnnotationActionModuleTypeHelper and ActionInputsHelper
  */
 @NonNullByDefault
 @Component(service = { ModuleTypeProvider.class, ModuleHandlerFactory.class })
@@ -59,13 +61,17 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
 
     private final Collection<ProviderChangeListener<ModuleType>> changeListeners = ConcurrentHashMap.newKeySet();
     private final Map<String, Set<ModuleInformation>> moduleInformation = new ConcurrentHashMap<>();
-    private final AnnotationActionModuleTypeHelper helper = new AnnotationActionModuleTypeHelper();
-
+    private final AnnotationActionModuleTypeHelper helper;
     private final ModuleTypeI18nService moduleTypeI18nService;
+    private final ActionInputsHelper actionInputsHelper;
 
     @Activate
-    public AnnotatedActionModuleTypeProvider(final @Reference ModuleTypeI18nService moduleTypeI18nService) {
+    public AnnotatedActionModuleTypeProvider(final @Reference ModuleTypeI18nService moduleTypeI18nService,
+            final @Reference AnnotationActionModuleTypeHelper helper,
+            final @Reference ActionInputsHelper actionInputsHelper) {
         this.moduleTypeI18nService = moduleTypeI18nService;
+        this.helper = helper;
+        this.actionInputsHelper = actionInputsHelper;
     }
 
     @Override
@@ -98,8 +104,8 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T extends ModuleType> T getModuleType(String UID, @Nullable Locale locale) {
-        return (T) localizeModuleType(UID, locale);
+    public <T extends ModuleType> T getModuleType(String uid, @Nullable Locale locale) {
+        return (T) localizeModuleType(uid, locale);
     }
 
     @SuppressWarnings("unchecked")
@@ -122,9 +128,7 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
 
             Bundle bundle = FrameworkUtil.getBundle(mi.getActionProvider().getClass());
             ModuleType mt = helper.buildModuleType(uid, moduleInformation);
-
-            ModuleType localizedModuleType = moduleTypeI18nService.getModuleTypePerLocale(mt, locale, bundle);
-            return localizedModuleType;
+            return moduleTypeI18nService.getModuleTypePerLocale(mt, locale, bundle);
         }
         return null;
     }
@@ -198,8 +202,8 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
     private @Nullable String getConfigNameFromService(Map<String, Object> properties) {
         Object o = properties.get(OpenHAB.SERVICE_CONTEXT);
         String configName = null;
-        if (o instanceof String) {
-            configName = (String) o;
+        if (o instanceof String string) {
+            configName = string;
         }
         return configName;
     }
@@ -211,8 +215,7 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
 
     @Override
     protected @Nullable ModuleHandler internalCreate(Module module, String ruleUID) {
-        if (module instanceof Action) {
-            Action actionModule = (Action) module;
+        if (module instanceof Action actionModule) {
             if (moduleInformation.containsKey(actionModule.getTypeUID())) {
                 ModuleInformation finalMI = helper.getModuleInformationForIdentifier(actionModule, moduleInformation,
                         false);
@@ -222,7 +225,7 @@ public class AnnotatedActionModuleTypeProvider extends BaseModuleHandlerFactory 
                         return null;
                     }
                     return new AnnotationActionHandler(actionModule, moduleType, finalMI.getMethod(),
-                            finalMI.getActionProvider());
+                            finalMI.getActionProvider(), actionInputsHelper);
                 }
             }
         }

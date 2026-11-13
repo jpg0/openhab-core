@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,7 @@ import java.math.BigInteger;
 import javax.measure.Unit;
 import javax.measure.quantity.Area;
 import javax.measure.quantity.Length;
+import javax.measure.quantity.Mass;
 import javax.measure.quantity.Pressure;
 import javax.measure.quantity.Speed;
 import javax.measure.quantity.Temperature;
@@ -24,6 +25,7 @@ import javax.measure.quantity.Volume;
 import javax.measure.spi.SystemOfUnits;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.library.dimension.Density;
 import org.openhab.core.library.dimension.VolumetricFlowRate;
 
 import tech.units.indriya.format.SimpleUnitFormat;
@@ -45,6 +47,10 @@ public final class ImperialUnits extends CustomUnits {
 
     private static final ImperialUnits INSTANCE = new ImperialUnits();
 
+    public static final Unit<Mass> POUND = addUnit(new TransformedUnit<>("lb", Units.GRAM,
+            MultiplyConverter.ofRational(BigInteger.valueOf(45359237), BigInteger.valueOf(100000))));
+    public static final Unit<Mass> GRAIN = addUnit(
+            new TransformedUnit<>("gr", Units.GRAM, MultiplyConverter.of(0.06479891)));
     /** Additionally defined units to be used in openHAB **/
     public static final Unit<Pressure> INCH_OF_MERCURY = addUnit(new TransformedUnit<>("inHg", Units.PASCAL,
             MultiplyConverter.ofRational(BigInteger.valueOf(3386388), BigInteger.valueOf(1000))));
@@ -89,9 +95,11 @@ public final class ImperialUnits extends CustomUnits {
             new TransformedUnit<>("gal", CUBIC_INCH, MultiplyConverter.of(231.0)));
 
     public static final Unit<VolumetricFlowRate> GALLON_PER_MINUTE = addUnit(
-            new ProductUnit<VolumetricFlowRate>(GALLON_LIQUID_US.divide(tech.units.indriya.unit.Units.MINUTE)));
+            new ProductUnit<>(GALLON_LIQUID_US.divide(tech.units.indriya.unit.Units.MINUTE)));
 
-    /**
+    public static final Unit<Density> GRAIN_PER_CUBICFOOT = addUnit(new ProductUnit<>(GRAIN.divide(CUBIC_FOOT)));
+
+    /*
      * Add unit symbols for imperial units.
      */
     static {
@@ -108,6 +116,10 @@ public final class ImperialUnits extends CustomUnits {
         SimpleUnitFormat.getInstance().label(GALLON_LIQUID_US, GALLON_LIQUID_US.getSymbol());
         SimpleUnitFormat.getInstance().label(GALLON_PER_MINUTE, "gal/min");
         SimpleUnitFormat.getInstance().label(POUND_FORCE_SQUARE_INCH, POUND_FORCE_SQUARE_INCH.getSymbol());
+        SimpleUnitFormat.getInstance().label(GRAIN, GRAIN.getSymbol());
+
+        // Add the single character ℉ glyph as an alias to improve support of East Asian languages
+        SimpleUnitFormat.getInstance().alias(FAHRENHEIT, "℉");
     }
 
     private ImperialUnits() {

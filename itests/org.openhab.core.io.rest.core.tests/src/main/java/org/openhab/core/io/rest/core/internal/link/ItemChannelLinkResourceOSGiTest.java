@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,17 +16,21 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 import static org.hamcrest.core.IsIterableContaining.hasItems;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
@@ -46,10 +50,12 @@ import org.openhab.core.thing.link.ItemChannelLinkProvider;
 import org.openhab.core.thing.link.ItemChannelLinkRegistry;
 import org.openhab.core.thing.link.ManagedItemChannelLinkProvider;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSyntaxException;
-import com.jayway.jsonpath.JsonPath;
 
 /**
  * @author Christoph Weitkamp - Initial contribution
@@ -148,29 +154,58 @@ public class ItemChannelLinkResourceOSGiTest extends JavaOSGiTest {
     public void shouldIncludeEditableFields() throws IOException, JsonSyntaxException {
         managedItemChannelLinkProvider.add(link1);
         Response response = itemChannelLinkResource.getLink(ITEM_NAME1, CHANNEL_UID1);
-        JsonElement result = JsonParser
-                .parseString(new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8));
+        JsonElement result = JsonParser.parseString(toString(response.getEntity()));
         JsonElement expected = JsonParser.parseString("{channelUID:\"" + CHANNEL_UID1
                 + "\", configuration:{}, editable:true, itemName:\"" + ITEM_NAME1 + "\"}");
         assertEquals(expected, result);
 
         response = itemChannelLinkResource.getAll(CHANNEL_UID1, ITEM_NAME1);
-        result = JsonParser
-                .parseString(new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8));
+        result = JsonParser.parseString(toString(response.getEntity()));
         expected = JsonParser.parseString("[{channelUID:\"" + CHANNEL_UID1
                 + "\", configuration:{}, editable:true, itemName:\"" + ITEM_NAME1 + "\"}]");
         assertEquals(expected, result);
 
         response = itemChannelLinkResource.getLink(ITEM_NAME2, CHANNEL_UID2);
-        result = JsonParser
-                .parseString(new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8));
+        result = JsonParser.parseString(toString(response.getEntity()));
         expected = JsonParser.parseString("{channelUID:\"" + CHANNEL_UID2
                 + "\", configuration:{}, editable:false, itemName:\"" + ITEM_NAME2 + "\", configuration:{}}");
         assertEquals(expected, result);
     }
 
     private List<String> readItemNamesFromResponse(Response response) throws IOException {
-        String jsonResponse = new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8);
-        return JsonPath.read(jsonResponse, "$..itemName");
+        return findValues(toString(response.getEntity()), "itemName");
+    }
+
+    /**
+     * Collects the values of all primitive members with the given key at any depth (like JsonPath {@code $..key}).
+     */
+    private static List<String> findValues(String json, String key) {
+        List<String> values = new ArrayList<>();
+        collectValues(JsonParser.parseString(json), key, values);
+        return values;
+    }
+
+    private static void collectValues(JsonElement element, String key, List<String> values) {
+        if (element instanceof JsonObject object) {
+            if (object.get(key) instanceof JsonPrimitive value) {
+                values.add(value.getAsString());
+            }
+            object.entrySet().forEach(entry -> collectValues(entry.getValue(), key, values));
+        } else if (element instanceof JsonArray array) {
+            array.forEach(child -> collectValues(child, key, values));
+        }
+    }
+
+    public String toString(Object entity) throws IOException {
+        byte[] bytes;
+        if (entity instanceof StreamingOutput streaming) {
+            try (ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                streaming.write(buffer);
+                bytes = buffer.toByteArray();
+            }
+        } else {
+            bytes = ((InputStream) entity).readAllBytes();
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

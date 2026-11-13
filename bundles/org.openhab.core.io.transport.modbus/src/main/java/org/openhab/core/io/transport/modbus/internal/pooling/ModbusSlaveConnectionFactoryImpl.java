@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -59,14 +59,14 @@ import net.wimpi.modbus.net.UDPMasterConnection;
  */
 @NonNullByDefault
 public class ModbusSlaveConnectionFactoryImpl
-        extends BaseKeyedPooledObjectFactory<ModbusSlaveEndpoint, ModbusSlaveConnection> {
+        extends BaseKeyedPooledObjectFactory<ModbusSlaveEndpoint, @Nullable ModbusSlaveConnection> {
 
-    class PooledConnection extends DefaultPooledObject<ModbusSlaveConnection> {
+    class PooledConnection extends DefaultPooledObject<@Nullable ModbusSlaveConnection> {
 
         private volatile long lastConnected;
         private volatile @Nullable ModbusSlaveEndpoint endpoint;
 
-        public PooledConnection(ModbusSlaveConnection object) {
+        public PooledConnection(@Nullable ModbusSlaveConnection object) {
             super(object);
         }
 
@@ -97,13 +97,16 @@ public class ModbusSlaveConnectionFactoryImpl
             long localLastConnected = lastConnected;
 
             ModbusSlaveConnection connection = getObject();
+            if (connection == null) {
+                return false;
+            }
 
             EndpointPoolConfiguration configuration = getEndpointPoolConfiguration(localEndpoint);
             long reconnectAfterMillis = configuration.getReconnectAfterMillis();
             long connectionAgeMillis = System.currentTimeMillis() - localLastConnected;
             long disconnectIfConnectedBeforeMillis = disconnectIfConnectedBefore.getOrDefault(localEndpoint, -1L);
-            boolean disconnectSinceTooOldConnection = disconnectIfConnectedBeforeMillis < 0L ? false
-                    : localLastConnected <= disconnectIfConnectedBeforeMillis;
+            boolean disconnectSinceTooOldConnection = disconnectIfConnectedBeforeMillis >= 0L
+                    && localLastConnected <= disconnectIfConnectedBeforeMillis;
             boolean shouldBeDisconnected = (reconnectAfterMillis == 0
                     || (reconnectAfterMillis > 0 && connectionAgeMillis > reconnectAfterMillis)
                     || disconnectSinceTooOldConnection);
@@ -140,15 +143,15 @@ public class ModbusSlaveConnectionFactoryImpl
         try {
             return InetAddress.getByName(key.getAddress());
         } catch (UnknownHostException e) {
-            logger.error("KeyedPooledModbusSlaveConnectionFactory: Unknown host: {}. Connection creation failed.",
+            logger.warn("KeyedPooledModbusSlaveConnectionFactory: Unknown host: {}. Connection creation failed.",
                     e.getMessage());
             return null;
         }
     }
 
     @Override
-    public ModbusSlaveConnection create(ModbusSlaveEndpoint endpoint) throws Exception {
-        return endpoint.accept(new ModbusSlaveEndpointVisitor<ModbusSlaveConnection>() {
+    public @Nullable ModbusSlaveConnection create(ModbusSlaveEndpoint endpoint) throws Exception {
+        return endpoint.accept(new ModbusSlaveEndpointVisitor<@Nullable ModbusSlaveConnection>() {
             @Override
             public @Nullable ModbusSlaveConnection visit(ModbusSerialSlaveEndpoint modbusSerialSlavePoolingKey) {
                 SerialConnection connection = new SerialConnection(modbusSerialSlavePoolingKey.getSerialParameters());
@@ -162,9 +165,11 @@ public class ModbusSlaveConnectionFactoryImpl
                 if (address == null) {
                     return null;
                 }
-                int connectTimeoutMillis = getEndpointPoolConfiguration(key).getConnectTimeoutMillis();
+                EndpointPoolConfiguration endpointConfig = getEndpointPoolConfiguration(key);
+                int connectTimeoutMillis = endpointConfig.getConnectTimeoutMillis();
                 TCPMasterConnection connection = new TCPMasterConnection(address, key.getPort(), connectTimeoutMillis,
                         key.getRtuEncoded());
+                connection.setTimeout(endpointConfig.getReceiveTimeoutMillis());
                 logger.trace("Created connection {} for endpoint {}", connection, key);
                 return connection;
             }
@@ -183,27 +188,34 @@ public class ModbusSlaveConnectionFactoryImpl
     }
 
     @Override
-    public PooledObject<ModbusSlaveConnection> wrap(ModbusSlaveConnection connection) {
+    public PooledObject<@Nullable ModbusSlaveConnection> wrap(@Nullable ModbusSlaveConnection connection) {
         return new PooledConnection(connection);
     }
 
     @Override
-    public void destroyObject(ModbusSlaveEndpoint endpoint, @Nullable PooledObject<ModbusSlaveConnection> obj) {
-        if (obj == null) {
-            return;
-        }
-        logger.trace("destroyObject for connection {} and endpoint {} -> closing the connection", obj.getObject(),
-                endpoint);
-        obj.getObject().resetConnection();
-    }
-
-    @Override
-    public void activateObject(ModbusSlaveEndpoint endpoint, @Nullable PooledObject<ModbusSlaveConnection> obj)
-            throws Exception {
+    public void destroyObject(ModbusSlaveEndpoint endpoint,
+            @Nullable PooledObject<@Nullable ModbusSlaveConnection> obj) {
         if (obj == null) {
             return;
         }
         ModbusSlaveConnection connection = obj.getObject();
+        if (connection == null) {
+            return;
+        }
+        logger.trace("destroyObject for connection {} and endpoint {} -> closing the connection", connection, endpoint);
+        connection.resetConnection();
+    }
+
+    @Override
+    public void activateObject(ModbusSlaveEndpoint endpoint,
+            @Nullable PooledObject<@Nullable ModbusSlaveConnection> obj) throws Exception {
+        if (obj == null) {
+            return;
+        }
+        ModbusSlaveConnection connection = obj.getObject();
+        if (connection == null) {
+            return;
+        }
         try {
             EndpointPoolConfiguration config = getEndpointPoolConfiguration(endpoint);
             if (!connection.isConnected()) {
@@ -220,13 +232,14 @@ public class ModbusSlaveConnectionFactoryImpl
                 connection.resetConnection();
             }
         } catch (Exception e) {
-            logger.error("Error connecting connection {} for endpoint {}: {}", obj.getObject(), endpoint,
+            logger.warn("Error connecting connection {} for endpoint {}: {}", obj.getObject(), endpoint,
                     e.getMessage());
         }
     }
 
     @Override
-    public void passivateObject(ModbusSlaveEndpoint endpoint, @Nullable PooledObject<ModbusSlaveConnection> obj) {
+    public void passivateObject(ModbusSlaveEndpoint endpoint,
+            @Nullable PooledObject<@Nullable ModbusSlaveConnection> obj) {
         if (obj == null) {
             return;
         }
@@ -238,9 +251,11 @@ public class ModbusSlaveConnectionFactoryImpl
     }
 
     @Override
-    public boolean validateObject(ModbusSlaveEndpoint key, @Nullable PooledObject<ModbusSlaveConnection> p) {
-        boolean valid = p != null && p.getObject().isConnected();
-        logger.trace("Validating endpoint {} connection {} -> {}", key, p.getObject(), valid);
+    public boolean validateObject(ModbusSlaveEndpoint key, @Nullable PooledObject<@Nullable ModbusSlaveConnection> p) {
+        @SuppressWarnings("null") // p.getObject() cannot be null due to short-circuiting boolean condition
+        boolean valid = p != null && p.getObject() != null && p.getObject().isConnected();
+        ModbusSlaveConnection slaveConnection = p != null ? p.getObject() : null;
+        logger.trace("Validating endpoint {} connection {} -> {}", key, slaveConnection, valid);
         return valid;
     }
 
@@ -248,7 +263,7 @@ public class ModbusSlaveConnectionFactoryImpl
      * Configure general connection settings with a given endpoint
      *
      * @param endpoint endpoint to configure
-     * @param configuration configuration for the endpoint. Use null to reset the configuration to default settings.
+     * @param config configuration for the endpoint. Use null to reset the configuration to default settings.
      */
     public void setEndpointPoolConfiguration(ModbusSlaveEndpoint endpoint, @Nullable EndpointPoolConfiguration config) {
         if (config == null) {
@@ -271,7 +286,7 @@ public class ModbusSlaveConnectionFactoryImpl
                 .orElseGet(() -> defaultPoolConfigurationFactory.apply(endpoint));
     }
 
-    private void tryConnect(ModbusSlaveEndpoint endpoint, PooledObject<ModbusSlaveConnection> obj,
+    private void tryConnect(ModbusSlaveEndpoint endpoint, PooledObject<@Nullable ModbusSlaveConnection> obj,
             ModbusSlaveConnection connection, EndpointPoolConfiguration config) throws Exception {
         if (connection.isConnected()) {
             return;
@@ -306,15 +321,15 @@ public class ModbusSlaveConnectionFactoryImpl
                 lastConnectMillis.put(endpoint, curTime);
                 break;
             } catch (InterruptedException e) {
-                logger.error("connect try {}/{} error: {}. Aborting since interrupted. Connection {}. Endpoint {}.",
+                logger.info("Connect try {}/{} failed: {}. Aborting since interrupted. Connection {}. Endpoint {}.",
                         tryIndex, maxTries, e.getMessage(), connection, endpoint);
                 throw e;
             } catch (Exception e) {
                 tryIndex++;
-                logger.warn("connect try {}/{} error: {}. Connection {}. Endpoint {}", tryIndex, maxTries,
+                logger.debug("Connect try {}/{} failed: {}. Connection {}. Endpoint {}", tryIndex, maxTries,
                         e.getMessage(), connection, endpoint);
                 if (tryIndex >= maxTries) {
-                    logger.error("re-connect reached max tries {}, throwing last error: {}. Connection {}. Endpoint {}",
+                    logger.warn("Connect reached max tries {}, throwing last error: {}. Connection {}. Endpoint {}",
                             maxTries, e.getMessage(), connection, endpoint);
                     throw e;
                 }

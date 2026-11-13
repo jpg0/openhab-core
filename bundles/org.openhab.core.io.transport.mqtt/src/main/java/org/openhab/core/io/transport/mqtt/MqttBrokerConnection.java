@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 
@@ -58,12 +59,17 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
  * @author Markus Rathgeb - added connection state callback
  * @author Jan N. Klug - changed from PAHO to HiveMQ client
  * @author Mark Herwege - Added flag for hostname validation
+ * @author Mark Herwege - Added parameter for cleanSession/cleanStart
+ * @author Mark Herwege - Added parameter for WebSocket path
  */
 @NonNullByDefault
 public class MqttBrokerConnection {
     final Logger logger = LoggerFactory.getLogger(MqttBrokerConnection.class);
+    public static final Protocol DEFAULT_PROTOCOL = Protocol.TCP;
+    public static final MqttVersion DEFAULT_MQTT_VERSION = MqttVersion.V3;
     public static final int DEFAULT_KEEPALIVE_INTERVAL = 60;
     public static final int DEFAULT_QOS = 0;
+    public static final String DEFAULT_WEBSOCKET_SUBPROTOCOL = "mqtt";
 
     /**
      * MQTT transport protocols
@@ -88,8 +94,12 @@ public class MqttBrokerConnection {
     protected final boolean secure;
     protected final boolean hostnameValidated;
     protected final MqttVersion mqttVersion;
+    private boolean cleanSessionStart = true;
+    private String webSocketPath = "";
+    private String webSocketSubprotocol = DEFAULT_WEBSOCKET_SUBPROTOCOL;
 
     private @Nullable TrustManagerFactory trustManagerFactory = InsecureTrustManagerFactory.INSTANCE;
+    private @Nullable KeyManagerFactory keyManagerFactory;
     protected final String clientId;
     private @Nullable String user;
     private @Nullable String password;
@@ -119,7 +129,7 @@ public class MqttBrokerConnection {
      * The callback will interact with the {@link AbstractReconnectStrategy} as well as inform registered
      * {@link MqttConnectionObserver}s.
      */
-    public class ConnectionCallback implements MqttClientConnectedListener, MqttClientDisconnectedListener {
+    public static class ConnectionCallback implements MqttClientConnectedListener, MqttClientDisconnectedListener {
         private final MqttBrokerConnection connection;
         private final Runnable cancelTimeoutFuture;
         private CompletableFuture<Boolean> future = new CompletableFuture<>();
@@ -162,10 +172,9 @@ public class MqttBrokerConnection {
 
         public void onDisconnected(Throwable t) {
             cancelTimeoutFuture.run();
-
-            final MqttConnectionState connectionState = connection.connectionState();
             future.complete(false);
-            connection.connectionObservers.forEach(o -> o.connectionStateChanged(connectionState, t));
+
+            connection.connectionObservers.forEach(o -> o.connectionStateChanged(MqttConnectionState.DISCONNECTED, t));
 
             // If we tried to connect via start(), use the reconnect strategy to try it again
             if (connection.isConnecting) {
@@ -316,6 +325,22 @@ public class MqttBrokerConnection {
         } else {
             trustManagerFactory = null;
         }
+    }
+
+    /**
+     * Set the {@link KeyManagerFactory} that provides the client certificate and private key used for
+     * TLS client authentication (mutual TLS). Only applies to secure connections.
+     * Passing <code>null</code> disables client certificate authentication.
+     * <p>
+     * Client authentication only proves the identity of the client. To also be sure to talk to the intended broker,
+     * this should be combined with {@link #setTrustManagers(TrustManager[])} (a trust store containing the broker's
+     * CA) and hostname validation. If hostname validation is disabled and no trust managers are set (or the default
+     * trust-all behavior is used), the broker is not verified, and a warning is logged when the client is created.
+     *
+     * @param keyManagerFactory an initialized {@link KeyManagerFactory} or <code>null</code>
+     */
+    public void setKeyManagerFactory(@Nullable KeyManagerFactory keyManagerFactory) {
+        this.keyManagerFactory = keyManagerFactory;
     }
 
     public TrustManager[] getTrustManagers() {
@@ -502,6 +527,68 @@ public class MqttBrokerConnection {
      */
     public int getKeepAliveInterval() {
         return keepAliveInterval;
+    }
+
+    /**
+     * Sets the MQTT3 cleanSession or MQTT5 cleanStart configuration.
+     *
+     * @param cleanSessionStart
+     */
+    public void setCleanSessionStart(boolean cleanSessionStart) {
+        this.cleanSessionStart = cleanSessionStart;
+    }
+
+    /**
+     * Return MQTT3 cleanSession or MQTT5 cleanStart parameter
+     */
+    public boolean getCleanSessionStart() {
+        return cleanSessionStart;
+    }
+
+    /**
+     * Sets the server path used for the WebSocket handshake when {@link #protocol} is {@link Protocol#WEBSOCKETS}.
+     * Only takes effect on the next connection attempt (i.e. call this before {@link #start()}, or before a
+     * reconnect if changing it at runtime). Has no effect for {@link Protocol#TCP} connections.
+     * <p>
+     * Defaults to an empty path, matching the previous, fixed behaviour of this class.
+     *
+     * @param webSocketPath the server path to use, e.g. {@code /mqtt}; an empty string uses the default (unspecified)
+     *            path
+     */
+    public void setWebSocketPath(String webSocketPath) {
+        this.webSocketPath = webSocketPath;
+    }
+
+    /**
+     * Return the WebSocket server path configured via {@link #setWebSocketPath(String)}, or an empty string if none was
+     * set.
+     */
+    public String getWebSocketPath() {
+        return webSocketPath;
+    }
+
+    /**
+     * Sets the value offered in the {@code Sec-WebSocket-Protocol} header of the WebSocket handshake when
+     * {@link #protocol} is {@link Protocol#WEBSOCKETS}. Some brokers react to the exact value offered, e.g. rejecting a
+     * lone {@code mqtt} while accepting a list such as {@code mqtt, mqttv3.1, mqttv3.11}.
+     * <p>
+     * Defaults to {@link #DEFAULT_WEBSOCKET_SUBPROTOCOL}, which is what the MQTT client library offers by default. A
+     * blank value restores that default.
+     *
+     * @param webSocketSubprotocol the subprotocol(s) to offer, as the raw header value; an empty string uses the
+     *            default
+     */
+    public void setWebSocketSubprotocol(String webSocketSubprotocol) {
+        this.webSocketSubprotocol = webSocketSubprotocol.isBlank() ? DEFAULT_WEBSOCKET_SUBPROTOCOL
+                : webSocketSubprotocol;
+    }
+
+    /**
+     * Return the WebSocket subprotocol value configured via {@link #setWebSocketSubprotocol(String)}, or
+     * {@link #DEFAULT_WEBSOCKET_SUBPROTOCOL} if none was set.
+     */
+    public String getWebSocketSubprotocol() {
+        return webSocketSubprotocol;
     }
 
     /**
@@ -693,12 +780,8 @@ public class MqttBrokerConnection {
         MqttAsyncClientWrapper client = createClient();
         this.client = client;
 
-        // connect
-        client.connect(lastWill, keepAliveInterval, user, password);
-
-        logger.info("Starting MQTT broker connection to '{}' with clientid {}", host, getClientId());
-
-        // Connect timeout
+        // Connect timeout. Must be scheduled before connecting: if the broker answers quickly, onConnected() may run
+        // before this method returns and must find the timeout to cancel it.
         ScheduledExecutorService executor = timeoutExecutor;
         if (executor != null) {
             final ScheduledFuture<?> timeoutFuture = this.timeoutFuture.getAndSet(executor.schedule(
@@ -708,16 +791,28 @@ public class MqttBrokerConnection {
                 timeoutFuture.cancel(false);
             }
         }
+
+        logger.info("Starting MQTT broker connection to '{}' with clientid {}", host, getClientId());
+
+        // connect
+        client.connect(lastWill, keepAliveInterval, user, password, cleanSessionStart);
+
         return future;
     }
 
     protected MqttAsyncClientWrapper createClient() {
+        if (secure && keyManagerFactory != null && !hostnameValidated
+                && (trustManagerFactory == null || trustManagerFactory == InsecureTrustManagerFactory.INSTANCE)) {
+            logger.warn(
+                    "MQTT broker connection to '{}' uses a TLS client certificate, but hostname validation is disabled and no trust managers are configured. The broker is not verified; configure trust managers and enable hostname validation.",
+                    host);
+        }
         if (mqttVersion == MqttVersion.V3) {
-            return new Mqtt3AsyncClientWrapper(host, port, clientId, protocol, secure, hostnameValidated,
-                    connectionCallback, trustManagerFactory);
+            return new Mqtt3AsyncClientWrapper(host, port, clientId, protocol, webSocketPath, webSocketSubprotocol,
+                    secure, hostnameValidated, connectionCallback, trustManagerFactory, keyManagerFactory);
         } else {
-            return new Mqtt5AsyncClientWrapper(host, port, clientId, protocol, secure, hostnameValidated,
-                    connectionCallback, trustManagerFactory);
+            return new Mqtt5AsyncClientWrapper(host, port, clientId, protocol, webSocketPath, webSocketSubprotocol,
+                    secure, hostnameValidated, connectionCallback, trustManagerFactory, keyManagerFactory);
         }
     }
 

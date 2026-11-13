@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -33,7 +33,7 @@ import org.openhab.core.automation.module.script.internal.provider.ScriptModuleT
 @NonNullByDefault
 public interface ScriptEngineFactory {
 
-    static final ScriptEngineManager ENGINE_MANAGER = new ScriptEngineManager();
+    ScriptEngineManager ENGINE_MANAGER = new ScriptEngineManager();
 
     /**
      * Key to access engine identifier in script context.
@@ -68,10 +68,23 @@ public interface ScriptEngineFactory {
 
     /**
      * This method creates a new ScriptEngine based on the supplied file extension or MimeType.
+     * openHAB-core always passes as parameter one of the values, returned by getScriptTypes().
+     * The parameter serves for a ScriptEngineFactory, which announces support for several
+     * distinct languages, to create a ScriptEngine for the requested language.
      *
      * @param scriptType a file extension (script) or MimeType (ScriptAction or ScriptCondition)
      * @return ScriptEngine or null
      */
     @Nullable
     ScriptEngine createScriptEngine(String scriptType);
+
+    /**
+     * This method returns a {@link ScriptDependencyTracker} if it is available
+     *
+     * @return a {@link ScriptDependencyTracker} or <code>null</code> if dependency tracking is not supported for
+     *         {@link ScriptEngine}s created by this factory
+     */
+    default @Nullable ScriptDependencyTracker getDependencyTracker() {
+        return null;
+    }
 }

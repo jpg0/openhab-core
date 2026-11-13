@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,6 @@ package org.openhab.core.internal.scheduler;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -59,7 +58,7 @@ public class CronSchedulerImpl implements CronScheduler {
 
     @Override
     public ScheduledCompletableFuture<@Nullable Void> schedule(SchedulerRunnable runnable, String cronExpression) {
-        return schedule(d -> runnable.run(), Collections.emptyMap(), cronExpression);
+        return schedule(d -> runnable.run(), Map.of(), cronExpression);
     }
 
     @Override
@@ -80,10 +79,10 @@ public class CronSchedulerImpl implements CronScheduler {
         final Object scheduleConfig = map.get(CronJob.CRON);
         String[] schedules = null;
 
-        if (scheduleConfig instanceof String[]) {
-            schedules = (String[]) scheduleConfig;
-        } else if (scheduleConfig instanceof String) {
-            schedules = new String[] { (String) scheduleConfig };
+        if (scheduleConfig instanceof String[] strings) {
+            schedules = strings;
+        } else if (scheduleConfig instanceof String string) {
+            schedules = new String[] { string };
         }
         if (schedules == null || schedules.length == 0) {
             logger.info("No schedules in map with key '" + CronJob.CRON + "'. Nothing scheduled");
@@ -108,7 +107,7 @@ public class CronSchedulerImpl implements CronScheduler {
             for (Iterator<Cron> cron = crons.iterator(); cron.hasNext();) {
                 final Cron c = cron.next();
 
-                if (c.target == s) {
+                if (c.target.equals(s)) {
                     cron.remove();
                     c.schedule.cancel(true);
                 }

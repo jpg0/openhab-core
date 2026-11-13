@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -34,7 +34,7 @@ public interface StateChangeListener {
      * @param oldState the previous state
      * @param newState the new state
      */
-    public void stateChanged(Item item, State oldState, State newState);
+    void stateChanged(Item item, State oldState, State newState);
 
     /**
      * This method is called, if a state was updated, but has not changed
@@ -42,5 +42,5 @@ public interface StateChangeListener {
      * @param item the item whose state was updated
      * @param state the current state, same before and after the update
      */
-    public void stateUpdated(Item item, State state);
+    void stateUpdated(Item item, State state);
 }

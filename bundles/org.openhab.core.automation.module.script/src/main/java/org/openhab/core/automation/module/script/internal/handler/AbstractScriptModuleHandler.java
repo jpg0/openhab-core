@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,13 +15,16 @@ package org.openhab.core.automation.module.script.internal.handler;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.UUID;
 
+import javax.script.Compilable;
+import javax.script.CompiledScript;
 import javax.script.ScriptContext;
 import javax.script.ScriptEngine;
+import javax.script.ScriptException;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.Module;
 import org.openhab.core.automation.handler.BaseModuleHandler;
 import org.openhab.core.automation.module.script.ScriptEngineContainer;
@@ -32,71 +35,162 @@ import org.slf4j.LoggerFactory;
 
 /**
  * This is an abstract class that can be used when implementing any module handler that handles scripts.
+ * <p>
+ * Remember to implement multi-thread synchronization in the concrete handler if the script engine is not thread-safe!
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Simon Merschjohann - Initial contribution
+ * @author Florian Hotze - Add support for script pre-compilation
  *
  * @param <T> the type of module the concrete handler can handle
  */
 @NonNullByDefault
-public abstract class AbstractScriptModuleHandler<T extends Module> extends BaseModuleHandler<T> {
+public abstract class AbstractScriptModuleHandler<T extends Module> extends BaseModuleHandler<T>
+        implements ScriptEngineManager.FactoryChangeListener {
 
     private final Logger logger = LoggerFactory.getLogger(AbstractScriptModuleHandler.class);
 
     /** Constant defining the configuration parameter of modules that specifies the mime type of a script */
-    public static final String SCRIPT_TYPE = "type";
+    public static final String CONFIG_SCRIPT_TYPE = "type";
 
     /** Constant defining the configuration parameter of modules that specifies the script itself */
-    public static final String SCRIPT = "script";
+    public static final String CONFIG_SCRIPT = "script";
+
+    /**
+     * Constant defining the context key of the module type id.
+     */
+    public static final String CONTEXT_KEY_MODULE_TYPE_ID = "oh.module-type-id";
 
     protected final ScriptEngineManager scriptEngineManager;
 
     private final String engineIdentifier;
 
-    private Optional<ScriptEngine> scriptEngine = Optional.empty();
+    private @Nullable ScriptEngine scriptEngine = null;
+    private @Nullable CompiledScript compiledScript = null;
     private final String type;
     protected final String script;
 
     protected final String ruleUID;
 
-    public AbstractScriptModuleHandler(T module, String ruleUID, ScriptEngineManager scriptEngineManager) {
+    protected AbstractScriptModuleHandler(T module, String ruleUID, ScriptEngineManager scriptEngineManager) {
         super(module);
         this.scriptEngineManager = scriptEngineManager;
         this.ruleUID = ruleUID;
         this.engineIdentifier = UUID.randomUUID().toString();
 
-        this.type = getValidConfigParameter(SCRIPT_TYPE, module.getConfiguration(), module.getId());
-        this.script = getValidConfigParameter(SCRIPT, module.getConfiguration(), module.getId());
+        this.type = getValidConfigParameter(CONFIG_SCRIPT_TYPE, module.getConfiguration(), module.getId(), false);
+        this.script = getValidConfigParameter(CONFIG_SCRIPT, module.getConfiguration(), module.getId(), true);
+
+        scriptEngineManager.addFactoryChangeListener(this);
     }
 
-    private static String getValidConfigParameter(String parameter, Configuration config, String moduleId) {
+    private static String getValidConfigParameter(String parameter, Configuration config, String moduleId,
+            boolean emptyAllowed) {
         Object value = config.get(parameter);
-        if (value != null && value instanceof String && !((String) value).trim().isEmpty()) {
-            return (String) value;
+        if (value instanceof String string && (emptyAllowed || !string.trim().isEmpty())) {
+            return string;
         } else {
             throw new IllegalStateException(String.format(
                     "Config parameter '%s' is missing in the configuration of module '%s'.", parameter, moduleId));
         }
     }
 
+    /**
+     * Creates the {@link ScriptEngine} and compiles the script if the {@link ScriptEngine} implements
+     * {@link Compilable}.
+     */
+    protected void compileScript() throws ScriptException {
+        if (compiledScript != null || script.isEmpty()) {
+            return;
+        }
+        if (!scriptEngineManager.isSupported(type)) {
+            logger.debug(
+                    "ScriptEngine for language '{}' could not be found, skipping compilation of script for identifier: {}",
+                    type, engineIdentifier);
+            return;
+        }
+        ScriptEngine engine = getScriptEngine();
+        if (engine != null) {
+            if (engine instanceof Compilable compilable) {
+                logger.debug("Pre-compiling script of rule with UID '{}'", ruleUID);
+                compiledScript = compilable.compile(script);
+            }
+        }
+    }
+
     @Override
     public void dispose() {
+        scriptEngineManager.removeFactoryChangeListener(this);
         scriptEngineManager.removeEngine(engineIdentifier);
     }
 
-    protected Optional<ScriptEngine> getScriptEngine() {
-        return scriptEngine.isPresent() ? scriptEngine : createScriptEngine();
+    /**
+     * Reset the script engine to force a script reload
+     */
+    public synchronized void resetScriptEngine() {
+        scriptEngineManager.removeEngine(engineIdentifier);
+        scriptEngine = null;
+        compiledScript = null;
     }
 
-    private Optional<ScriptEngine> createScriptEngine() {
+    /**
+     * Gets the unique identifier of the rule this module handler is used for.
+     *
+     * @return the UID of the rule
+     */
+    public String getRuleUID() {
+        return ruleUID;
+    }
+
+    /**
+     * Gets the type identifier of this module handler
+     * 
+     * @return the type identifier
+     */
+    public abstract String getTypeId();
+
+    /**
+     * Gets the script engine identifier for this module
+     *
+     * @return the engine identifier string
+     */
+    public String getEngineIdentifier() {
+        return engineIdentifier;
+    }
+
+    /**
+     * Get the script engine instance used by this module handler.
+     *
+     * @return the script engine instance if available, otherwise null
+     */
+    protected @Nullable ScriptEngine getScriptEngine() {
+        return scriptEngine != null ? scriptEngine : createScriptEngine();
+    }
+
+    /**
+     * Creates a new script engine for the type defined in the module configuration.
+     *
+     * @return the script engine if available, otherwise null
+     */
+    private @Nullable ScriptEngine createScriptEngine() {
         ScriptEngineContainer container = scriptEngineManager.createScriptEngine(type, engineIdentifier);
 
         if (container != null) {
-            scriptEngine = Optional.ofNullable(container.getScriptEngine());
+            scriptEngine = container.getScriptEngine();
+            // Inject the module type id into the script context early, so engines can access it before script
+            // invocation.
+            ScriptContext scriptContext = container.getScriptEngine().getContext();
+            if (scriptContext == null) {
+                logger.error(
+                        "Script context is null for script engine '{}' of rule with UID '{}'. Please report this bug.",
+                        engineIdentifier, ruleUID);
+            } else {
+                scriptContext.setAttribute(CONTEXT_KEY_MODULE_TYPE_ID, getTypeId(), ScriptContext.ENGINE_SCOPE);
+            }
             return scriptEngine;
         } else {
             logger.debug("No engine available for script type '{}' in action '{}'.", type, module.getId());
-            return Optional.empty();
+            return null;
         }
     }
 
@@ -149,5 +243,45 @@ public abstract class AbstractScriptModuleHandler<T extends Module> extends Base
             }
             executionContext.removeAttribute(key, ScriptContext.ENGINE_SCOPE);
         }
+    }
+
+    /**
+     * Evaluates the script with the given script engine.
+     *
+     * @param engine the script engine that is used
+     * @return the value returned from the execution of the script
+     */
+    protected @Nullable Object eval(ScriptEngine engine) {
+        if (script.isEmpty()) {
+            return null;
+        }
+        try {
+            if (compiledScript != null) {
+                logger.debug("Executing pre-compiled script of rule with UID '{}'", ruleUID);
+                return compiledScript.eval(engine.getContext());
+            }
+            logger.debug("Executing script of rule with UID '{}'", ruleUID);
+            return engine.eval(script);
+        } catch (ScriptException e) {
+            logger.error("Script execution of rule with UID '{}' failed: {}", ruleUID, e.getMessage(),
+                    logger.isDebugEnabled() ? e : null);
+        }
+        return null;
+    }
+
+    @Override
+    public void factoryAdded(String scriptType) {
+        // we don't need to process this, but could attempt to compile the script here
+    }
+
+    @Override
+    public void factoryRemoved(String scriptType) {
+        if (!type.equals(scriptType)) {
+            return;
+        }
+        logger.debug(
+                "ScriptEngineFactory for script type '{}' has been added, resetting ScriptEngine of rule with UID '{}'.",
+                type, ruleUID);
+        resetScriptEngine();
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -45,19 +45,18 @@ public abstract class AbstractLink implements Identifiable<String> {
      * @param itemName the item name for the link
      * @throws IllegalArgumentException if the item name is invalid
      */
-    public AbstractLink(String itemName) {
+    protected AbstractLink(String itemName) {
         ItemUtil.assertValidItemName(itemName);
         this.itemName = itemName;
     }
 
-    AbstractLink() {
+    protected AbstractLink() {
         this.itemName = null;
     }
 
     @Override
     public boolean equals(@Nullable Object obj) {
-        if (obj instanceof AbstractLink) {
-            AbstractLink link = (AbstractLink) obj;
+        if (obj instanceof AbstractLink link) {
             return getUID().equals(link.getUID());
         }
         return false;

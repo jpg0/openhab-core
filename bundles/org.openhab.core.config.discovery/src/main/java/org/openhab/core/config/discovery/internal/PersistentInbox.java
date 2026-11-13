@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,10 +15,9 @@ package org.openhab.core.config.discovery.internal;
 import static org.openhab.core.config.discovery.inbox.InboxPredicates.forThingUID;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -26,12 +25,13 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -112,7 +112,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
 
         @Override
         public void run() {
-            long now = new Date().getTime();
+            Instant now = Instant.now();
             for (DiscoveryResult result : inbox.getAll()) {
                 if (isResultExpired(result, now)) {
                     logger.debug("Inbox entry for thing '{}' is expired and will be removed.", result.getThingUID());
@@ -121,11 +121,12 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
             }
         }
 
-        private boolean isResultExpired(DiscoveryResult result, long now) {
-            if (result.getTimeToLive() == DiscoveryResult.TTL_UNLIMITED) {
+        private boolean isResultExpired(DiscoveryResult result, Instant now) {
+            long ttl = result.getTimeToLive();
+            if (ttl == DiscoveryResult.TTL_UNLIMITED) {
                 return false;
             }
-            return (result.getTimestamp() + result.getTimeToLive() * 1000 < now);
+            return result.getCreationTime().plusSeconds(ttl).isBefore(now);
         }
     }
 
@@ -140,6 +141,8 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     private final Storage<DiscoveryResult> discoveryResultStorage;
     private final Map<DiscoveryResult, Class<?>> resultDiscovererMap = new ConcurrentHashMap<>();
     private @NonNullByDefault({}) ScheduledFuture<?> timeToLiveChecker;
+    private @NonNullByDefault({}) ScheduledFuture<?> delayedDiscoveryResultProcessor;
+
     private @Nullable EventPublisher eventPublisher;
     private final List<ThingHandlerFactory> thingHandlerFactories = new CopyOnWriteArrayList<>();
 
@@ -163,8 +166,11 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     protected void activate() {
         discoveryServiceRegistry.addDiscoveryListener(this);
         thingRegistry.addRegistryChangeListener(this);
-        timeToLiveChecker = ThreadPoolManager.getScheduledPool("discovery")
-                .scheduleWithFixedDelay(new TimeToLiveCheckingThread(this), 0, 30, TimeUnit.SECONDS);
+        ScheduledExecutorService scheduler = ThreadPoolManager.getScheduledPool("discovery");
+        timeToLiveChecker = scheduler.scheduleWithFixedDelay(new TimeToLiveCheckingThread(this), 0, 30,
+                TimeUnit.SECONDS);
+        delayedDiscoveryResultProcessor = scheduler.scheduleWithFixedDelay(
+                () -> Set.copyOf(delayedDiscoveryResults.values()).forEach(this::internalAdd), 0, 15, TimeUnit.SECONDS);
     }
 
     @Deactivate
@@ -173,23 +179,22 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
         discoveryServiceRegistry.removeDiscoveryListener(this);
         listeners.clear();
         timeToLiveChecker.cancel(true);
+        delayedDiscoveryResultProcessor.cancel(true);
+        delayedDiscoveryResults.values().forEach(dr -> dr.future.complete(false));
     }
 
     @Override
     public @Nullable Thing approve(ThingUID thingUID, @Nullable String label, @Nullable String newThingId) {
-        if (thingUID == null) {
-            throw new IllegalArgumentException("Thing UID must not be null");
-        }
-        List<DiscoveryResult> results = stream().filter(forThingUID(thingUID)).collect(Collectors.toList());
+        List<DiscoveryResult> results = stream().filter(forThingUID(thingUID)).toList();
         if (results.isEmpty()) {
             throw new IllegalArgumentException("No Thing with UID " + thingUID.getAsString() + " in inbox");
         }
         if (newThingId != null && newThingId.contains(AbstractUID.SEPARATOR)) {
             throw new IllegalArgumentException("New Thing ID " + newThingId + " must not contain multiple segments");
         }
-        DiscoveryResult result = results.get(0);
+        DiscoveryResult result = results.getFirst();
         final Map<String, String> properties = new HashMap<>();
-        final Map<String, Object> configParams = new HashMap<>();
+        final Map<String, @Nullable Object> configParams = new HashMap<>();
         getPropsAndConfigParams(result, properties, configParams);
         final Configuration config = new Configuration(configParams);
         ThingTypeUID thingTypeUID = result.getThingTypeUID();
@@ -219,14 +224,47 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
         return newThing;
     }
 
+    private Map<ThingUID, DiscoveryResultWrapper> delayedDiscoveryResults = new ConcurrentHashMap<>();
+
     @Override
-    public synchronized boolean add(final @Nullable DiscoveryResult discoveryResult) throws IllegalStateException {
+    public synchronized CompletableFuture<Boolean> add(final @Nullable DiscoveryResult discoveryResult)
+            throws IllegalStateException {
         if (discoveryResult == null) {
-            return false;
+            return CompletableFuture.completedFuture(false);
         }
+
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        internalAdd(new DiscoveryResultWrapper(discoveryResult, future));
+        return future;
+    }
+
+    private void internalAdd(DiscoveryResultWrapper discoveryResultWrapper) {
+        DiscoveryResult discoveryResult = discoveryResultWrapper.discoveryResult;
+
+        // if we already have a result for the same ThingUID that is not added yet, delete it from the delayed map
+        delayedDiscoveryResults.remove(discoveryResult.getThingUID());
+
         ThingType thingType = thingTypeRegistry.getThingType(discoveryResult.getThingTypeUID());
-        List<String> configurationParameters = thingType != null ? getConfigDescParams(thingType).stream()
-                .map(ConfigDescriptionParameter::getName).collect(Collectors.toList()) : List.of();
+        if (thingType == null) {
+            discoveryResultWrapper.retryCount++;
+
+            if (discoveryResultWrapper.retryCount >= 20) {
+                logger.info(
+                        "ThingTypeUID {} for discovery result with ThingUID {} not found, retried 20 times, aborting",
+                        discoveryResult.getThingTypeUID(), discoveryResult.getThingUID());
+                discoveryResultWrapper.future.complete(false);
+            } else {
+                logger.trace(
+                        "ThingTypeUID {} for discovery result with ThingUID {} not found, delaying add, retry {}/20",
+                        discoveryResult.getThingTypeUID(), discoveryResult.getThingUID(),
+                        discoveryResultWrapper.retryCount);
+                delayedDiscoveryResults.put(discoveryResult.getThingUID(), discoveryResultWrapper);
+            }
+            return;
+        }
+
+        List<String> configurationParameters = getConfigDescParams(thingType).stream()
+                .map(ConfigDescriptionParameter::getName).toList();
 
         discoveryResult.normalizePropertiesOnConfigDescription(configurationParameters);
 
@@ -240,15 +278,14 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
                 discoveryResultStorage.put(discoveryResult.getThingUID().toString(), discoveryResult);
                 notifyListeners(discoveryResult, EventType.ADDED);
                 logger.info("Added new thing '{}' to inbox.", thingUID);
-                return true;
+                discoveryResultWrapper.future.complete(true);
             } else {
-                if (inboxResult instanceof DiscoveryResultImpl) {
-                    DiscoveryResultImpl resultImpl = (DiscoveryResultImpl) inboxResult;
+                if (inboxResult instanceof DiscoveryResultImpl resultImpl) {
                     resultImpl.synchronize(discoveryResult);
                     discoveryResultStorage.put(discoveryResult.getThingUID().toString(), resultImpl);
                     notifyListeners(resultImpl, EventType.UPDATED);
                     logger.debug("Updated discovery result for '{}'.", thingUID);
-                    return true;
+                    discoveryResultWrapper.future.complete(true);
                 } else {
                     logger.warn("Cannot synchronize result with implementation class '{}'.",
                             inboxResult.getClass().getName());
@@ -269,7 +306,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
             }
         }
 
-        return false;
+        discoveryResultWrapper.future.complete(false);
     }
 
     private boolean synchronizeConfiguration(ThingTypeUID thingTypeUID, Map<String, Object> properties,
@@ -328,27 +365,12 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
 
     @Override
     public List<DiscoveryResult> getAll() {
-        return stream().collect(Collectors.toList());
+        return stream().toList();
     }
 
     @Override
     public Stream<DiscoveryResult> stream() {
-        final Storage<DiscoveryResult> discoveryResultStorage = this.discoveryResultStorage;
-        if (discoveryResultStorage == null) {
-            final ScheduledFuture<?> timeToLiveChecker = this.timeToLiveChecker;
-            logger.error("The OSGi lifecycle has been violated (storage: {}, ttl checker cancelled: {}).",
-                    this.discoveryResultStorage == null ? "null" : this.discoveryResultStorage,
-                    timeToLiveChecker == null ? "null" : timeToLiveChecker.isCancelled());
-            return Stream.empty();
-        }
-        final Collection<@Nullable DiscoveryResult> values = discoveryResultStorage.getValues();
-        if (values == null) {
-            logger.warn(
-                    "The storage service violates the nullness requirements (get values must not return null) (storage class: {}).",
-                    discoveryResultStorage.getClass());
-            return Stream.empty();
-        }
-        return (Stream<DiscoveryResult>) values.stream().filter(Objects::nonNull);
+        return (Stream<DiscoveryResult>) discoveryResultStorage.getValues().stream().filter(Objects::nonNull);
     }
 
     @Override
@@ -377,9 +399,11 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
 
     @Override
     public void thingDiscovered(DiscoveryService source, DiscoveryResult result) {
-        if (add(result)) {
-            resultDiscovererMap.put(result, source.getClass());
-        }
+        add(result).thenAccept(success -> {
+            if (success) {
+                resultDiscovererMap.put(result, source.getClass());
+            }
+        });
     }
 
     @Override
@@ -388,20 +412,19 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     }
 
     @Override
-    public @Nullable Collection<ThingUID> removeOlderResults(DiscoveryService source, long timestamp,
+    public @Nullable Collection<ThingUID> removeOlderResults(DiscoveryService source, Instant timestamp,
             @Nullable Collection<ThingTypeUID> thingTypeUIDs, @Nullable ThingUID bridgeUID) {
         Set<ThingUID> removedThings = new HashSet<>();
         for (DiscoveryResult discoveryResult : getAll()) {
             Class<?> discoverer = resultDiscovererMap.get(discoveryResult);
             if (thingTypeUIDs != null && thingTypeUIDs.contains(discoveryResult.getThingTypeUID())
-                    && discoveryResult.getTimestamp() < timestamp
+                    && discoveryResult.getCreationTime().isBefore(timestamp)
                     && (discoverer == null || source.getClass() == discoverer)) {
                 ThingUID thingUID = discoveryResult.getThingUID();
                 if (bridgeUID == null || bridgeUID.equals(discoveryResult.getBridgeUID())) {
                     removedThings.add(thingUID);
                     remove(thingUID);
-                    logger.debug("Removed thing '{}' from inbox because it was older than {}.", thingUID,
-                            new Date(timestamp));
+                    logger.debug("Removed thing '{}' from inbox because it was older than {}.", thingUID, timestamp);
                 }
             }
         }
@@ -434,11 +457,12 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     @Override
     public void setFlag(ThingUID thingUID, @Nullable DiscoveryResultFlag flag) {
         DiscoveryResult result = get(thingUID);
-        if (result instanceof DiscoveryResultImpl) {
-            DiscoveryResultImpl resultImpl = (DiscoveryResultImpl) result;
+        if (result instanceof DiscoveryResultImpl resultImpl) {
             resultImpl.setFlag((flag == null) ? DiscoveryResultFlag.NEW : flag);
             discoveryResultStorage.put(resultImpl.getThingUID().toString(), resultImpl);
             notifyListeners(resultImpl, EventType.UPDATED);
+        } else if (result == null) {
+            logger.warn("Cannot set flag for result '{}' because it can't be found in storage", thingUID);
         } else {
             logger.warn("Cannot set flag for result of instance type '{}'", result.getClass().getName());
         }
@@ -454,10 +478,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
      *         null, if no discovery result could be found
      */
     private @Nullable DiscoveryResult get(ThingUID thingUID) {
-        if (thingUID != null) {
-            return discoveryResultStorage.get(thingUID.toString());
-        }
-        return null;
+        return discoveryResultStorage.get(thingUID.toString());
     }
 
     private void notifyListeners(DiscoveryResult result, EventType type) {
@@ -494,6 +515,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     }
 
     private void postEvent(DiscoveryResult result, EventType eventType) {
+        EventPublisher eventPublisher = this.eventPublisher;
         if (eventPublisher != null) {
             try {
                 switch (eventType) {
@@ -532,7 +554,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
     private List<ThingUID> getResultsForBridge(ThingUID bridgeUID) {
         List<ThingUID> thingsForBridge = new ArrayList<>();
         for (DiscoveryResult result : discoveryResultStorage.getValues()) {
-            if (bridgeUID.equals(result.getBridgeUID())) {
+            if (result != null && bridgeUID.equals(result.getBridgeUID())) {
                 thingsForBridge.add(result.getThingUID());
             }
         }
@@ -547,7 +569,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
      * @param configParams the location the configuration parameters should be stored to.
      */
     private void getPropsAndConfigParams(final DiscoveryResult discoveryResult, final Map<String, String> props,
-            final Map<String, Object> configParams) {
+            final Map<String, @Nullable Object> configParams) {
         final List<ConfigDescriptionParameter> configDescParams = getConfigDescParams(discoveryResult);
         final Set<String> paramNames = getConfigDescParamNames(configDescParams);
         final Map<String, Object> resultProps = discoveryResult.getProperties();
@@ -566,10 +588,8 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
 
     private Set<String> getConfigDescParamNames(List<ConfigDescriptionParameter> configDescParams) {
         Set<String> paramNames = new HashSet<>();
-        if (configDescParams != null) {
-            for (ConfigDescriptionParameter param : configDescParams) {
-                paramNames.add(param.getName());
-            }
+        for (ConfigDescriptionParameter param : configDescParams) {
+            paramNames.add(param.getName());
         }
         return paramNames;
     }
@@ -589,7 +609,7 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
                 }
             }
         }
-        return Collections.emptyList();
+        return List.of();
     }
 
     private void addThingSafely(Thing thing) {
@@ -604,6 +624,13 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
         timeToLiveChecker.cancel(true);
         timeToLiveChecker = ThreadPoolManager.getScheduledPool("discovery")
                 .scheduleWithFixedDelay(new TimeToLiveCheckingThread(this), 0, interval, TimeUnit.SECONDS);
+    }
+
+    void setDiscoveryResultAddRetryInterval(int interval) {
+        delayedDiscoveryResultProcessor.cancel(true);
+        delayedDiscoveryResultProcessor = ThreadPoolManager.getScheduledPool("discovery").scheduleWithFixedDelay(
+                () -> Set.copyOf(delayedDiscoveryResults.values()).forEach(this::internalAdd), 0, interval,
+                TimeUnit.SECONDS);
     }
 
     @Reference(cardinality = ReferenceCardinality.OPTIONAL, policy = ReferencePolicy.DYNAMIC)
@@ -622,5 +649,16 @@ public final class PersistentInbox implements Inbox, DiscoveryListener, ThingReg
 
     protected void removeThingHandlerFactory(ThingHandlerFactory thingHandlerFactory) {
         this.thingHandlerFactories.remove(thingHandlerFactory);
+    }
+
+    private static class DiscoveryResultWrapper {
+        public final CompletableFuture<Boolean> future;
+        public final DiscoveryResult discoveryResult;
+        public int retryCount = 0;
+
+        public DiscoveryResultWrapper(DiscoveryResult discoveryResult, CompletableFuture<Boolean> future) {
+            this.discoveryResult = discoveryResult;
+            this.future = future;
+        }
     }
 }

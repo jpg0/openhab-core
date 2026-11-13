@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -37,22 +37,27 @@ public class XmlToTranslationsConverterTest {
         BundleInfoReader reader = new BundleInfoReader(new SystemStreamLog());
         BundleInfo bundleInfo = reader.readBundleInfo(Path.of("src/test/resources/acmeweather.bundle/OH-INF"));
 
-        XmlToTranslationsConverter converter = new XmlToTranslationsConverter();
+        XmlToTranslationsConverter converter = new XmlToTranslationsConverter(new SystemStreamLog());
         Translations translations = converter.convert(bundleInfo);
 
         assertThat(translations.hasTranslations(), is(true));
         assertThat(translations.sections.size(), is(7));
-        assertThat(translations.keysStream().count(), is(30L));
+        assertThat(translations.keysStream().count(), is(34L));
 
         String lines = translations.linesStream().collect(Collectors.joining(System.lineSeparator()));
-        assertThat(lines, containsString("# binding"));
-        assertThat(lines, containsString("binding.acmeweather.name = ACME Weather Binding"));
+        assertThat(lines, containsString("# add-on"));
+        assertThat(lines, containsString("addon.acmeweather.name = ACME Weather Binding"));
         assertThat(lines, containsString(
-                "binding.acmeweather.description = ACME Weather - Current weather and forecasts in your city."));
+                "addon.acmeweather.description = ACME Weather - Current weather and forecasts in your city."));
         assertThat(lines, containsString(
                 "channel-group-type.acmeweather.forecast.channel.minTemperature.description = Minimum forecasted temperature in degrees Celsius (metric) or Fahrenheit (imperial)."));
         assertThat(lines, containsString(
                 "channel-type.acmeweather.time-stamp.state.pattern = %1$tY-%1$tm-%1$td %1$tH:%1$tM:%1$tS"));
+        assertThat(lines,
+                containsString("thing-type.config.acmeweather.weather.language.option.de\\ DE = German (Germany)"));
+        assertThat(lines, containsString("channel-type.acmeweather.temperature.state.option.VALUE\\ 1 = My label 1"));
+        assertThat(lines, containsString("channel-type.acmeweather.temperature.state.option.VALUE\\:2 = My label 2"));
+        assertThat(lines, containsString("channel-type.acmeweather.temperature.state.option.VALUE\\=3 = My label 3"));
     }
 
     @Test
@@ -60,7 +65,7 @@ public class XmlToTranslationsConverterTest {
         BundleInfoReader reader = new BundleInfoReader(new SystemStreamLog());
         BundleInfo bundleInfo = reader.readBundleInfo(Path.of("src/test/resources/acmetts.bundle/OH-INF"));
 
-        XmlToTranslationsConverter converter = new XmlToTranslationsConverter();
+        XmlToTranslationsConverter converter = new XmlToTranslationsConverter(new SystemStreamLog());
         Translations translations = converter.convert(bundleInfo);
 
         assertThat(translations.hasTranslations(), is(true));
@@ -81,7 +86,7 @@ public class XmlToTranslationsConverterTest {
         BundleInfoReader reader = new BundleInfoReader(new SystemStreamLog());
         BundleInfo bundleInfo = reader.readBundleInfo(Path.of("src/test/resources/infoless.bundle/OH-INF"));
 
-        XmlToTranslationsConverter converter = new XmlToTranslationsConverter();
+        XmlToTranslationsConverter converter = new XmlToTranslationsConverter(new SystemStreamLog());
         Translations translations = converter.convert(bundleInfo);
 
         assertThat(translations.hasTranslations(), is(false));

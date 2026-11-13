@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,8 +12,11 @@
  */
 package org.openhab.core.library;
 
+import java.util.Set;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.i18n.UnitProvider;
 import org.openhab.core.items.GenericItem;
 import org.openhab.core.items.ItemFactory;
 import org.openhab.core.items.ItemUtil;
@@ -29,7 +32,9 @@ import org.openhab.core.library.items.PlayerItem;
 import org.openhab.core.library.items.RollershutterItem;
 import org.openhab.core.library.items.StringItem;
 import org.openhab.core.library.items.SwitchItem;
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 
 /**
  * {@link CoreItemFactory}-Implementation for the core ItemTypes
@@ -38,7 +43,7 @@ import org.osgi.service.component.annotations.Component;
  * @author Kai Kreuzer - Initial contribution
  * @author Alexander Kostadinov - Initial contribution
  */
-@Component(immediate = true)
+@Component(immediate = true, service = { CoreItemFactory.class, ItemFactory.class })
 @NonNullByDefault
 public class CoreItemFactory implements ItemFactory {
 
@@ -55,6 +60,17 @@ public class CoreItemFactory implements ItemFactory {
     public static final String STRING = "String";
     public static final String SWITCH = "Switch";
 
+    public static final Set<String> VALID_ITEM_TYPES = Set.of( //
+            CALL, COLOR, CONTACT, DATETIME, DIMMER, IMAGE, LOCATION, NUMBER, PLAYER, ROLLERSHUTTER, STRING, SWITCH //
+    );
+
+    private final UnitProvider unitProvider;
+
+    @Activate
+    public CoreItemFactory(final @Reference UnitProvider unitProvider) {
+        this.unitProvider = unitProvider;
+    }
+
     @Override
     public @Nullable GenericItem createItem(@Nullable String itemTypeName, String itemName) {
         if (itemTypeName == null) {
@@ -62,39 +78,25 @@ public class CoreItemFactory implements ItemFactory {
         }
 
         String itemType = ItemUtil.getMainItemType(itemTypeName);
-        switch (itemType) {
-            case CALL:
-                return new CallItem(itemName);
-            case COLOR:
-                return new ColorItem(itemName);
-            case CONTACT:
-                return new ContactItem(itemName);
-            case DATETIME:
-                return new DateTimeItem(itemName);
-            case DIMMER:
-                return new DimmerItem(itemName);
-            case IMAGE:
-                return new ImageItem(itemName);
-            case LOCATION:
-                return new LocationItem(itemName);
-            case NUMBER:
-                return new NumberItem(itemTypeName, itemName);
-            case PLAYER:
-                return new PlayerItem(itemName);
-            case ROLLERSHUTTER:
-                return new RollershutterItem(itemName);
-            case STRING:
-                return new StringItem(itemName);
-            case SWITCH:
-                return new SwitchItem(itemName);
-            default:
-                return null;
-        }
+        return switch (itemType) {
+            case CALL -> new CallItem(itemName);
+            case COLOR -> new ColorItem(itemName);
+            case CONTACT -> new ContactItem(itemName);
+            case DATETIME -> new DateTimeItem(itemName);
+            case DIMMER -> new DimmerItem(itemName);
+            case IMAGE -> new ImageItem(itemName);
+            case LOCATION -> new LocationItem(itemName);
+            case NUMBER -> new NumberItem(itemTypeName, itemName, unitProvider);
+            case PLAYER -> new PlayerItem(itemName);
+            case ROLLERSHUTTER -> new RollershutterItem(itemName);
+            case STRING -> new StringItem(itemName);
+            case SWITCH -> new SwitchItem(itemName);
+            default -> null;
+        };
     }
 
     @Override
     public String[] getSupportedItemTypes() {
-        return new String[] { SWITCH, ROLLERSHUTTER, CONTACT, STRING, NUMBER, DIMMER, DATETIME, COLOR, IMAGE, PLAYER,
-                LOCATION, CALL };
+        return VALID_ITEM_TYPES.toArray(new String[0]);
     }
 }

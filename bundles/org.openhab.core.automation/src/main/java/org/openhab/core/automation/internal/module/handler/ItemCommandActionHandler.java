@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -50,9 +50,6 @@ public class ItemCommandActionHandler extends BaseActionModuleHandler {
 
     /**
      * constructs a new ItemCommandActionHandler
-     *
-     * @param module
-     * @param moduleTypes
      */
     public ItemCommandActionHandler(Action module, EventPublisher eventPublisher, ItemRegistry itemRegistry) {
         super(module);
@@ -61,7 +58,7 @@ public class ItemCommandActionHandler extends BaseActionModuleHandler {
     }
 
     @Override
-    public @Nullable Map<String, Object> execute(Map<String, Object> inputs) {
+    public @Nullable Map<String, @Nullable Object> execute(Map<String, Object> inputs) {
         String itemName = (String) module.getConfiguration().get(ITEM_NAME);
         String command = (String) module.getConfiguration().get(COMMAND);
 
@@ -75,9 +72,9 @@ public class ItemCommandActionHandler extends BaseActionModuleHandler {
                 } else {
                     Object cmd = inputs.get(COMMAND);
 
-                    if (cmd instanceof Command) {
+                    if (cmd instanceof Command command1) {
                         if (item.getAcceptedCommandTypes().contains(cmd.getClass())) {
-                            commandObj = (Command) cmd;
+                            commandObj = command1;
                         }
                     }
                 }

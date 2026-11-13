@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -52,7 +52,7 @@ final class RuleExecutionSimulator {
     private final RuleEngineImpl ruleEngine;
 
     /**
-     * Constructs an new {@link RuleExecutionSimulator}.
+     * Constructs a new {@link RuleExecutionSimulator}.
      */
     public RuleExecutionSimulator(RuleRegistry ruleRegistry, RuleEngineImpl ruleEngine) {
         this.ruleRegistry = ruleRegistry;
@@ -93,12 +93,9 @@ final class RuleExecutionSimulator {
             TriggerHandler triggerHandler = (TriggerHandler) this.ruleEngine.getModuleHandler(trigger, rule.getUID());
 
             // Only triggers that are time-based will be considered within the simulation
-            if (triggerHandler instanceof TimeBasedTriggerHandler) {
-                SchedulerTemporalAdjuster temporalAdjuster = ((TimeBasedTriggerHandler) triggerHandler)
-                        .getTemporalAdjuster();
-                if (temporalAdjuster != null) {
-                    executions.addAll(simulateExecutionsForCronBasedRule(rule, from, until, temporalAdjuster));
-                }
+            if (triggerHandler instanceof TimeBasedTriggerHandler handler) {
+                SchedulerTemporalAdjuster temporalAdjuster = handler.getTemporalAdjuster();
+                executions.addAll(simulateExecutionsForCronBasedRule(rule, from, until, temporalAdjuster));
             }
         }
         logger.debug("Created {} rule simulations for rule {}.", executions.size(), rule.getName());
@@ -111,7 +108,7 @@ final class RuleExecutionSimulator {
      * @param rule {@link Rule} to be simulated.
      * @param from {@link ZonedDateTime} earliest time to be contained in the rule simulation.
      * @param until {@link ZonedDateTime} latest time to be contained in the rule simulation.
-     * @param cron cron-expression to be evaluated for determining the execution times.
+     * @param temporalAdjuster {@link SchedulerTemporalAdjuster} to be evaluated for determining the execution times.
      * @return a list of expected executions.
      */
     private List<RuleExecution> simulateExecutionsForCronBasedRule(Rule rule, ZonedDateTime from, ZonedDateTime until,
@@ -125,7 +122,6 @@ final class RuleExecutionSimulator {
                 result.add(new RuleExecution(Date.from(currentTime.toInstant()), rule));
             }
             currentTime = ZonedDateTime.from(temporalAdjuster.adjustInto(currentTime));
-
         }
         return result;
     }
@@ -143,8 +139,7 @@ final class RuleExecutionSimulator {
                     rule.getUID());
 
             // Only conditions that are time based are checked
-            if (conditionHandler instanceof TimeBasedConditionHandler
-                    && !((TimeBasedConditionHandler) conditionHandler).isSatisfiedAt(current)) {
+            if (conditionHandler instanceof TimeBasedConditionHandler handler && !handler.isSatisfiedAt(current)) {
                 return false;
             }
         }

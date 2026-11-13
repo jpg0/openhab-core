@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -27,17 +28,25 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.Request;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
+import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.hamcrest.Matcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -56,11 +65,12 @@ import org.openhab.core.library.items.DimmerItem;
 import org.openhab.core.library.items.StringItem;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.test.java.JavaOSGiTest;
-import org.openhab.core.transform.TransformationException;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.jayway.jsonpath.JsonPath;
+import com.google.gson.JsonPrimitive;
 
 /**
  * @author Henning Treu - Initial contribution
@@ -88,6 +98,7 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     private @Mock @NonNullByDefault({}) ItemProvider itemProviderMock;
     private @Mock @NonNullByDefault({}) UriBuilder uriBuilderMock;
     private @Mock @NonNullByDefault({}) UriInfo uriInfoMock;
+    private @Mock @NonNullByDefault({}) Request request;
 
     @BeforeEach
     public void beforeEach() {
@@ -118,18 +129,20 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     }
 
     @Test
-    public void shouldReturnUnicodeItems() throws IOException, TransformationException {
+    public void shouldReturnUnicodeItems() throws IOException {
         item4.setLabel(ITEM_LABEL4);
 
-        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, null, null, false, null);
+        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, null, null, false,
+                false, null, false);
         assertThat(readItemLabelsFromResponse(response), hasItems(ITEM_LABEL4));
     }
 
     @Test
-    public void shouldReturnUnicodeItem() throws IOException, TransformationException {
+    public void shouldReturnUnicodeItem() throws IOException {
         item4.setLabel(ITEM_LABEL4);
 
-        Response response = itemResource.getItemData(uriInfoMock, httpHeadersMock, null, null, true, ITEM_NAME4);
+        Response response = itemResource.getItemByName(uriInfoMock, httpHeadersMock, null, null, true, false,
+                ITEM_NAME4);
         assertThat(readItemLabelsFromResponse(response), hasItems(ITEM_LABEL4));
     }
 
@@ -141,28 +154,31 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         item3.addTag("Tag2");
         item4.addTag("Tag4");
 
-        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "Tag1", null, false, null);
+        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "Tag1", null,
+                false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasItems(ITEM_NAME1, ITEM_NAME2));
 
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "Tag2", null, false, null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "Tag2", null, false, false,
+                null, false);
         assertThat(readItemNamesFromResponse(response), hasItems(ITEM_NAME2, ITEM_NAME3));
 
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "NotExistingTag", null, false, null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "NotExistingTag", null,
+                false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasSize(0));
     }
 
     @Test
     public void shouldFilterItemsByType() throws Exception {
-        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, CoreItemFactory.SWITCH, null,
-                null, false, null);
+        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, CoreItemFactory.SWITCH,
+                null, null, false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasItems(ITEM_NAME1, ITEM_NAME2));
 
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, CoreItemFactory.DIMMER, null, null, false,
-                null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, CoreItemFactory.DIMMER, null,
+                null, false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasItems(ITEM_NAME3));
 
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, CoreItemFactory.COLOR, null, null, false,
-                null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, CoreItemFactory.COLOR, null, null,
+                false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasSize(0));
     }
 
@@ -170,15 +186,18 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     public void shouldAddAndRemoveTags() throws Exception {
         managedItemProvider.add(new SwitchItem("Switch"));
 
-        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "MyTag", null, false, null);
+        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "MyTag", null,
+                false, false, null, false);
         assertThat(readItemNamesFromResponse(response), hasSize(0));
 
         itemResource.addTag("Switch", "MyTag");
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "MyTag", null, false, null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "MyTag", null, false, false,
+                null, false);
         assertThat(readItemNamesFromResponse(response), hasSize(1));
 
         itemResource.removeTag("Switch", "MyTag");
-        response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "MyTag", null, false, null);
+        response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "MyTag", null, false, false,
+                null, false);
         assertThat(readItemNamesFromResponse(response), hasSize(0));
     }
 
@@ -186,11 +205,10 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     public void shouldIncludeRequestedFieldsOnly() throws Exception {
         managedItemProvider.add(new SwitchItem("Switch"));
         itemResource.addTag("Switch", "MyTag");
-        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, null, null, "MyTag", null, false,
-                "type,name");
+        Response response = itemResource.getItems(uriInfoMock, httpHeadersMock, request, null, null, "MyTag", null,
+                false, false, "type,name", false);
 
-        JsonElement result = JsonParser
-                .parseString(new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8));
+        JsonElement result = JsonParser.parseString(toString(response.getEntity()));
         JsonElement expected = JsonParser.parseString("[{type: \"Switch\", name: \"Switch\"}]");
         assertEquals(expected, result);
     }
@@ -212,19 +230,37 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     }
 
     private List<String> readItemNamesFromResponse(Response response) throws IOException {
-        String jsonResponse = new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8);
-        return JsonPath.read(jsonResponse, "$..name");
+        return findValues(toString(response.getEntity()), "name");
     }
 
-    private List<String> readItemLabelsFromResponse(Response response) throws IOException, TransformationException {
-        String jsonResponse = new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8);
-        return JsonPath.read(jsonResponse, "$..label");
+    private List<String> readItemLabelsFromResponse(Response response) throws IOException {
+        return findValues(toString(response.getEntity()), "label");
+    }
+
+    /**
+     * Collects the values of all primitive members with the given key at any depth (like JsonPath {@code $..key}).
+     */
+    private static List<String> findValues(String json, String key) {
+        List<String> values = new ArrayList<>();
+        collectValues(JsonParser.parseString(json), key, values);
+        return values;
+    }
+
+    private static void collectValues(JsonElement element, String key, List<String> values) {
+        if (element instanceof JsonObject object) {
+            if (object.get(key) instanceof JsonPrimitive value) {
+                values.add(value.getAsString());
+            }
+            object.entrySet().forEach(entry -> collectValues(entry.getValue(), key, values));
+        } else if (element instanceof JsonArray array) {
+            array.forEach(child -> collectValues(child, key, values));
+        }
     }
 
     @Test
     public void addMultipleItems() throws IOException {
         List<GroupItemDTO> itemList = new ArrayList<>();
-        GroupItemDTO[] items = new GroupItemDTO[] {};
+        GroupItemDTO[] items = {};
 
         GroupItemDTO item1DTO = new GroupItemDTO();
         item1DTO.name = "item1";
@@ -241,12 +277,11 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         items = itemList.toArray(items);
         Response response = itemResource.createOrUpdateItems(items);
 
-        String jsonResponse = new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8);
-        List<String> statusCodes = JsonPath.read(jsonResponse, "$..status");
+        List<String> statusCodes = findValues(toString(response.getEntity()), "status");
 
         // expect 2x created
         assertThat(statusCodes.size(), is(2));
-        assertThat(statusCodes.get(0), is("created"));
+        assertThat(statusCodes.getFirst(), is("created"));
         assertThat(statusCodes.get(1), is("created"));
 
         itemList.clear();
@@ -259,12 +294,11 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         items = itemList.toArray(items);
         response = itemResource.createOrUpdateItems(items);
 
-        jsonResponse = new String(((InputStream) response.getEntity()).readAllBytes(), StandardCharsets.UTF_8);
-        statusCodes = JsonPath.read(jsonResponse, "$..status");
+        statusCodes = findValues(toString(response.getEntity()), "status");
 
         // expect error and updated
         assertThat(statusCodes.size(), is(2));
-        assertThat(statusCodes.get(0), is("error"));
+        assertThat(statusCodes.getFirst(), is("error"));
         assertThat(statusCodes.get(1), is("updated"));
     }
 
@@ -272,8 +306,13 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
     public void testMetadata() {
         MetadataDTO dto = new MetadataDTO();
         dto.value = "some value";
+
         assertEquals(201, itemResource.addMetadata(ITEM_NAME1, "namespace", dto).getStatus());
         assertEquals(200, itemResource.removeMetadata(ITEM_NAME1, "namespace").getStatus());
+        assertEquals(404, itemResource.removeMetadata(ITEM_NAME1, "namespace").getStatus());
+
+        assertEquals(201, itemResource.addMetadata(ITEM_NAME1, "namespace", dto).getStatus());
+        assertEquals(200, itemResource.removeAllMetadata(ITEM_NAME1).getStatus());
         assertEquals(404, itemResource.removeMetadata(ITEM_NAME1, "namespace").getStatus());
     }
 
@@ -290,7 +329,7 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         MetadataDTO dto = new MetadataDTO();
         dto.value = "";
         Response response = itemResource.addMetadata(ITEM_NAME1, "foo", dto);
-        assertEquals(400, response.getStatus());
+        assertEquals(201, response.getStatus());
     }
 
     @Test
@@ -298,7 +337,7 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         MetadataDTO dto = new MetadataDTO();
         dto.value = null;
         Response response = itemResource.addMetadata(ITEM_NAME1, "foo", dto);
-        assertEquals(400, response.getStatus());
+        assertEquals(201, response.getStatus());
     }
 
     @Test
@@ -309,6 +348,26 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         MetadataDTO dto2 = new MetadataDTO();
         dto2.value = "new value";
         assertEquals(200, itemResource.addMetadata(ITEM_NAME1, "namespace", dto2).getStatus());
+    }
+
+    @Test
+    public void testAddMetadataUnmanagedReservedNamespace() {
+        MetadataDTO dto = new MetadataDTO();
+        dto.value = "some value";
+
+        MetadataProvider provider = mock(MetadataProvider.class);
+        when(provider.getReservedNamespaces()).thenReturn(Set.of("semantics"));
+        when(provider.getAll())
+                .thenReturn(Set.of(new Metadata(new MetadataKey("semantics", ITEM_NAME1), "some value", null)));
+        registerService(provider);
+
+        assertEquals(405, itemResource.addMetadata(ITEM_NAME1, "semantics", dto).getStatus());
+    }
+
+    @Test
+    public void testRemoveAllMetadataNonExistingItem() {
+        Response response = itemResource.removeAllMetadata("nonExisting");
+        assertEquals(404, response.getStatus());
     }
 
     @Test
@@ -331,6 +390,62 @@ public class ItemResourceOSGiTest extends JavaOSGiTest {
         registerService(provider);
 
         Response response = itemResource.removeMetadata(ITEM_NAME1, "namespace");
-        assertEquals(409, response.getStatus());
+        assertEquals(405, response.getStatus());
+    }
+
+    @Test
+    public void testRemoveMetadataUnmanagedReservedNamespace() {
+        MetadataProvider provider = mock(MetadataProvider.class);
+        when(provider.getReservedNamespaces()).thenReturn(Set.of("semantics"));
+        when(provider.getAll())
+                .thenReturn(Set.of(new Metadata(new MetadataKey("semantics", ITEM_NAME1), "some value", null)));
+        registerService(provider);
+
+        assertEquals(405, itemResource.removeMetadata(ITEM_NAME1, "semantics").getStatus());
+    }
+
+    @SuppressWarnings("unused")
+    private static Stream<Arguments> findTagTestSource() {
+        return Stream.of( //
+                Arguments.of(ITEM_NAME3, "Location", hasItems(ITEM_NAME1)), // super-class of set tag
+                Arguments.of(ITEM_NAME3, "HVAC", hasItems(ITEM_NAME2)), // tag
+                Arguments.of(ITEM_NAME3, "Point", hasItems(ITEM_NAME3)), // self
+                Arguments.of(ITEM_NAME3, "NotATag", null), // invalid tag
+                Arguments.of(ITEM_NAME3, "Outdoor", null) // valid tag, not present
+        );
+    }
+
+    @ParameterizedTest
+    @MethodSource("findTagTestSource")
+    public void findTagTest(String itemName, String semanticClassName, @Nullable Matcher<Iterable<String>> matcher)
+            throws IOException {
+        // setup test: item1 has the location, item2 the equipment, item3 is the point
+        item1.addTag("Office");
+        item2.addTag("HVAC");
+        item2.addGroupName(ITEM_NAME1);
+        item3.addTag("Point");
+        item3.addGroupName(ITEM_NAME2);
+
+        // do test
+        Response response = itemResource.getSemanticItem(uriInfoMock, httpHeadersMock, null, itemName,
+                semanticClassName);
+        if (matcher != null) {
+            assertThat(readItemNamesFromResponse(response), matcher);
+        } else {
+            assertThat(response.getStatus(), is(404));
+        }
+    }
+
+    public String toString(Object entity) throws IOException {
+        byte[] bytes;
+        if (entity instanceof StreamingOutput streaming) {
+            try (ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                streaming.write(buffer);
+                bytes = buffer.toByteArray();
+            }
+        } else {
+            bytes = ((InputStream) entity).readAllBytes();
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 }

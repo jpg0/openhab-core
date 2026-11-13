@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,8 @@ package org.openhab.core.thing.i18n;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.*;
 
 import java.io.IOException;
@@ -39,9 +41,13 @@ import org.openhab.core.thing.binding.BaseThingHandler;
 import org.openhab.core.thing.binding.BaseThingHandlerFactory;
 import org.openhab.core.thing.binding.ThingHandler;
 import org.openhab.core.thing.binding.ThingHandlerFactory;
+import org.openhab.core.thing.binding.ThingTypeProvider;
 import org.openhab.core.thing.binding.builder.ThingBuilder;
 import org.openhab.core.thing.binding.builder.ThingStatusInfoBuilder;
 import org.openhab.core.thing.testutil.i18n.DefaultLocaleSetter;
+import org.openhab.core.thing.type.ThingType;
+import org.openhab.core.thing.type.ThingTypeBuilder;
+import org.openhab.core.thing.type.ThingTypeRegistry;
 import org.openhab.core.types.Command;
 import org.openhab.core.util.BundleResolver;
 import org.osgi.framework.Bundle;
@@ -87,6 +93,8 @@ public class ThingStatusInfoI18nLocalizationServiceOSGiTest extends JavaOSGiTest
         when(componentContext.getBundleContext()).thenReturn(bundleContext);
         simpleThingHandlerFactory.activate(componentContext);
         registerService(simpleThingHandlerFactory, ThingHandlerFactory.class.getName());
+
+        registerThingType();
 
         thing = ThingBuilder.create(new ThingTypeUID("aaa:bbb"), "ccc").build();
 
@@ -270,7 +278,7 @@ public class ThingStatusInfoI18nLocalizationServiceOSGiTest extends JavaOSGiTest
         ((SimpleThingHandler) thing.getHandler()).setThingStatusInfo(thingStatusInfo);
     }
 
-    private class SimpleThingHandlerFactory extends BaseThingHandlerFactory {
+    private static class SimpleThingHandlerFactory extends BaseThingHandlerFactory {
 
         @Override
         public void activate(ComponentContext componentContext) {
@@ -288,7 +296,7 @@ public class ThingStatusInfoI18nLocalizationServiceOSGiTest extends JavaOSGiTest
         }
     }
 
-    private class SimpleThingHandler extends AbstractThingHandler {
+    private static class SimpleThingHandler extends AbstractThingHandler {
 
         SimpleThingHandler(Thing thing) {
             super(thing);
@@ -305,13 +313,16 @@ public class ThingStatusInfoI18nLocalizationServiceOSGiTest extends JavaOSGiTest
         }
 
         public void setThingStatusInfo(ThingStatusInfo thingStatusInfo) {
-            updateStatus(thingStatusInfo.getStatus(), thingStatusInfo.getStatusDetail(),
-                    thingStatusInfo.getDescription());
+            if (thingStatusInfo.getStatusDetail() == ThingStatusDetail.NONE) {
+                updateStatus(thingStatusInfo.getStatus(), thingStatusInfo.getDescription());
+            } else {
+                updateStatus(thingStatusInfo.getStatusDetail(), thingStatusInfo.getDescription());
+            }
         }
     }
 
-    private abstract class AbstractThingHandler extends BaseThingHandler {
-        public AbstractThingHandler(Thing thing) {
+    private abstract static class AbstractThingHandler extends BaseThingHandler {
+        protected AbstractThingHandler(Thing thing) {
             super(thing);
         }
     }
@@ -322,12 +333,25 @@ public class ThingStatusInfoI18nLocalizationServiceOSGiTest extends JavaOSGiTest
      */
     private class BundleResolverImpl implements BundleResolver {
         @Override
-        public Bundle resolveBundle(@Nullable Class<?> clazz) {
+        public @Nullable Bundle resolveBundle(@Nullable Class<?> clazz) {
             if (clazz != null && clazz.equals(AbstractThingHandler.class)) {
                 return testBundle;
             } else {
                 return FrameworkUtil.getBundle(clazz);
             }
         }
+    }
+
+    private void registerThingType() {
+        ThingType thingType = ThingTypeBuilder.instance(new ThingTypeUID("aaa:bbb"), "label").build();
+
+        ThingTypeProvider thingTypeProvider = mock(ThingTypeProvider.class);
+        ThingTypeRegistry thingTypeRegistry = mock(ThingTypeRegistry.class);
+
+        when(thingTypeProvider.getThingType(eq(thingType.getUID()), nullable(Locale.class))).thenReturn(thingType);
+        when(thingTypeRegistry.getThingType(eq(thingType.getUID()))).thenReturn(thingType);
+
+        registerService(thingTypeProvider);
+        registerService(thingTypeRegistry, ThingTypeRegistry.class.getName());
     }
 }

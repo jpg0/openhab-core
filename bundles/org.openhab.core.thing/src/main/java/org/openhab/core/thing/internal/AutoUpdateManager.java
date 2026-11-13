@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -75,7 +75,7 @@ public class AutoUpdateManager {
     private boolean enabled = true;
     private boolean sendOptimisticUpdates = false;
 
-    private static enum Recommendation {
+    private enum Recommendation {
         /*
          * An automatic state update must be sent because no channels are linked to the item.
          */
@@ -141,9 +141,7 @@ public class AutoUpdateManager {
         }
         final String itemName = commandEvent.getItemName();
         final Command command = commandEvent.getItemCommand();
-        if (command instanceof State) {
-            final State state = (State) command;
-
+        if (command instanceof State state) {
             Recommendation autoUpdate = shouldAutoUpdate(item);
 
             // consider user-override via item meta-data
@@ -152,10 +150,10 @@ public class AutoUpdateManager {
             if (metadata != null && !metadata.getValue().isBlank()) {
                 boolean override = Boolean.parseBoolean(metadata.getValue());
                 if (override) {
-                    logger.trace("Auto update strategy {} overriden by item metadata to REQUIRED", autoUpdate);
+                    logger.trace("Auto update strategy {} overridden by item metadata to REQUIRED", autoUpdate);
                     autoUpdate = Recommendation.REQUIRED;
                 } else {
-                    logger.trace("Auto update strategy {} overriden by item metadata to DONT", autoUpdate);
+                    logger.trace("Auto update strategy {} overridden by item metadata to DONT", autoUpdate);
                     autoUpdate = Recommendation.DONT;
                 }
             }
@@ -206,7 +204,7 @@ public class AutoUpdateManager {
         for (ChannelUID channelUID : linkedChannelUIDs) {
             Thing thing = thingRegistry.get(channelUID.getThingUID());
             if (thing == null //
-                    || thing.getChannel(channelUID.getId()) == null //
+                    || thing.getChannel(channelUID) == null //
                     || thing.getHandler() == null //
                     || !ThingStatus.ONLINE.equals(thing.getStatus()) //
             ) {
@@ -225,7 +223,7 @@ public class AutoUpdateManager {
                 continue;
             }
             AutoUpdatePolicy policy = AutoUpdatePolicy.DEFAULT;
-            Channel channel = thing.getChannel(channelUID.getId());
+            Channel channel = thing.getChannel(channelUID);
             if (channel != null) {
                 AutoUpdatePolicy channelpolicy = channel.getAutoUpdatePolicy();
                 if (channelpolicy != null) {

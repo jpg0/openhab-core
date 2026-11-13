@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -88,7 +89,7 @@ public class CompositeTriggerHandler
                                 ref = ref.substring(i + 1);
                             }
                         }
-                        Object value = null;
+                        Object value;
                         int idx = ReferenceResolver.getNextRefToken(ref, 1);
                         if (idx < ref.length()) {
                             String outputId = ref.substring(0, idx);
@@ -114,10 +115,10 @@ public class CompositeTriggerHandler
 
     /**
      * The {@link CompositeTriggerHandler} sets itself as callback to the child triggers and store the callback to the
-     * rule engine. In this way the trigger of composite type will be notified always when some of the child triggers
+     * rule engine. In this way the trigger of composite type will always be notified when some of the child triggers
      * are triggered and has an opportunity to set the outputs of parent trigger to the rule context.
      *
-     * @see org.openhab.core.automation.handler.TriggerHandler#setTriggerHandlerCallback(org.openhab.core.automation.handler.TriggerHandlerCallback)
+     * @see org.openhab.core.automation.handler.TriggerHandler#setCallback(ModuleHandlerCallback)
      */
     @Override
     public void setCallback(@Nullable ModuleHandlerCallback callback) {
@@ -171,7 +172,18 @@ public class CompositeTriggerHandler
     }
 
     @Override
-    public void runNow(String uid, boolean considerConditions, @Nullable Map<String, Object> context) {
+    public void runNow(String uid, boolean considerConditions, @Nullable Map<String, @Nullable Object> context) {
         callback.runNow(uid, considerConditions, context);
+    }
+
+    @Override
+    public Future<Map<String, @Nullable Object>> runAsync(String ruleUID) {
+        return callback.runAsync(ruleUID);
+    }
+
+    @Override
+    public Future<Map<String, @Nullable Object>> runAsync(String ruleUID, boolean considerConditions,
+            @Nullable Map<String, @Nullable Object> context) {
+        return callback.runAsync(ruleUID, considerConditions, context);
     }
 }

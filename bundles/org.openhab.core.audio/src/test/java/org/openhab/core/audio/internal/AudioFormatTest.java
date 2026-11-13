@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -33,27 +33,29 @@ public class AudioFormatTest {
     private final String testContainer = AudioFormat.CONTAINER_WAVE;
     private final String testCodec = AudioFormat.CODEC_PCM_SIGNED;
     private final boolean testBigEndian = true;
-    private final Integer testBitDepth = Integer.valueOf(16);
-    private final Integer testBitRate = Integer.valueOf(1000);
-    private final Long testFrequency = Long.valueOf(1024);
+    private final Integer testBitDepth = 16;
+    private final Integer testBitRate = 1000;
+    private final Long testFrequency = 1024L;
+    private final Integer testChannels = 1;
 
+    @SuppressWarnings("deprecation")
     @Test
     public void thereIsNoBestMatchForAnAudioFormatIfOneOfTheFieldsIsNull() {
         Set<AudioFormat> inputs = new HashSet<>();
         Set<AudioFormat> outputs = new HashSet<>();
 
         AudioFormat nullContainerAudioFormat = new AudioFormat(null, testCodec, testBigEndian, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat nullCodecAudioFormat = new AudioFormat(testContainer, null, testBigEndian, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat nullBitDepthAudioFormat = new AudioFormat(testContainer, testCodec, testBigEndian, null,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat nullBitRateAudioFormat = new AudioFormat(testContainer, testCodec, testBigEndian, testBitDepth,
-                null, testFrequency);
+                null, testFrequency, testChannels);
         AudioFormat nullFrequencyAudioFormat = new AudioFormat(testContainer, testCodec, testBigEndian, testBitDepth,
-                testBitRate, null);
+                testBitRate, null, testChannels);
         AudioFormat outputAudioFormat = new AudioFormat(testContainer, testCodec, testBigEndian, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
 
         inputs.add(nullContainerAudioFormat);
         inputs.add(nullCodecAudioFormat);
@@ -67,14 +69,15 @@ public class AudioFormatTest {
         assertThat("The best match for the audio format was not as expected", bestMatch, is(nullValue()));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void waveContainerIsPreferredWhenDeterminingABestMatch() {
         Set<AudioFormat> audioFormats = new HashSet<>();
 
         AudioFormat waveContainerAudioFormat = new AudioFormat(testContainer, testCodec, true, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat oggContainerAudioFormat = new AudioFormat(AudioFormat.CONTAINER_OGG, testCodec, true, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
 
         audioFormats.add(waveContainerAudioFormat);
         audioFormats.add(oggContainerAudioFormat);
@@ -84,15 +87,16 @@ public class AudioFormatTest {
                 is(waveContainerAudioFormat));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void theCompatibleWaveContainerIsTheBestMatch() {
         Set<AudioFormat> inputs = new HashSet<>();
         Set<AudioFormat> outputs = new HashSet<>();
 
         AudioFormat alawAudioFormat = new AudioFormat(testContainer, AudioFormat.CODEC_PCM_ALAW, true, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat ulawAudioFormat = new AudioFormat(testContainer, AudioFormat.CODEC_PCM_ULAW, true, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
 
         inputs.add(alawAudioFormat);
         inputs.add(ulawAudioFormat);
@@ -103,15 +107,16 @@ public class AudioFormatTest {
         assertThat("The best match for the audio format was not as expected", bestMatch, is(alawAudioFormat));
     }
 
+    @SuppressWarnings("deprecation")
     @Test
     public void thereIsNoBestMatchIfNoWaveContainer() {
         Set<AudioFormat> inputs = new HashSet<>();
         Set<AudioFormat> outputs = new HashSet<>();
 
         AudioFormat oggContainerAudioFormat = new AudioFormat(AudioFormat.CONTAINER_OGG, testCodec, true, testBitDepth,
-                testBitRate, testFrequency);
+                testBitRate, testFrequency, testChannels);
         AudioFormat nonContainerAudioFormat = new AudioFormat(AudioFormat.CONTAINER_NONE, AudioFormat.CODEC_MP3, true,
-                testBitDepth, testBitRate, testFrequency);
+                testBitDepth, testBitRate, testFrequency, testChannels);
 
         inputs.add(oggContainerAudioFormat);
         inputs.add(nonContainerAudioFormat);
@@ -121,5 +126,13 @@ public class AudioFormatTest {
 
         AudioFormat bestMatch = AudioFormat.getBestMatch(inputs, outputs);
         assertThat("The best match for the audio format was not as expected", bestMatch, is(nullValue()));
+    }
+
+    @Test
+    public void flacAudioFormatIsCompatibleWithItself() {
+        AudioFormat flacFormat = AudioFormat.FLAC;
+        assertThat("FLAC format should be compatible with itself", flacFormat.isCompatible(AudioFormat.FLAC), is(true));
+        assertThat("FLAC format codec should be FLAC", flacFormat.getCodec(), is(AudioFormat.CODEC_FLAC));
+        assertThat("FLAC format container should be FLAC", flacFormat.getContainer(), is(AudioFormat.CONTAINER_FLAC));
     }
 }

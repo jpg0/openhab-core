@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,13 +14,17 @@ package org.openhab.core.io.rest.auth.internal;
 
 import org.openhab.core.auth.User;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * A DTO object for a successful token endpoint response, as per RFC 6749, Section 5.1.
  *
- * {@linkplain https://tools.ietf.org/html/rfc6749#section-5.1}
+ * @see <a href="https://datatracker.ietf.org/doc/html/rfc6749#section-5.1">RFC 6749: Issuing an Access Token -
+ *      Successful Response</a>
  *
  * @author Yannick Schaus - initial contribution
  */
+@Schema(name = "TokenResponse")
 public class TokenResponseDTO {
     public String access_token;
     public String token_type;
@@ -41,7 +45,6 @@ public class TokenResponseDTO {
      */
     public TokenResponseDTO(String access_token, String token_type, Integer expires_in, String refresh_token,
             String scope, User user) {
-        super();
         this.access_token = access_token;
         this.token_type = token_type;
         this.expires_in = expires_in;

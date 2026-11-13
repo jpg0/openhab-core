@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,24 +12,28 @@
  */
 package org.openhab.core.types;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+
 /**
  * Describes one possible value an event might have.
  *
  * @author Moritz Kammerer - Initial contribution
  */
+@NonNullByDefault
 public final class EventOption {
 
-    private String value;
-    private String label;
+    private final String value;
+    private final @Nullable String label;
 
     /**
-     * Creates a {@link EventOption} object.
+     * Creates an {@link EventOption} object.
      *
      * @param value value of the event
      * @param label label
      * @throws IllegalArgumentException if value is null
      */
-    public EventOption(String value, String label) {
+    public EventOption(@Nullable String value, @Nullable String label) {
         if (value == null) {
             throw new IllegalArgumentException("Value must not be null.");
         }
@@ -42,7 +46,7 @@ public final class EventOption {
      *
      * @return label (can be null)
      */
-    public String getLabel() {
+    public @Nullable String getLabel() {
         return label;
     }
 

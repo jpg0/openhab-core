@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,6 +19,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,6 +42,7 @@ import javax.net.ssl.X509ExtendedTrustManager;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -54,6 +57,8 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
     public static final String BEGIN_CERT = "-----BEGIN CERTIFICATE-----";
     public static final String END_CERT = "-----END CERTIFICATE-----";
 
+    private final Logger logger = LoggerFactory.getLogger(PEMTrustManager.class);
+
     private final X509Certificate trustedCert;
 
     /**
@@ -62,7 +67,8 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
      * <code>"-----END CERTIFICATE-----"</code>. The base 64 encoded certificate information are placed in between.
      *
      * @param pemCert the PEM certificate
-     * @throws CertificateException
+     * @throws CertificateInstantiationException
+     * @throws CertificateParsingException
      */
     public PEMTrustManager(String pemCert) throws CertificateException {
         if (!pemCert.isBlank() && pemCert.startsWith(BEGIN_CERT)) {
@@ -70,7 +76,8 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
                 trustedCert = (X509Certificate) CertificateFactory.getInstance("X.509")
                         .generateCertificate(certInputStream);
             } catch (IOException e) {
-                throw new CertificateException(e);
+                logger.debug("An IOException occurred: {}", e.getMessage());
+                throw new CertificateInstantiationException(e);
             }
         } else {
             throw new CertificateParsingException("Certificate is either empty or cannot be parsed correctly");
@@ -108,7 +115,11 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
      * @throws CertificateInstantiationException
      */
     public static PEMTrustManager getInstanceFromServer(String url) throws MalformedURLException, CertificateException {
-        return getInstanceFromServer(new URL(url));
+        try {
+            return getInstanceFromServer((new URI(url)).toURL());
+        } catch (IllegalArgumentException | URISyntaxException e) {
+            throw new MalformedURLException(e.getMessage());
+        }
     }
 
     /**
@@ -210,7 +221,10 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
                 return BEGIN_CERT + System.lineSeparator() + Base64.getEncoder().encodeToString(bytes)
                         + System.lineSeparator() + END_CERT;
             }
-        } catch (NoSuchAlgorithmException | KeyManagementException | IOException e) {
+        } catch (IOException e) {
+            LoggerFactory.getLogger(PEMTrustManager.class).debug("An IOException occurred: {}", e.getMessage());
+            throw new CertificateInstantiationException(e);
+        } catch (NoSuchAlgorithmException | KeyManagementException e) {
             LoggerFactory.getLogger(PEMTrustManager.class).error("An unexpected exception occurred: ", e);
         } finally {
             if (connection != null) {
@@ -224,7 +238,7 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
         File certFile = new File(path);
         if (certFile.exists()) {
             try {
-                return new String(Files.readAllBytes(certFile.toPath()), StandardCharsets.UTF_8);
+                return Files.readString(certFile.toPath());
             } catch (IOException e) {
                 LoggerFactory.getLogger(PEMTrustManager.class).error("An unexpected IOException occurred: ", e);
             }
@@ -246,6 +260,10 @@ public final class PEMTrustManager extends X509ExtendedTrustManager {
 
         public CertificateInstantiationException(String message) {
             super(message);
+        }
+
+        public CertificateInstantiationException(Throwable cause) {
+            super(cause);
         }
     }
 }

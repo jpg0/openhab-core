@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,11 @@ import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.common.registry.Identifiable;
+import org.openhab.core.voice.dialog.DialogContext;
+import org.openhab.core.voice.text.conversation.Conversation;
+import org.openhab.core.voice.text.conversation.ConversationException;
+import org.openhab.core.voice.text.conversation.ConversationRole;
 
 /**
  * This is the interface that a human language text interpreter has to implement.
@@ -24,14 +29,19 @@ import org.eclipse.jdt.annotation.Nullable;
  * @author Tilman Kamp - Initial contribution
  */
 @NonNullByDefault
-public interface HumanLanguageInterpreter {
+public interface HumanLanguageInterpreter extends Identifiable<String> {
 
     /**
      * Returns a simple string that uniquely identifies this service
      *
      * @return an id that identifies this service
      */
-    public String getId();
+    String getId();
+
+    @Override
+    default String getUID() {
+        return getId();
+    }
 
     /**
      * Returns a localized human readable label that can be used within UIs.
@@ -39,7 +49,7 @@ public interface HumanLanguageInterpreter {
      * @param locale the locale to provide the label for
      * @return a localized string to be used in UIs
      */
-    public String getLabel(@Nullable Locale locale);
+    String getLabel(@Nullable Locale locale);
 
     /**
      * Interprets a human language text fragment of a given {@link Locale}
@@ -49,6 +59,54 @@ public interface HumanLanguageInterpreter {
      * @return a human language response
      */
     String interpret(Locale locale, String text) throws InterpretationException;
+
+    /**
+     * Interprets a human language text fragment of a given {@link Locale} with optional access to the context of a
+     * dialog execution.
+     *
+     * @param locale language of the text (given by a {@link Locale})
+     * @param text the text to interpret
+     * @return a human language response
+     */
+    @Deprecated
+    default String interpret(Locale locale, String text, @Nullable DialogContext dialogContext)
+            throws InterpretationException {
+        return interpret(locale, text);
+    }
+
+    /**
+     * Continues the conversation provided in the {@link InterpreterContext} argument given a {@link Locale}.
+     *
+     * @implNote
+     *           Implementations must add any tool calls, tool call results, thinking and their interpretation response
+     *           to the {@link Conversation} provided in the {@link InterpreterContext}:
+     *           <ul>
+     *           <li>Tool calls must be serialized with
+     *           {@link org.openhab.core.voice.text.interpreter.llm.LLMToolCall#toJson()} and added as
+     *           {@link ConversationRole#TOOL_CALL} message.</li>
+     *           <li>Tool call results must be added as {@link ConversationRole#TOOL_RETURN} message.</li>
+     *           <li>Interpreter thinking must be added as {@link ConversationRole#THINKING} message.</li>
+     *           <li>Interpreter responses must be added as {@link ConversationRole#OPENHAB} message.</li>
+     *           </ul>
+     *
+     * @param locale language of the text (given by a {@link Locale})
+     * @param interpreterContext the context for the interpretation
+     * @return a human language response
+     */
+    default String interpret(Locale locale, InterpreterContext interpreterContext) throws InterpretationException {
+        Conversation.Message message = interpreterContext.conversation().getLastMessage();
+        if (message == null || message.role() != ConversationRole.USER) {
+            throw new InterpretationException("Last conversation message is not a user message");
+        }
+        String response = interpret(locale, message.content());
+        try {
+            interpreterContext.conversation().addMessage(ConversationRole.OPENHAB, response);
+        } catch (ConversationException e) {
+            String errMsg = e.getMessage();
+            throw new UnrecoverableInterpretationException(errMsg != null ? errMsg : "Unknown conversation error");
+        }
+        return response;
+    }
 
     /**
      * Gets the grammar of all commands of a given {@link Locale} of the interpreter

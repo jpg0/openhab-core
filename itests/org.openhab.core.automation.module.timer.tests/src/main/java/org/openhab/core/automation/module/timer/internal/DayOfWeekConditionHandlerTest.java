@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,22 +14,29 @@ package org.openhab.core.automation.module.timer.internal;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.mockito.Mockito.mock;
 
-import java.text.SimpleDateFormat;
 import java.time.ZonedDateTime;
-import java.util.Collections;
-import java.util.Date;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.automation.Condition;
+import org.openhab.core.automation.internal.module.factory.CoreModuleHandlerFactory;
 import org.openhab.core.automation.internal.module.handler.DayOfWeekConditionHandler;
 import org.openhab.core.automation.type.ModuleTypeRegistry;
 import org.openhab.core.automation.util.ModuleBuilder;
 import org.openhab.core.config.core.Configuration;
+import org.openhab.core.events.EventPublisher;
+import org.openhab.core.i18n.TimeZoneProvider;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.service.StartLevelService;
+import org.openhab.core.thing.ThingRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,12 +49,25 @@ import org.slf4j.LoggerFactory;
 @NonNullByDefault
 public class DayOfWeekConditionHandlerTest extends BasicConditionHandlerTest {
 
+    private static final DateTimeFormatter DOW_FORMATTER = DateTimeFormatter.ofPattern("EEE", Locale.ENGLISH);
+
     private final Logger logger = LoggerFactory.getLogger(DayOfWeekConditionHandlerTest.class);
-    private SimpleDateFormat sdf = new SimpleDateFormat("EEE", Locale.ENGLISH);
-    private String dayOfWeek = sdf.format(Date.from(ZonedDateTime.now().toInstant())).toUpperCase();
+    private String dayOfWeek = ZonedDateTime.now().format(DOW_FORMATTER).toUpperCase(Locale.ENGLISH);
 
     public DayOfWeekConditionHandlerTest() {
         logger.info("Today is {}", dayOfWeek);
+    }
+
+    @BeforeEach
+    public void before() {
+        EventPublisher eventPublisher = Objects.requireNonNull(getService(EventPublisher.class));
+        ThingRegistry thingRegistry = Objects.requireNonNull(getService(ThingRegistry.class));
+        ItemRegistry itemRegistry = Objects.requireNonNull(getService(ItemRegistry.class));
+        CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
+                eventPublisher, thingRegistry, itemRegistry, mock(TimeZoneProvider.class),
+                mock(StartLevelService.class));
+        mock(CoreModuleHandlerFactory.class);
+        registerService(coreModuleHandlerFactory);
     }
 
     @Test
@@ -59,17 +79,17 @@ public class DayOfWeekConditionHandlerTest extends BasicConditionHandlerTest {
                 .build();
         DayOfWeekConditionHandler handler = new DayOfWeekConditionHandler(condition);
 
-        assertThat(handler.isSatisfied(Collections.emptyMap()), is(true));
+        assertThat(handler.isSatisfied(Map.of()), is(true));
 
         condition = ModuleBuilder.createCondition(condition)
                 .withConfiguration(new Configuration(Map.of("days", List.of()))).build();
         handler = new DayOfWeekConditionHandler(condition);
-        assertThat(handler.isSatisfied(Collections.emptyMap()), is(false));
+        assertThat(handler.isSatisfied(Map.of()), is(false));
 
         condition = ModuleBuilder.createCondition(condition)
                 .withConfiguration(new Configuration(Map.of("days", List.of(dayOfWeek)))).build();
         handler = new DayOfWeekConditionHandler(condition);
-        assertThat(handler.isSatisfied(Collections.emptyMap()), is(true));
+        assertThat(handler.isSatisfied(Map.of()), is(true));
     }
 
     @Test

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,9 +15,11 @@ package org.openhab.core.io.rest.core.internal.thing;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +44,7 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Request;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.UriInfo;
@@ -49,6 +52,7 @@ import javax.ws.rs.core.UriInfo;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.auth.Role;
+import org.openhab.core.common.registry.RegistryChangedRunnableListener;
 import org.openhab.core.config.core.ConfigDescription;
 import org.openhab.core.config.core.ConfigDescriptionRegistry;
 import org.openhab.core.config.core.ConfigUtil;
@@ -77,6 +81,7 @@ import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
+import org.openhab.core.thing.binding.ThingHandler;
 import org.openhab.core.thing.binding.firmware.Firmware;
 import org.openhab.core.thing.dto.ChannelDTO;
 import org.openhab.core.thing.dto.ChannelDTOMapper;
@@ -99,6 +104,7 @@ import org.openhab.core.thing.type.ThingTypeRegistry;
 import org.openhab.core.thing.util.ThingHelper;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.jaxrs.whiteboard.JaxrsWhiteboardConstants;
 import org.osgi.service.jaxrs.whiteboard.propertytypes.JSONRequired;
@@ -134,6 +140,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Dimitar Ivanov - replaced Firmware UID with thing UID and firmware version
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @Component
 @JaxrsResource
@@ -163,8 +170,11 @@ public class ThingResource implements RESTResource {
     private final ThingRegistry thingRegistry;
     private final ThingStatusInfoI18nLocalizationService thingStatusInfoI18nLocalizationService;
     private final ThingTypeRegistry thingTypeRegistry;
+    private final RegistryChangedRunnableListener<Thing> resetLastModifiedChangeListener = new RegistryChangedRunnableListener<>(
+            () -> lastModified = null);
 
     private @Context @NonNullByDefault({}) UriInfo uriInfo;
+    private @Nullable Date lastModified = null;
 
     @Activate
     public ThingResource( //
@@ -197,6 +207,13 @@ public class ThingResource implements RESTResource {
         this.thingRegistry = thingRegistry;
         this.thingStatusInfoI18nLocalizationService = thingStatusInfoI18nLocalizationService;
         this.thingTypeRegistry = thingTypeRegistry;
+
+        this.thingRegistry.addRegistryChangeListener(resetLastModifiedChangeListener);
+    }
+
+    @Deactivate
+    void deactivate() {
+        this.thingRegistry.removeRegistryChangeListener(resetLastModifiedChangeListener);
     }
 
     /**
@@ -211,7 +228,6 @@ public class ThingResource implements RESTResource {
     @Operation(operationId = "createThingInRegistry", summary = "Creates a new thing and adds it to the registry.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "201", description = "Created", content = @Content(schema = @Schema(implementation = EnrichedThingDTO.class))),
-                    @ApiResponse(responseCode = "400", description = "Thing uid does not match bridge uid."),
                     @ApiResponse(responseCode = "400", description = "A uid must be provided, if no binding can create a thing of this type."),
                     @ApiResponse(responseCode = "409", description = "A thing with the same uid already exists.") })
     public Response create(
@@ -236,11 +252,6 @@ public class ThingResource implements RESTResource {
 
         if (thingBean.bridgeUID != null) {
             bridgeUID = new ThingUID(thingBean.bridgeUID);
-            if (thingUID != null && (!thingUID.getBindingId().equals(bridgeUID.getBindingId())
-                    || !thingUID.getBridgeIds().contains(bridgeUID.getId()))) {
-                return Response.status(Status.BAD_REQUEST)
-                        .entity("Thing UID '" + thingUID + "' does not match bridge UID '" + bridgeUID + "'").build();
-            }
         }
 
         // turn the ThingDTO's configuration into a Configuration
@@ -290,16 +301,35 @@ public class ThingResource implements RESTResource {
     @Operation(operationId = "getThings", summary = "Get all available things.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = EnrichedThingDTO.class), uniqueItems = true))) })
-    public Response getAll(
+    public Response getAll(@Context Request request,
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
-            @QueryParam("summary") @Parameter(description = "summary fields only") @Nullable Boolean summary) {
+            @QueryParam("summary") @Parameter(description = "summary fields only") @Nullable Boolean summary,
+            @DefaultValue("false") @QueryParam("staticDataOnly") @Parameter(description = "provides a cacheable list of values not expected to change regularly and checks the If-Modified-Since header") boolean staticDataOnly) {
         final Locale locale = localeService.getLocale(language);
 
         Stream<EnrichedThingDTO> thingStream = thingRegistry.stream().map(t -> convertToEnrichedThingDTO(t, locale))
                 .distinct();
+
+        if (staticDataOnly) {
+            if (lastModified != null) {
+                Response.ResponseBuilder responseBuilder = request.evaluatePreconditions(lastModified);
+                if (responseBuilder != null) {
+                    // send 304 Not Modified
+                    return responseBuilder.build();
+                }
+            } else {
+                lastModified = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
+            }
+
+            thingStream = dtoMapper.limitToFields(thingStream,
+                    "UID,label,bridgeUID,thingTypeUID,location,editable,semanticEquipmentTag");
+            return Response.ok(new Stream2JSONInputStream(thingStream)).lastModified(lastModified)
+                    .cacheControl(RESTConstants.CACHE_CONTROL).build();
+        }
+
         if (summary != null && summary) {
             thingStream = dtoMapper.limitToFields(thingStream,
-                    "UID,label,bridgeUID,thingTypeUID,statusInfo,firmwareStatus,location,editable");
+                    "UID,label,bridgeUID,thingTypeUID,statusInfo,firmwareStatus,location,editable,semanticEquipmentTag");
         }
         return Response.ok(new Stream2JSONInputStream(thingStream)).build();
     }
@@ -467,7 +497,7 @@ public class ThingResource implements RESTResource {
     public Response updateConfiguration(
             @HeaderParam(HttpHeaders.ACCEPT_LANGUAGE) @Parameter(description = "language") @Nullable String language,
             @PathParam("thingUID") @Parameter(description = "thing") String thingUID,
-            @Parameter(description = "configuration parameters") @Nullable Map<String, Object> configurationParameters)
+            @Parameter(description = "configuration parameters") @Nullable Map<String, @Nullable Object> configurationParameters)
             throws IOException {
         final Locale locale = localeService.getLocale(language);
 
@@ -481,8 +511,7 @@ public class ThingResource implements RESTResource {
             return getThingNotFoundResponse(thingUID);
         }
 
-        // ask whether the Thing exists as a managed thing, so it can get
-        // updated, 409 otherwise
+        // ask whether the Thing exists as a managed thing, so it can get updated, 409 otherwise
         Thing managed = managedThingProvider.get(thingUIDObject);
         if (managed == null) {
             logger.info("Received HTTP PUT request for update configuration at '{}' for an unmanaged thing '{}'.",
@@ -490,15 +519,22 @@ public class ThingResource implements RESTResource {
             return getThingResponse(Status.CONFLICT, thing, locale,
                     "Cannot update Thing " + thingUID + " as it is not editable.");
         }
+        // check if handler of Thing is available, so it can be updated, 409 otherwise
+        ThingHandler thingHandler = thing.getHandler();
+        if (thingHandler == null) {
+            logger.info("Received HTTP PUT request for update configuration at '{}' for an uninitialized thing '{}'.",
+                    uriInfo.getPath(), thingUID);
+            return getThingResponse(Status.CONFLICT, thing, locale,
+                    "Cannot update Thing " + thingUID + " as it is not initialized.");
+        }
 
-        // only move on if Thing is known to be managed, so it can get updated
+        // only move on if Thing is known to be managed and handler is available, so it can get updated
         try {
-            // note that we create a Configuration instance here in order to
-            // have normalized types
+            // note that we create a Configuration instance here in order to have normalized types
             thingRegistry.updateConfiguration(thingUIDObject,
                     new Configuration(
                             normalizeConfiguration(configurationParameters, thing.getThingTypeUID(), thing.getUID()))
-                                    .getProperties());
+                            .getProperties());
         } catch (ConfigValidationException ex) {
             logger.debug("Config description validation exception occurred for thingUID {} - Messages: {}", thingUID,
                     ex.getValidationMessages());
@@ -561,7 +597,7 @@ public class ThingResource implements RESTResource {
             return getThingNotFoundResponse(thingUID);
         }
 
-        thingManager.setEnabled(thingUIDObject, Boolean.valueOf(enabled));
+        thingManager.setEnabled(thingUIDObject, Boolean.parseBoolean(enabled));
 
         // everything went well
         return getThingResponse(Status.OK, thing, locale, null);
@@ -592,7 +628,7 @@ public class ThingResource implements RESTResource {
         if (info != null) {
             return Response.ok().entity(info.getConfigStatusMessages()).build();
         }
-        return Response.ok().entity(Collections.EMPTY_SET).build();
+        return Response.ok().entity(Set.of()).build();
     }
 
     @PUT
@@ -748,14 +784,9 @@ public class ThingResource implements RESTResource {
         return linkedItemsMap;
     }
 
-    public static void updateConfiguration(Thing thing, Configuration configuration) {
-        for (String parameterName : configuration.keySet()) {
-            thing.getConfiguration().put(parameterName, configuration.get(parameterName));
-        }
-    }
-
-    private @Nullable Map<String, Object> normalizeConfiguration(@Nullable Map<String, Object> properties,
-            ThingTypeUID thingTypeUID, @Nullable ThingUID thingUID) {
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(
+            @Nullable Map<String, @Nullable Object> properties, ThingTypeUID thingTypeUID,
+            @Nullable ThingUID thingUID) {
         if (properties == null || properties.isEmpty()) {
             return properties;
         }
@@ -790,7 +821,7 @@ public class ThingResource implements RESTResource {
         return ConfigUtil.normalizeTypes(properties, configDescriptions);
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(Map<String, Object> properties,
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(Map<String, @Nullable Object> properties,
             ChannelTypeUID channelTypeUID, ChannelUID channelUID) {
         if (properties == null || properties.isEmpty()) {
             return properties;

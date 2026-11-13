@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,6 +21,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.Rule;
 import org.openhab.core.automation.RuleRegistry;
+import org.openhab.core.automation.util.RuleUtil;
 import org.openhab.core.common.registry.RegistryChangeListener;
 
 /**
@@ -70,8 +71,10 @@ public class RuleSupportRuleRegistryDelegate implements RuleRegistry {
 
     @Override
     public Rule add(Rule element) {
-        ruleProvider.addRule(element);
-        rules.add(element.getUID());
+        String uid = element.getUID();
+        RuleUtil.assertValidRuleUID(uid);
+        ruleProvider.add(element);
+        rules.add(uid);
 
         return element;
     }
@@ -93,7 +96,7 @@ public class RuleSupportRuleRegistryDelegate implements RuleRegistry {
     @Override
     public @Nullable Rule remove(String key) {
         if (rules.remove(key)) {
-            ruleProvider.removeRule(key);
+            return ruleProvider.remove(key);
         }
 
         return ruleRegistry.remove(key);
@@ -109,11 +112,7 @@ public class RuleSupportRuleRegistryDelegate implements RuleRegistry {
      */
     public void removeAllAddedByScript() {
         for (String rule : rules) {
-            try {
-                ruleProvider.removeRule(rule);
-            } catch (Exception ex) {
-                // ignore
-            }
+            ruleProvider.remove(rule);
         }
         rules.clear();
     }
@@ -121,5 +120,10 @@ public class RuleSupportRuleRegistryDelegate implements RuleRegistry {
     @Override
     public Collection<Rule> getByTags(String... tags) {
         return ruleRegistry.getByTags(tags);
+    }
+
+    @Override
+    public void regenerateFromTemplate(String ruleUID) {
+        ruleRegistry.regenerateFromTemplate(ruleUID);
     }
 }

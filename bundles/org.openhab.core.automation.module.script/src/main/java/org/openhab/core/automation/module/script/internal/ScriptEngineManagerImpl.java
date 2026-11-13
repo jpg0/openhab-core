@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,12 +16,14 @@ import static org.openhab.core.automation.module.script.ScriptEngineFactory.*;
 
 import java.io.InputStreamReader;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 import javax.script.Invocable;
 import javax.script.ScriptContext;
@@ -31,7 +33,8 @@ import javax.script.SimpleScriptContext;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.core.automation.module.script.ScriptDependencyListener;
+import org.openhab.core.automation.module.script.LockableScriptEngine;
+import org.openhab.core.automation.module.script.ScriptDependencyTracker;
 import org.openhab.core.automation.module.script.ScriptEngineContainer;
 import org.openhab.core.automation.module.script.ScriptEngineFactory;
 import org.openhab.core.automation.module.script.ScriptEngineManager;
@@ -60,10 +63,9 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
 
     private final Logger logger = LoggerFactory.getLogger(ScriptEngineManagerImpl.class);
     private final Map<String, ScriptEngineContainer> loadedScriptEngineInstances = new HashMap<>();
-    private final Map<String, ScriptEngineFactory> customSupport = new HashMap<>();
-    private final Map<String, ScriptEngineFactory> genericSupport = new HashMap<>();
+    private final Map<String, ScriptEngineFactory> factories = new ConcurrentHashMap<>();
     private final ScriptExtensionManager scriptExtensionManager;
-    private final Set<FactoryChangeListener> listeners = new HashSet<>();
+    private final Set<FactoryChangeListener> listeners = new CopyOnWriteArraySet<>();
 
     @Activate
     public ScriptEngineManagerImpl(final @Reference ScriptExtensionManager scriptExtensionManager) {
@@ -75,23 +77,19 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
         List<String> scriptTypes = engineFactory.getScriptTypes();
         logger.trace("{}.getScriptTypes(): {}", engineFactory.getClass().getSimpleName(), scriptTypes);
         for (String scriptType : scriptTypes) {
-            if (isCustomFactory(engineFactory)) {
-                this.customSupport.put(scriptType, engineFactory);
-            } else {
-                this.genericSupport.put(scriptType, engineFactory);
-            }
+            factories.put(scriptType, engineFactory);
             listeners.forEach(listener -> listener.factoryAdded(scriptType));
         }
         if (logger.isDebugEnabled()) {
             if (!scriptTypes.isEmpty()) {
-                ScriptEngine scriptEngine = engineFactory.createScriptEngine(scriptTypes.get(0));
+                ScriptEngine scriptEngine = engineFactory.createScriptEngine(scriptTypes.getFirst());
                 if (scriptEngine != null) {
                     javax.script.ScriptEngineFactory factory = scriptEngine.getFactory();
                     logger.debug(
-                            "Initialized a {} ScriptEngineFactory for {} ({}): supports {} ({}) with file extensions {}, names {}, and mimetypes {}",
-                            (isCustomFactory(engineFactory)) ? "custom" : "generic", factory.getEngineName(),
-                            factory.getEngineVersion(), factory.getLanguageName(), factory.getLanguageVersion(),
-                            factory.getExtensions(), factory.getNames(), factory.getMimeTypes());
+                            "Initialized a ScriptEngineFactory for {} ({}): supports {} ({}) with file extensions {}, names {}, and mimetypes {}",
+                            factory.getEngineName(), factory.getEngineVersion(), factory.getLanguageName(),
+                            factory.getLanguageVersion(), factory.getExtensions(), factory.getNames(),
+                            factory.getMimeTypes());
                 } else {
                     logger.trace("addScriptEngineFactory: engine was null");
                 }
@@ -105,24 +103,10 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
         List<String> scriptTypes = engineFactory.getScriptTypes();
         logger.trace("{}.getScriptTypes(): {}", engineFactory.getClass().getSimpleName(), scriptTypes);
         for (String scriptType : scriptTypes) {
-            if (isCustomFactory(engineFactory)) {
-                this.customSupport.remove(scriptType, engineFactory);
-            } else {
-                this.genericSupport.remove(scriptType, engineFactory);
-            }
+            factories.remove(scriptType, engineFactory);
             listeners.forEach(listener -> listener.factoryRemoved(scriptType));
         }
         logger.debug("Removed {}", engineFactory.getClass().getSimpleName());
-    }
-
-    /**
-     * This method is used to determine if a given {@link ScriptEngineFactory} is generic or customized.
-     *
-     * @param engineFactory {@link ScriptEngineFactory}
-     * @return true, if the {@link ScriptEngineFactory} is custom, otherwise false
-     */
-    private boolean isCustomFactory(ScriptEngineFactory engineFactory) {
-        return !(engineFactory instanceof GenericScriptEngineFactory);
     }
 
     @Override
@@ -155,6 +139,12 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
 
                     addAttributeToScriptContext(engine, CONTEXT_KEY_ENGINE_IDENTIFIER, engineIdentifier);
                     addAttributeToScriptContext(engine, CONTEXT_KEY_EXTENSION_ACCESSOR, scriptExtensionManager);
+
+                    ScriptDependencyTracker tracker = engineFactory.getDependencyTracker();
+                    if (tracker != null) {
+                        addAttributeToScriptContext(engine, CONTEXT_KEY_DEPENDENCY_LISTENER,
+                                tracker.getTracker(engineIdentifier));
+                    }
                 } else {
                     logger.error("ScriptEngine for language '{}' could not be created for identifier: {}", scriptType,
                             engineIdentifier);
@@ -168,38 +158,72 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
     }
 
     @Override
-    public void loadScript(String engineIdentifier, InputStreamReader scriptData) {
-        loadScript(engineIdentifier, scriptData, null);
-    }
-
-    @Override
-    public void loadScript(String engineIdentifier, InputStreamReader scriptData,
-            @Nullable ScriptDependencyListener dependencyListener) {
+    public boolean loadScript(String engineIdentifier, InputStreamReader scriptData) {
         ScriptEngineContainer container = loadedScriptEngineInstances.get(engineIdentifier);
         if (container == null) {
             logger.error("Could not load script, as no ScriptEngine has been created");
-        } else {
-            ScriptEngine engine = container.getScriptEngine();
-
-            if (dependencyListener != null) {
-                addAttributeToScriptContext(engine, CONTEXT_KEY_DEPENDENCY_LISTENER, dependencyListener);
-            }
-
+            return false;
+        }
+        ScriptEngine engine = container.getScriptEngine();
+        if (engine instanceof LockableScriptEngine lockable) {
+            Lock lock = lockable.getLock();
+            long timeout = lockable.getLockAcquisitionTimeoutMs();
+            boolean locked;
             try {
-                engine.eval(scriptData);
-                if (engine instanceof Invocable) {
-                    Invocable inv = (Invocable) engine;
-                    try {
-                        inv.invokeFunction("scriptLoaded", engineIdentifier);
-                    } catch (NoSuchMethodException e) {
-                        logger.trace("scriptLoaded() is not defined in the script: {}", engineIdentifier);
-                    }
-                } else {
-                    logger.trace("ScriptEngine does not support Invocable interface");
-                }
-            } catch (Exception ex) {
-                logger.error("Error during evaluation of script '{}': {}", engineIdentifier, ex.getMessage());
+                locked = lock.tryLock(timeout, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Interrupted while waiting to acquire the lock while loading script for engine '{}'",
+                        engineIdentifier);
+                logger.trace("", e);
+                return false;
             }
+            if (locked) {
+                try {
+                    return runScript(engineIdentifier, engine, scriptData);
+                } finally {
+                    lock.unlock();
+                }
+            } else {
+                if (timeout < 2000L) {
+                    logger.error(
+                            "Failed to acquire the lock while loading script for engine '{}' within {} milliseconds. Aborting loading of script.",
+                            engineIdentifier, timeout);
+                } else {
+                    logger.error(
+                            "Failed to acquire the lock while loading script for engine '{}' within {} seconds. Aborting loading of script.",
+                            engineIdentifier, TimeUnit.MILLISECONDS.toSeconds(timeout));
+                }
+                return false;
+            }
+        } else {
+            return runScript(engineIdentifier, engine, scriptData);
+        }
+    }
+
+    private boolean runScript(String engineIdentifier, ScriptEngine engine, InputStreamReader scriptData) {
+        try {
+            engine.eval(scriptData);
+            if (engine instanceof Invocable inv) {
+                try {
+                    inv.invokeFunction("scriptLoaded", engineIdentifier);
+                } catch (NoSuchMethodException e) {
+                    logger.trace("scriptLoaded() is not defined in the script: {}", engineIdentifier);
+                }
+            } else {
+                logger.trace("ScriptEngine does not support Invocable interface");
+            }
+            return true;
+        } catch (Exception ex) {
+            logger.error("Error during evaluation of script '{}': {}", engineIdentifier, ex.getMessage());
+            // Only call logger if debug level is actually enabled, because OPS4J Pax Logging holds (at least for
+            // some time) a reference to the exception and its cause, which may hold a reference to the script
+            // engine.
+            // This prevents garbage collection (at least for some time) to remove the script engine from heap.
+            if (logger.isDebugEnabled()) {
+                logger.debug("", ex);
+            }
+            return false;
         }
     }
 
@@ -207,45 +231,62 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
     public void removeEngine(String engineIdentifier) {
         ScriptEngineContainer container = loadedScriptEngineInstances.remove(engineIdentifier);
         if (container != null) {
+            ScriptDependencyTracker tracker = container.getFactory().getDependencyTracker();
+            if (tracker != null) {
+                tracker.removeTracking(engineIdentifier);
+            }
             ScriptEngine scriptEngine = container.getScriptEngine();
-            if (scriptEngine instanceof Invocable) {
-                Invocable inv = (Invocable) scriptEngine;
+            if (scriptEngine instanceof Invocable inv) {
                 try {
                     inv.invokeFunction("scriptUnloaded");
                 } catch (NoSuchMethodException e) {
-                    logger.trace("scriptUnloaded() is not defined in the script");
+                    logger.trace("scriptUnloaded() is not defined in ScriptEngine '{}'", engineIdentifier);
                 } catch (ScriptException ex) {
-                    logger.error("Error while executing script", ex);
+                    logger.error("Error executing scriptUnloaded() of ScriptEngine '{}'", engineIdentifier, ex);
+                } catch (RuntimeException e) {
+                    Throwable cause = e;
+                    while (cause != null && cause.getCause() != null) {
+                        cause = cause.getCause();
+                    }
+                    if (cause instanceof IllegalStateException
+                            && "The Context is already closed.".equals(cause.getMessage())) {
+                        // Ignore ISE thrown by Graal languages if underlying org.graalvm.polyglot.Engine is closed
+                        logger.debug("ScriptEngine '{}' already closed when attempting to execute scriptUnloaded()",
+                                engineIdentifier);
+                    } else {
+                        // Do NOT rethrow, we always want to close the engine and remove script extensions.
+                        logger.warn(
+                                "Error attempting to execute scriptUnloaded() of ScriptEngine '{}' (continuing cleanup)",
+                                engineIdentifier, e);
+                    }
                 }
             } else {
-                logger.trace("ScriptEngine does not support Invocable interface");
+                logger.trace("ScriptEngine '{}' does not support Invocable interface", engineIdentifier);
             }
-
-            if (scriptEngine instanceof AutoCloseable) {
+            if (scriptEngine instanceof AutoCloseable closeable) {
                 // we cannot not use ScheduledExecutorService.execute here as it might execute the task in the calling
                 // thread (calling ScriptEngine.close in the same thread may result in a deadlock if the ScriptEngine
                 // tries to Thread.join)
                 scheduler.schedule(() -> {
-                    AutoCloseable closeable = (AutoCloseable) scriptEngine;
                     try {
                         closeable.close();
                     } catch (Exception e) {
-                        logger.error("Error while closing script engine", e);
+                        logger.error("Error closing ScriptEngine '{}'", engineIdentifier, e);
                     }
                 }, 0, TimeUnit.SECONDS);
             } else {
-                logger.trace("ScriptEngine does not support AutoCloseable interface");
+                logger.trace("ScriptEngine '{}' does not support AutoCloseable interface", engineIdentifier);
             }
 
             removeScriptExtensions(engineIdentifier);
         }
     }
 
-    private void removeScriptExtensions(String pathIdentifier) {
+    private void removeScriptExtensions(String engineIdentifier) {
         try {
-            scriptExtensionManager.dispose(pathIdentifier);
+            scriptExtensionManager.dispose(engineIdentifier);
         } catch (Exception ex) {
-            logger.error("Error removing ScriptEngine", ex);
+            logger.error("Error removing ScriptEngine '{}'", engineIdentifier, ex);
         }
     }
 
@@ -257,15 +298,7 @@ public class ScriptEngineManagerImpl implements ScriptEngineManager {
      * @return {@link ScriptEngineFactory} or null
      */
     private @Nullable ScriptEngineFactory findEngineFactory(String scriptType) {
-        ScriptEngineFactory customFactory = customSupport.get(scriptType);
-        if (customFactory != null) {
-            return customFactory;
-        }
-        ScriptEngineFactory genericFactory = genericSupport.get(scriptType);
-        if (genericFactory != null) {
-            return genericFactory;
-        }
-        return null;
+        return factories.get(scriptType);
     }
 
     @Override

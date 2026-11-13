@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -51,12 +51,10 @@ public class SseUtil {
      * @return a new OutboundEvent
      */
     public static OutboundSseEvent buildEvent(OutboundSseEvent.Builder eventBuilder, EventDTO event) {
-        final OutboundSseEvent sseEvent = eventBuilder.name("message") //
+        return eventBuilder.name("message") //
                 .mediaType(MediaType.APPLICATION_JSON_TYPE) //
                 .data(event) //
                 .build();
-
-        return sseEvent;
     }
 
     /**
@@ -85,7 +83,7 @@ public class SseUtil {
         } else {
             StringTokenizer tokenizer = new StringTokenizer(topicFilter, ",");
             while (tokenizer.hasMoreElements()) {
-                String regex = tokenizer.nextToken().trim().replace("*", ".*") + ".*";
+                String regex = tokenizer.nextToken().trim().replace("*", ".*") + "$";
                 filters.add(regex);
             }
         }

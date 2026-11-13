@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -48,8 +48,8 @@ public class OrderingMapSerializer implements JsonSerializer<Map<@Nullable Objec
         }
         possiblySortedStream.forEachOrdered(entry -> {
             Object key = entry.getKey();
-            if (key instanceof String) {
-                ordered.add((String) key, context.serialize(entry.getValue()));
+            if (key instanceof String string) {
+                ordered.add(string, context.serialize(entry.getValue()));
             } else {
                 JsonElement serialized = context.serialize(key);
                 ordered.add(serialized.isJsonPrimitive() ? serialized.getAsString() : serialized.toString(),

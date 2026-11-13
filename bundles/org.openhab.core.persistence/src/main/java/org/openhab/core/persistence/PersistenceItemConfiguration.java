@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,48 +18,23 @@ import java.util.Objects;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.persistence.config.PersistenceConfig;
+import org.openhab.core.persistence.filter.PersistenceFilter;
 import org.openhab.core.persistence.strategy.PersistenceStrategy;
 
 /**
  * This class holds the configuration of a persistence strategy for specific items.
  *
  * @author Markus Rathgeb - Initial contribution
+ * @author Mark Herwege - Extract alias configuration
  */
 @NonNullByDefault
-public class PersistenceItemConfiguration {
+public record PersistenceItemConfiguration(List<PersistenceConfig> items, List<PersistenceStrategy> strategies,
+        List<PersistenceFilter> filters) {
 
-    private final List<PersistenceConfig> items;
-    private final @Nullable String alias;
-    private final List<PersistenceStrategy> strategies;
-    private final List<PersistenceFilter> filters;
-
-    public PersistenceItemConfiguration(final List<PersistenceConfig> items, @Nullable final String alias,
+    public PersistenceItemConfiguration(final List<PersistenceConfig> items,
             @Nullable final List<PersistenceStrategy> strategies, @Nullable final List<PersistenceFilter> filters) {
         this.items = items;
-        this.alias = alias;
         this.strategies = Objects.requireNonNullElse(strategies, List.of());
         this.filters = Objects.requireNonNullElse(filters, List.of());
-    }
-
-    public List<PersistenceConfig> getItems() {
-        return items;
-    }
-
-    public @Nullable String getAlias() {
-        return alias;
-    }
-
-    public List<PersistenceStrategy> getStrategies() {
-        return strategies;
-    }
-
-    public List<PersistenceFilter> getFilters() {
-        return filters;
-    }
-
-    @Override
-    public String toString() {
-        return String.format("%s [items=%s, alias=%s, strategies=%s, filters=%s]", getClass().getSimpleName(), items,
-                alias, strategies, filters);
     }
 }

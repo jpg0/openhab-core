@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,8 @@ package org.openhab.core.automation.internal.commands;
 
 import java.io.File;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -89,20 +91,20 @@ public class AutomationCommandRemove extends AutomationCommand {
      * This method serves to create an {@link URL} object or {@link File} object from a string that is passed as
      * a parameter of the command. From the {@link File} object the URL is constructed.
      *
-     * @param parameterValue is a string that is passed as parameter of the command and it supposed to be an URL
+     * @param parameterValue is a string that is passed as parameter of the command and it supposed to be a URL
      *            representation.
      * @return an {@link URL} object created from the string that is passed as parameter of the command or <b>null</b>
      *         if either no legal protocol could be found in the specified string or the string could not be parsed.
      */
     private @Nullable URL initURL(String parameterValue) {
         try {
-            return new URL(parameterValue);
-        } catch (MalformedURLException mue) {
+            return (new URI(parameterValue)).toURL();
+        } catch (MalformedURLException | URISyntaxException mue) {
             File f = new File(parameterValue);
             if (f.isFile()) {
                 try {
                     return f.toURI().toURL();
-                } catch (MalformedURLException e) {
+                } catch (IllegalArgumentException | MalformedURLException e) {
                 }
             }
         }

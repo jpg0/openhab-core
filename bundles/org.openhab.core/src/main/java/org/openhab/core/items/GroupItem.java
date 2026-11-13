@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.items;
 
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -25,8 +26,10 @@ import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.core.i18n.UnitProvider;
+import org.openhab.core.events.EventPublisher;
 import org.openhab.core.items.events.ItemEventFactory;
+import org.openhab.core.service.CommandDescriptionService;
+import org.openhab.core.service.StateDescriptionService;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.slf4j.Logger;
@@ -37,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * @author Kai Kreuzer - Initial contribution
  */
 @NonNullByDefault
-public class GroupItem extends GenericItem implements StateChangeListener {
+public class GroupItem extends GenericItem implements StateChangeListener, MetadataAwareItem {
 
     public static final String TYPE = "Group";
 
@@ -120,8 +123,8 @@ public class GroupItem extends GenericItem implements StateChangeListener {
     }
 
     /**
-     * Returns the direct members of this {@link GroupItem} and recursively all
-     * members of the potentially contained {@link GroupItem}s as well. The {@link GroupItem}s itself aren't contained.
+     * Returns the direct members of this {@link GroupItem} and recursively all members of the potentially contained
+     * {@link GroupItem}s as well. The {@link GroupItem}s itself aren't contained.
      * The returned items are unique.
      *
      * @return all members of this and all contained {@link GroupItem}s
@@ -130,14 +133,26 @@ public class GroupItem extends GenericItem implements StateChangeListener {
         return Collections.unmodifiableSet(new LinkedHashSet<>(getMembers((Item i) -> !(i instanceof GroupItem))));
     }
 
+    /**
+     * Returns the direct members of this {@link GroupItem} and recursively all members of the potentially contained
+     * {@link GroupItem}s as well. The {@link GroupItem}s itself are contained if they can have a state.
+     * The returned items are unique.
+     *
+     * @return all members of this and all contained {@link GroupItem}s
+     */
+    public Set<Item> getAllStateMembers() {
+        return Collections.unmodifiableSet(
+                new LinkedHashSet<>(getMembers((Item i) -> !(i instanceof GroupItem) || hasOwnState((GroupItem) i))));
+    }
+
     private void collectMembers(Collection<Item> allMembers, Collection<Item> members) {
         for (Item member : members) {
             if (allMembers.contains(member)) {
                 continue;
             }
             allMembers.add(member);
-            if (member instanceof GroupItem) {
-                collectMembers(allMembers, ((GroupItem) member).members);
+            if (member instanceof GroupItem item) {
+                collectMembers(allMembers, item.members);
             }
         }
     }
@@ -161,38 +176,29 @@ public class GroupItem extends GenericItem implements StateChangeListener {
      * @throws IllegalArgumentException if the given item is null
      */
     public void addMember(Item item) {
-        if (item == null) {
-            throw new IllegalArgumentException("Item must not be null!");
-        }
-
         boolean added = members.addIfAbsent(item);
 
         // in case membership is constructed programmatically this sanitizes
         // the group names on the item:
-        if (added && item instanceof GenericItem) {
-            ((GenericItem) item).addGroupName(getName());
+        if (added && item instanceof GenericItem genericItem) {
+            genericItem.addGroupName(getName());
         }
         registerStateListener(item);
     }
 
     private void registerStateListener(Item item) {
-        if (item instanceof GenericItem) {
-            GenericItem genericItem = (GenericItem) item;
+        if (item instanceof GenericItem genericItem) {
             genericItem.addStateChangeListener(this);
         }
     }
 
     private void unregisterStateListener(Item old) {
-        if (old instanceof GenericItem) {
-            GenericItem genericItem = (GenericItem) old;
+        if (old instanceof GenericItem genericItem) {
             genericItem.removeStateChangeListener(this);
         }
     }
 
     public void replaceMember(Item oldItem, Item newItem) {
-        if (oldItem == null || newItem == null) {
-            throw new IllegalArgumentException("Items must not be null!");
-        }
         int index = members.indexOf(oldItem);
         if (index > -1) {
             Item old = members.set(index, newItem);
@@ -208,9 +214,6 @@ public class GroupItem extends GenericItem implements StateChangeListener {
      * @throws IllegalArgumentException if the given item is null
      */
     public void removeMember(Item item) {
-        if (item == null) {
-            throw new IllegalArgumentException("Item must not be null!");
-        }
         members.remove(item);
         unregisterStateListener(item);
     }
@@ -225,14 +228,6 @@ public class GroupItem extends GenericItem implements StateChangeListener {
         members.clear();
     }
 
-    @Override
-    public void setUnitProvider(@Nullable UnitProvider unitProvider) {
-        super.setUnitProvider(unitProvider);
-        if (baseItem != null && baseItem instanceof GenericItem) {
-            ((GenericItem) baseItem).setUnitProvider(unitProvider);
-        }
-    }
-
     /**
      * The accepted data types of a group item is the same as of the underlying base item.
      * If none is defined, the intersection of all sets of accepted data types of all group
@@ -241,10 +236,9 @@ public class GroupItem extends GenericItem implements StateChangeListener {
      * @return the accepted data types of this group item
      */
     @Override
-    @SuppressWarnings("unchecked")
     public List<Class<? extends State>> getAcceptedDataTypes() {
-        if (baseItem != null) {
-            return baseItem.getAcceptedDataTypes();
+        if (baseItem instanceof Item item) {
+            return item.getAcceptedDataTypes();
         } else {
             List<Class<? extends State>> acceptedDataTypes = null;
 
@@ -255,8 +249,7 @@ public class GroupItem extends GenericItem implements StateChangeListener {
                     acceptedDataTypes.retainAll(item.getAcceptedDataTypes());
                 }
             }
-            return acceptedDataTypes == null ? Collections.unmodifiableList(Collections.EMPTY_LIST)
-                    : Collections.unmodifiableList(acceptedDataTypes);
+            return acceptedDataTypes == null ? List.of() : Collections.unmodifiableList(acceptedDataTypes);
         }
     }
 
@@ -268,10 +261,9 @@ public class GroupItem extends GenericItem implements StateChangeListener {
      * @return the accepted command types of this group item
      */
     @Override
-    @SuppressWarnings("unchecked")
     public List<Class<? extends Command>> getAcceptedCommandTypes() {
-        if (baseItem != null) {
-            return baseItem.getAcceptedCommandTypes();
+        if (baseItem instanceof Item item) {
+            return item.getAcceptedCommandTypes();
         } else {
             List<Class<? extends Command>> acceptedCommandTypes = null;
 
@@ -282,25 +274,41 @@ public class GroupItem extends GenericItem implements StateChangeListener {
                     acceptedCommandTypes.retainAll(item.getAcceptedCommandTypes());
                 }
             }
-            return acceptedCommandTypes == null ? Collections.unmodifiableList(Collections.EMPTY_LIST)
-                    : Collections.unmodifiableList(acceptedCommandTypes);
+            return acceptedCommandTypes == null ? List.of() : Collections.unmodifiableList(acceptedCommandTypes);
         }
     }
 
+    /**
+     * Send a command to the each member of the group.
+     *
+     * @param command the command to be sent
+     */
     public void send(Command command) {
+        send(command, null);
+    }
+
+    /**
+     * Send a command to the each member of the group.
+     *
+     * @param command the command to be sent
+     * @param source the source of the command. See
+     *            https://www.openhab.org/docs/developer/utils/events.html#the-core-events
+     */
+    public void send(Command command, @Nullable String source) {
         if (getAcceptedCommandTypes().contains(command.getClass())) {
-            internalSend(command);
+            internalSend(command, source);
         } else {
             logger.warn("Command '{}' has been ignored for group '{}' as it is not accepted.", command, getName());
         }
     }
 
     @Override
-    protected void internalSend(Command command) {
+    protected void internalSend(Command command, @Nullable String source) {
+        EventPublisher eventPublisher = this.eventPublisher;
         if (eventPublisher != null) {
             for (Item member : members) {
                 // try to send the command to the bus
-                eventPublisher.post(ItemEventFactory.createCommandEvent(member.getName(), command));
+                eventPublisher.post(ItemEventFactory.createCommandEvent(member.getName(), command, source));
             }
         }
     }
@@ -310,13 +318,14 @@ public class GroupItem extends GenericItem implements StateChangeListener {
         // if a group does not have a function it cannot have a state
         @Nullable
         T newState = null;
-        if (function != null) {
-            newState = function.getStateAs(getStateMembers(getMembers()), typeClass);
+        if (function instanceof GroupFunction groupFunction) {
+            newState = groupFunction.getStateAs(getStateMembers(getMembers()), typeClass);
         }
 
-        if (newState == null && baseItem != null && baseItem instanceof GenericItem) {
+        Item baseItem = this.baseItem;
+        if (newState == null && baseItem instanceof GenericItem item) {
             // we use the transformation method from the base item
-            ((GenericItem) baseItem).setState(state);
+            item.setState(state);
             newState = baseItem.getStateAs(typeClass);
         }
         if (newState == null) {
@@ -333,9 +342,9 @@ public class GroupItem extends GenericItem implements StateChangeListener {
         sb.append("Type=");
         sb.append(getClass().getSimpleName());
         sb.append(", ");
-        if (getBaseItem() != null) {
+        if (getBaseItem() instanceof Item item) {
             sb.append("BaseType=");
-            sb.append(baseItem.getClass().getSimpleName());
+            sb.append(item.getClass().getSimpleName());
             sb.append(", ");
         }
         sb.append("Members=");
@@ -352,13 +361,13 @@ public class GroupItem extends GenericItem implements StateChangeListener {
         if (!getTags().isEmpty()) {
             sb.append(", ");
             sb.append("Tags=[");
-            sb.append(getTags().stream().collect(Collectors.joining(", ")));
+            sb.append(String.join(", ", getTags()));
             sb.append("]");
         }
         if (!getGroupNames().isEmpty()) {
             sb.append(", ");
             sb.append("Groups=[");
-            sb.append(getGroupNames().stream().collect(Collectors.joining(", ")));
+            sb.append(String.join(", ", getGroupNames()));
             sb.append("]");
         }
         sb.append(")");
@@ -373,32 +382,68 @@ public class GroupItem extends GenericItem implements StateChangeListener {
     public void stateUpdated(Item item, State state) {
         State oldState = this.state;
         State newState = oldState;
-        if (function != null && baseItem != null && itemStateConverter != null) {
-            State calculatedState = function.calculate(getStateMembers(getMembers()));
+        ItemStateConverter itemStateConverter = this.itemStateConverter;
+        ZonedDateTime lastStateUpdate = this.lastStateUpdate;
+        ZonedDateTime lastStateChange = this.lastStateChange;
+        if (function instanceof GroupFunction groupFunction && baseItem != null && itemStateConverter != null) {
+            State calculatedState = groupFunction.calculate(getStateMembers(getMembers()));
             newState = itemStateConverter.convertToAcceptedState(calculatedState, baseItem);
             setState(newState);
+            sendGroupStateUpdatedEvent(item.getName(), newState, lastStateUpdate);
         }
         if (!oldState.equals(newState)) {
-            sendGroupStateChangedEvent(item.getName(), newState, oldState);
+            sendGroupStateChangedEvent(item.getName(), newState, oldState, lastStateUpdate, lastStateChange);
         }
     }
 
     @Override
-    public void setState(State state) {
+    public void setState(State state, @Nullable String source) {
+        ZonedDateTime now = ZonedDateTime.now();
         State oldState = this.state;
-        if (baseItem != null && baseItem instanceof GenericItem) {
-            ((GenericItem) baseItem).setState(state);
+        Item baseItem = this.baseItem;
+        if (baseItem instanceof GenericItem item) {
+            item.setState(state, source);
             this.state = baseItem.getState();
         } else {
             this.state = state;
         }
         notifyListeners(oldState, state);
+        if (!oldState.equals(state)) {
+            lastStateChange = now;
+        }
+        lastStateUpdate = now;
     }
 
-    private void sendGroupStateChangedEvent(String memberName, State newState, State oldState) {
-        if (eventPublisher != null) {
-            eventPublisher
-                    .post(ItemEventFactory.createGroupStateChangedEvent(getName(), memberName, newState, oldState));
+    @Override
+    public void setStateDescriptionService(@Nullable StateDescriptionService stateDescriptionService) {
+        super.setStateDescriptionService(stateDescriptionService);
+        if (baseItem instanceof GenericItem item) {
+            item.setStateDescriptionService(stateDescriptionService);
+        }
+    }
+
+    @Override
+    public void setCommandDescriptionService(@Nullable CommandDescriptionService commandDescriptionService) {
+        super.setCommandDescriptionService(commandDescriptionService);
+        if (baseItem instanceof GenericItem item) {
+            item.setCommandDescriptionService(commandDescriptionService);
+        }
+    }
+
+    private void sendGroupStateUpdatedEvent(String memberName, State state, @Nullable ZonedDateTime lastStateUpdate) {
+        EventPublisher eventPublisher1 = this.eventPublisher;
+        if (eventPublisher1 != null) {
+            eventPublisher1.post(
+                    ItemEventFactory.createGroupStateUpdatedEvent(getName(), memberName, state, lastStateUpdate, null));
+        }
+    }
+
+    private void sendGroupStateChangedEvent(String memberName, State newState, State oldState,
+            @Nullable ZonedDateTime lastStateUpdate, @Nullable ZonedDateTime lastStateChange) {
+        EventPublisher eventPublisher1 = this.eventPublisher;
+        if (eventPublisher1 != null) {
+            eventPublisher1.post(ItemEventFactory.createGroupStateChangedEvent(getName(), memberName, newState,
+                    oldState, lastStateUpdate, lastStateChange));
         }
     }
 
@@ -430,5 +475,26 @@ public class GroupItem extends GenericItem implements StateChangeListener {
 
     private boolean hasOwnState(GroupItem item) {
         return item.getFunction() != null && item.getBaseItem() != null;
+    }
+
+    @Override
+    public void addedMetadata(Metadata metadata) {
+        if (baseItem instanceof MetadataAwareItem metadataAwareItem) {
+            metadataAwareItem.addedMetadata(metadata);
+        }
+    }
+
+    @Override
+    public void updatedMetadata(Metadata oldMetadata, Metadata newMetadata) {
+        if (baseItem instanceof MetadataAwareItem metadataAwareItem) {
+            metadataAwareItem.updatedMetadata(oldMetadata, newMetadata);
+        }
+    }
+
+    @Override
+    public void removedMetadata(Metadata metadata) {
+        if (baseItem instanceof MetadataAwareItem metadataAwareItem) {
+            metadataAwareItem.removedMetadata(metadata);
+        }
     }
 }

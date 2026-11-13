@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,14 +12,16 @@
  */
 package org.openhab.core.io.console.internal.extension;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.io.console.Console;
+import org.openhab.core.io.console.ConsoleCommandCompleter;
+import org.openhab.core.io.console.StringsCompleter;
 import org.openhab.core.io.console.extensions.AbstractConsoleCommandExtension;
 import org.openhab.core.io.console.extensions.ConsoleCommandExtension;
 import org.openhab.core.items.GenericItem;
@@ -42,12 +44,47 @@ import org.osgi.service.component.annotations.Reference;
 @Component(service = ConsoleCommandExtension.class)
 @NonNullByDefault
 public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension {
-
     private static final String SUBCMD_LIST = "list";
     private static final String SUBCMD_CLEAR = "clear";
     private static final String SUBCMD_REMOVE = "remove";
     private static final String SUBCMD_ADDTAG = "addTag";
     private static final String SUBCMD_RMTAG = "rmTag";
+    private static final StringsCompleter SUBCMD_COMPLETER = new StringsCompleter(
+            List.of(SUBCMD_LIST, SUBCMD_CLEAR, SUBCMD_REMOVE, SUBCMD_ADDTAG, SUBCMD_RMTAG), false);
+
+    private class ItemConsoleCommandCompleter implements ConsoleCommandCompleter {
+        @Override
+        public boolean complete(String[] args, int cursorArgumentIndex, int cursorPosition, List<String> candidates) {
+            if (cursorArgumentIndex <= 0) {
+                return SUBCMD_COMPLETER.complete(args, cursorArgumentIndex, cursorPosition, candidates);
+            }
+            if (cursorArgumentIndex == 1) {
+                Collection<Item> items;
+                switch (args[0]) {
+                    case SUBCMD_ADDTAG:
+                    case SUBCMD_RMTAG:
+                        items = managedItemProvider.getAll();
+                        break;
+                    case SUBCMD_REMOVE:
+                        items = itemRegistry.getAll();
+                        break;
+                    default:
+                        return false;
+                }
+                return new StringsCompleter(items.stream().map(Item::getName).toList(), true).complete(args,
+                        cursorArgumentIndex, cursorPosition, candidates);
+            }
+            if (cursorArgumentIndex == 2 && args[0].equals(SUBCMD_RMTAG)) {
+                Item item = managedItemProvider.get(args[1]);
+                if (item == null) {
+                    return false;
+                }
+                return new StringsCompleter(item.getTags(), true).complete(args, cursorArgumentIndex, cursorPosition,
+                        candidates);
+            }
+            return false;
+        }
+    }
 
     private final ItemRegistry itemRegistry;
     private final ManagedItemProvider managedItemProvider;
@@ -62,13 +99,13 @@ public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension
 
     @Override
     public List<String> getUsages() {
-        return Arrays.asList(new String[] {
+        return List.of(
                 buildCommandUsage(SUBCMD_LIST + " [<pattern>]",
                         "lists names and types of all items (matching the pattern, if given)"),
                 buildCommandUsage(SUBCMD_CLEAR, "removes all items"),
                 buildCommandUsage(SUBCMD_REMOVE + " <itemName>", "removes the given item"),
                 buildCommandUsage(SUBCMD_ADDTAG + " <itemName> <tag>", "adds a tag to the given item"),
-                buildCommandUsage(SUBCMD_RMTAG + " <itemName> <tag>", "removes a tag from the given item") });
+                buildCommandUsage(SUBCMD_RMTAG + " <itemName> <tag>", "removes a tag from the given item"));
     }
 
     @Override
@@ -98,8 +135,7 @@ public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension
                 case SUBCMD_ADDTAG:
                     if (args.length > 2) {
                         Item item = itemRegistry.get(args[1]);
-                        if (item instanceof GenericItem) {
-                            GenericItem gItem = (GenericItem) item;
+                        if (item instanceof GenericItem gItem) {
                             handleTags(gItem::addTag, args[2], gItem, console);
                         }
                     } else {
@@ -110,8 +146,7 @@ public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension
                 case SUBCMD_RMTAG:
                     if (args.length > 2) {
                         Item item = itemRegistry.get(args[1]);
-                        if (item instanceof GenericItem) {
-                            GenericItem gItem = (GenericItem) item;
+                        if (item instanceof GenericItem gItem) {
                             handleTags(gItem::removeTag, args[2], gItem, console);
                         }
                     } else {
@@ -127,6 +162,11 @@ public class ItemConsoleCommandExtension extends AbstractConsoleCommandExtension
         } else {
             printUsage(console);
         }
+    }
+
+    @Override
+    public @Nullable ConsoleCommandCompleter getCompleter() {
+        return new ItemConsoleCommandCompleter();
     }
 
     private <T> void handleTags(final Consumer<T> func, final T tag, GenericItem gItem, Console console) {

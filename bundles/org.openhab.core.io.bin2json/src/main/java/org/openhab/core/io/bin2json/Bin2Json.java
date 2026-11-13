@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -54,18 +54,19 @@ import com.igormaznitsa.jbbp.model.JBBPFieldUShort;
  *
  * Parser rules follows Java Binary Block Parser syntax.
  *
- * <p>
+ * <p />
  *
  * See details from <a href=
  * "https://github.com/raydac/java-binary-block-parser">https://github.com/raydac/java-binary-block-parser</a>
  *
- * <p>
+ * <p />
  * Usage example:
  *
  * <pre>
  * {@code
  * JsonObject json = new Bin2Json("byte a; byte b; ubyte c;").convert("03FAFF");
  * json.toString() = {"a":3,"b":-6,"c":255}
+ * }
  * </pre>
  *
  * @author Pauli Anttila - Initial contribution
@@ -87,7 +88,7 @@ public class Bin2Json {
         try {
             parser = JBBPParser.prepare(parserRule);
         } catch (JBBPException e) {
-            throw new ConversionException(String.format("Illegal parser rule, reason: %s", e.getMessage(), e));
+            throw new ConversionException(String.format("Illegal parser rule, reason: %s", e.getMessage()), e);
         }
     }
 
@@ -102,7 +103,7 @@ public class Bin2Json {
         try {
             return convert(HexUtils.hexToBytes(hexString));
         } catch (IllegalArgumentException e) {
-            throw new ConversionException(String.format("Illegal hexstring , reason: %s", e.getMessage(), e));
+            throw new ConversionException(String.format("Illegal hexstring , reason: %s", e.getMessage()), e);
         }
     }
 
@@ -116,10 +117,8 @@ public class Bin2Json {
     public JsonObject convert(byte[] data) throws ConversionException {
         try {
             return convert(parser.parse(data));
-        } catch (IOException e) {
-            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage(), e));
-        } catch (JBBPException e) {
-            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage(), e));
+        } catch (IOException | JBBPException e) {
+            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage()), e);
         }
     }
 
@@ -133,13 +132,20 @@ public class Bin2Json {
     public JsonObject convert(InputStream inputStream) throws ConversionException {
         try {
             return convert(parser.parse(inputStream));
-        } catch (IOException e) {
-            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage(), e));
-        } catch (JBBPException e) {
-            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage(), e));
+        } catch (IOException | JBBPException e) {
+            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage()), e);
         }
     }
 
+    /**
+     * Converts a parsed JBBP field structure to a JSON object.
+     * This internal method performs the actual conversion of parsed binary data to JSON format,
+     * tracking the conversion time when trace logging is enabled.
+     *
+     * @param data the parsed JBBP field structure containing binary data
+     * @return Gson {@link JsonObject} representation of the binary data
+     * @throws ConversionException if an error occurs during the JSON conversion process
+     */
     private JsonObject convert(JBBPFieldStruct data) throws ConversionException {
         try {
             LocalDateTime start = LocalDateTime.now();
@@ -150,14 +156,34 @@ public class Bin2Json {
             }
             return json;
         } catch (JBBPException e) {
-            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage(), e));
+            throw new ConversionException(String.format("Unexpected error, reason: %s", e.getMessage()), e);
         }
     }
 
+    /**
+     * Converts a JBBP field to a new JSON object.
+     * This is a convenience wrapper method that delegates to the main conversion method with a null
+     * initial JSON object, resulting in a new JSON object being created.
+     *
+     * @param field the JBBP field to convert to JSON
+     * @return a new Gson {@link JsonObject} containing the field data
+     * @throws ConversionException if the field type is not supported or conversion fails
+     */
     private JsonObject convertToJSon(final JBBPAbstractField field) throws ConversionException {
         return convertToJSon(null, field);
     }
 
+    /**
+     * Converts a JBBP field to JSON, optionally adding to an existing JSON object.
+     * This is the main conversion method that recursively handles all JBBP field types including
+     * primitives (bit, boolean, byte, int, long, short), unsigned types (ubyte, ushort),
+     * arrays, and nested structures. Each field is added to the JSON object with its field name as the key.
+     *
+     * @param json the existing JSON object to add the field to, or null to create a new JSON object
+     * @param field the JBBP field to convert (can be primitive, array, or struct)
+     * @return the JSON object containing the converted field data
+     * @throws ConversionException if the field type is not recognized or supported
+     */
     private JsonObject convertToJSon(@Nullable final JsonObject json, final JBBPAbstractField field)
             throws ConversionException {
         JsonObject jsn = json == null ? new JsonObject() : json;
@@ -165,41 +191,40 @@ public class Bin2Json {
         final String fieldName = field.getFieldName() == null ? "nonamed" : field.getFieldName();
         if (field instanceof JBBPAbstractArrayField) {
             final JsonArray jsonArray = new JsonArray();
-            if (field instanceof JBBPFieldArrayBit) {
-                for (final byte b : ((JBBPFieldArrayBit) field).getArray()) {
+            if (field instanceof JBBPFieldArrayBit bit) {
+                for (final byte b : bit.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayBoolean) {
-                for (final boolean b : ((JBBPFieldArrayBoolean) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayBoolean boolean1) {
+                for (final boolean b : boolean1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayByte) {
-                for (final byte b : ((JBBPFieldArrayByte) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayByte byte1) {
+                for (final byte b : byte1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayInt) {
-                for (final int b : ((JBBPFieldArrayInt) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayInt int1) {
+                for (final int b : int1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayLong) {
-                for (final long b : ((JBBPFieldArrayLong) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayLong long1) {
+                for (final long b : long1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayShort) {
-                for (final short b : ((JBBPFieldArrayShort) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayShort short1) {
+                for (final short b : short1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b));
                 }
-            } else if (field instanceof JBBPFieldArrayStruct) {
-                final JBBPFieldArrayStruct array = (JBBPFieldArrayStruct) field;
+            } else if (field instanceof JBBPFieldArrayStruct array) {
                 for (int i = 0; i < array.size(); i++) {
                     jsonArray.add(convertToJSon(new JsonObject(), array.getElementAt(i)));
                 }
-            } else if (field instanceof JBBPFieldArrayUByte) {
-                for (final byte b : ((JBBPFieldArrayUByte) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayUByte byte1) {
+                for (final byte b : byte1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b & 0xFF));
                 }
-            } else if (field instanceof JBBPFieldArrayUShort) {
-                for (final short b : ((JBBPFieldArrayUShort) field).getArray()) {
+            } else if (field instanceof JBBPFieldArrayUShort short1) {
+                for (final short b : short1.getArray()) {
                     jsonArray.add(new JsonPrimitive(b & 0xFFFF));
                 }
             } else {
@@ -207,20 +232,19 @@ public class Bin2Json {
             }
             jsn.add(fieldName, jsonArray);
         } else {
-            if (field instanceof JBBPFieldBit) {
-                jsn.addProperty(fieldName, ((JBBPFieldBit) field).getAsInt());
-            } else if (field instanceof JBBPFieldBoolean) {
-                jsn.addProperty(fieldName, ((JBBPFieldBoolean) field).getAsBool());
-            } else if (field instanceof JBBPFieldByte) {
-                jsn.addProperty(fieldName, ((JBBPFieldByte) field).getAsInt());
-            } else if (field instanceof JBBPFieldInt) {
-                jsn.addProperty(fieldName, ((JBBPFieldInt) field).getAsInt());
-            } else if (field instanceof JBBPFieldLong) {
-                jsn.addProperty(fieldName, ((JBBPFieldLong) field).getAsLong());
-            } else if (field instanceof JBBPFieldShort) {
-                jsn.addProperty(fieldName, ((JBBPFieldShort) field).getAsInt());
-            } else if (field instanceof JBBPFieldStruct) {
-                final JBBPFieldStruct struct = (JBBPFieldStruct) field;
+            if (field instanceof JBBPFieldBit bit) {
+                jsn.addProperty(fieldName, bit.getAsInt());
+            } else if (field instanceof JBBPFieldBoolean boolean1) {
+                jsn.addProperty(fieldName, boolean1.getAsBool());
+            } else if (field instanceof JBBPFieldByte byte1) {
+                jsn.addProperty(fieldName, byte1.getAsInt());
+            } else if (field instanceof JBBPFieldInt int1) {
+                jsn.addProperty(fieldName, int1.getAsInt());
+            } else if (field instanceof JBBPFieldLong long1) {
+                jsn.addProperty(fieldName, long1.getAsLong());
+            } else if (field instanceof JBBPFieldShort short1) {
+                jsn.addProperty(fieldName, short1.getAsInt());
+            } else if (field instanceof JBBPFieldStruct struct) {
                 final JsonObject obj = new JsonObject();
                 for (final JBBPAbstractField f : struct.getArray()) {
                     convertToJSon(obj, f);
@@ -230,10 +254,10 @@ public class Bin2Json {
                 } else {
                     jsn.add(fieldName, obj);
                 }
-            } else if (field instanceof JBBPFieldUByte) {
-                jsn.addProperty(fieldName, ((JBBPFieldUByte) field).getAsInt());
-            } else if (field instanceof JBBPFieldUShort) {
-                jsn.addProperty(fieldName, ((JBBPFieldUShort) field).getAsInt());
+            } else if (field instanceof JBBPFieldUByte byte1) {
+                jsn.addProperty(fieldName, byte1.getAsInt());
+            } else if (field instanceof JBBPFieldUShort short1) {
+                jsn.addProperty(fieldName, short1.getAsInt());
             } else {
                 throw new ConversionException(String.format("Unexpected field '%s'", field));
             }

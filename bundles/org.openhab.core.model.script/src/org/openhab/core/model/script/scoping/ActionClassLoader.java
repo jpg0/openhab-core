@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,7 +22,7 @@ import org.openhab.core.thing.binding.ThingActions;
  *
  * @author Kai Kreuzer - Initial contribution
  */
-final public class ActionClassLoader extends ClassLoader {
+public final class ActionClassLoader extends ClassLoader {
 
     public ActionClassLoader(ClassLoader cl) {
         super(cl);
@@ -31,8 +31,11 @@ final public class ActionClassLoader extends ClassLoader {
     @Override
     public Class<?> loadClass(String name) throws ClassNotFoundException {
         try {
-            Class<?> clazz = getParent().loadClass(name);
-            return clazz;
+            ClassLoader parent = getParent();
+            if (parent == null) {
+                throw new ClassNotFoundException("Unable to load '" + name + "' because parent is null");
+            }
+            return parent.loadClass(name);
         } catch (ClassNotFoundException e) {
             for (ActionService actionService : ScriptServiceUtil.getActionServices()) {
                 if (actionService.getActionClassName().equals(name)) {
@@ -44,7 +47,7 @@ final public class ActionClassLoader extends ClassLoader {
                     return actions.getClass();
                 }
             }
+            throw e;
         }
-        throw new ClassNotFoundException();
     }
 }

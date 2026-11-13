@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -24,9 +24,10 @@ import org.openhab.core.thing.link.ItemChannelLink;
 import org.openhab.core.thing.link.dto.ItemChannelLinkDTO;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParser;
 
 /**
- * {@link LinkEventFactoryTests} tests the {@link LinkEventFactory}.
+ * {@link LinkEventFactoryTest} tests the {@link LinkEventFactory}.
  *
  * @author Christoph Weitkamp - Initial contribution
  */
@@ -52,7 +53,7 @@ public class LinkEventFactoryTest {
 
         assertEquals(ItemChannelLinkAddedEvent.TYPE, event.getType());
         assertEquals(LINK_ADDED_EVENT_TOPIC, event.getTopic());
-        assertEquals(LINK_EVENT_PAYLOAD, event.getPayload());
+        assertEquals(JsonParser.parseString(LINK_EVENT_PAYLOAD), JsonParser.parseString(event.getPayload()));
     }
 
     @Test
@@ -73,7 +74,7 @@ public class LinkEventFactoryTest {
 
         assertEquals(ItemChannelLinkRemovedEvent.TYPE, event.getType());
         assertEquals(LINK_REMOVED_EVENT_TOPIC, event.getTopic());
-        assertEquals(LINK_EVENT_PAYLOAD, event.getPayload());
+        assertEquals(JsonParser.parseString(LINK_EVENT_PAYLOAD), JsonParser.parseString(event.getPayload()));
     }
 
     @Test

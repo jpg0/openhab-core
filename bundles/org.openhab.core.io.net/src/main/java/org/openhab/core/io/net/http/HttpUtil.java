@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,6 @@ import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -152,9 +151,9 @@ public class HttpUtil {
     public static String executeUrl(String httpMethod, String url, Properties httpHeaders, InputStream content,
             String contentType, int timeout, String proxyHost, Integer proxyPort, String proxyUser,
             String proxyPassword, String nonProxyHosts) throws IOException {
-        ContentResponse response = executeUrlAndGetReponse(httpMethod, url, httpHeaders, content, contentType, timeout,
+        ContentResponse response = executeUrlAndGetResponse(httpMethod, url, httpHeaders, content, contentType, timeout,
                 proxyHost, proxyPort, proxyUser, proxyPassword, nonProxyHosts);
-        String encoding = response.getEncoding() != null ? response.getEncoding().replaceAll("\"", "").trim()
+        String encoding = response.getEncoding() != null ? response.getEncoding().replace("\"", "").trim()
                 : StandardCharsets.UTF_8.name();
         String responseBody;
         try {
@@ -183,7 +182,7 @@ public class HttpUtil {
      * @return the response as a ContentResponse object or <code>NULL</code> when the request went wrong
      * @throws IOException when the request execution failed, timed out or it was interrupted
      */
-    private static ContentResponse executeUrlAndGetReponse(String httpMethod, String url, Properties httpHeaders,
+    private static ContentResponse executeUrlAndGetResponse(String httpMethod, String url, Properties httpHeaders,
             InputStream content, String contentType, int timeout, String proxyHost, Integer proxyPort, String proxyUser,
             String proxyPassword, String nonProxyHosts) throws IOException {
         // Referenced http client factory not available
@@ -193,9 +192,17 @@ public class HttpUtil {
         // Get shared http client from factory "on-demand"
         final HttpClient httpClient = httpClientFactory.getCommonHttpClient();
 
+        URI uri = null;
+        try {
+            uri = new URI(url);
+        } catch (NullPointerException | URISyntaxException e) {
+            LOGGER.debug("String {} can not be parsed as URI reference", url);
+            throw new IOException(e);
+        }
+
         HttpProxy proxy = null;
         // Only configure a proxy if a host is provided
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPort != null && shouldUseProxy(url, nonProxyHosts)) {
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort != null && shouldUseProxy(uri, nonProxyHosts)) {
             AuthenticationStore authStore = httpClient.getAuthenticationStore();
             ProxyConfiguration proxyConfig = httpClient.getProxyConfiguration();
             List<Proxy> proxies = proxyConfig.getProxies();
@@ -209,33 +216,33 @@ public class HttpUtil {
 
         final HttpMethod method = HttpUtil.createHttpMethod(httpMethod);
 
-        final Request request = httpClient.newRequest(url).method(method).timeout(timeout, TimeUnit.MILLISECONDS);
+        final Request request = httpClient.newRequest(uri).method(method).timeout(timeout, TimeUnit.MILLISECONDS);
 
         if (httpHeaders != null) {
             for (String httpHeaderKey : httpHeaders.stringPropertyNames()) {
-                request.header(httpHeaderKey, httpHeaders.getProperty(httpHeaderKey));
+                if (httpHeaderKey.equalsIgnoreCase(HttpHeader.USER_AGENT.toString())) {
+                    request.agent(httpHeaders.getProperty(httpHeaderKey));
+                } else {
+                    request.header(httpHeaderKey, httpHeaders.getProperty(httpHeaderKey));
+                }
             }
         }
 
         // add basic auth header, if url contains user info
-        try {
-            URI uri = new URI(url);
-            if (uri.getUserInfo() != null) {
-                String[] userInfo = uri.getUserInfo().split(":");
+        if (uri.getUserInfo() != null) {
+            String[] userInfo = uri.getUserInfo().split(":");
 
-                String user = userInfo[0];
-                String password = userInfo[1];
+            String user = userInfo[0];
+            String password = userInfo[1];
 
-                String basicAuthentication = "Basic "
-                        + Base64.getEncoder().encodeToString((user + ":" + password).getBytes());
-                request.header(HttpHeader.AUTHORIZATION, basicAuthentication);
-            }
-        } catch (URISyntaxException e) {
-            LOGGER.debug("String {} can not be parsed as URI reference", url);
+            String basicAuthentication = "Basic "
+                    + Base64.getEncoder().encodeToString((user + ":" + password).getBytes());
+            request.header(HttpHeader.AUTHORIZATION, basicAuthentication);
         }
 
         // add content if a valid method is given ...
-        if (content != null && (HttpMethod.POST.equals(method) || HttpMethod.PUT.equals(method))) {
+        if (content != null && (HttpMethod.POST.equals(method) || HttpMethod.PUT.equals(method)
+                || HttpMethod.PATCH.equals(method))) {
             // Close this outmost stream again after use!
             try (final InputStreamContentProvider inputStreamContentProvider = new InputStreamContentProvider(
                     content)) {
@@ -277,7 +284,7 @@ public class HttpUtil {
             String proxyPortString = System.getProperty("http.proxyPort");
             if (proxyPortString != null && !proxyPortString.isBlank()) {
                 try {
-                    proxyParams.proxyPort = Integer.valueOf(proxyPortString);
+                    proxyParams.proxyPort = Integer.parseInt(proxyPortString);
                 } catch (NumberFormatException e) {
                     LOGGER.warn("'{}' is not a valid proxy port - using default port ({}) instead", proxyPortString,
                             proxyParams.proxyPort);
@@ -292,22 +299,21 @@ public class HttpUtil {
 
     /**
      * Determines whether the list of <code>nonProxyHosts</code> contains the
-     * host (which is part of the given <code>urlString</code> or not.
+     * url host (which is part of the given <code>uri</code> or not.
      *
-     * @param urlString
+     * @param uri
      * @param nonProxyHosts
-     * @return <code>false</code> if the host of the given <code>urlString</code> is contained in
+     * @return <code>false</code> if the host of the given <code>uri</code> is contained in
      *         <code>nonProxyHosts</code>-list and <code>true</code> otherwise
      */
-    private static boolean shouldUseProxy(String urlString, String nonProxyHosts) {
+    private static boolean shouldUseProxy(URI uri, String nonProxyHosts) {
         if (nonProxyHosts != null && !nonProxyHosts.isBlank()) {
-            String givenHost = urlString;
+            String givenHost = uri.toString();
 
             try {
-                URL url = new URL(urlString);
-                givenHost = url.getHost();
-            } catch (MalformedURLException e) {
-                LOGGER.error("the given url {} is malformed", urlString);
+                givenHost = uri.toURL().getHost();
+            } catch (IllegalArgumentException | MalformedURLException e) {
+                LOGGER.error("the given url {} is malformed", uri.toString());
             }
 
             String[] hosts = nonProxyHosts.split("\\|");
@@ -315,7 +321,7 @@ public class HttpUtil {
                 if (host.contains("*")) {
                     // the nonProxyHots-pattern allows wildcards '*' which must
                     // be masked to be used with regular expressions
-                    String hostRegexp = host.replaceAll("\\.", "\\\\.");
+                    String hostRegexp = host.replace(".", "\\.");
                     hostRegexp = hostRegexp.replaceAll("\\*", ".*");
                     if (givenHost.matches(hostRegexp)) {
                         return false;
@@ -336,18 +342,18 @@ public class HttpUtil {
      *
      * @param httpMethodString the name of the {@link HttpMethod} to create
      * @throws IllegalArgumentException if <code>httpMethod</code> is none of <code>GET</code>, <code>PUT</code>,
-     *             <code>POST</POST> or <code>DELETE</code>
+     *             <code>POST</code>, <code>PATCH</code>, or <code>DELETE</code>
      */
     public static HttpMethod createHttpMethod(String httpMethodString) {
         // @formatter:off
         return Optional.ofNullable(HttpMethod.fromString(httpMethodString))
-                .filter(m -> m == GET || m == POST || m == PUT || m == DELETE)
+                .filter(m -> m == GET || m == POST || m == PUT || m == PATCH || m == DELETE)
                 .orElseThrow(() -> new IllegalArgumentException("Given HTTP Method '" + httpMethodString + "' is unknown"));
         // @formatter:on
     }
 
     /**
-     * Download the image data from an URL.
+     * Download the image data from a URL.
      *
      * If content type is not found in the headers, the data is scanned to determine the content type.
      *
@@ -360,7 +366,7 @@ public class HttpUtil {
     }
 
     /**
-     * Download the image data from an URL.
+     * Download the image data from a URL.
      *
      * If content type is not found in the headers, the data is scanned to determine the content type.
      *
@@ -374,7 +380,7 @@ public class HttpUtil {
     }
 
     /**
-     * Download the image data from an URL.
+     * Download the image data from a URL.
      *
      * @param url the URL of the image to be downloaded
      * @param scanTypeInContent true to allow the scan of data to determine the content type if not found in the headers
@@ -388,7 +394,7 @@ public class HttpUtil {
     }
 
     /**
-     * Download the image data from an URL.
+     * Download the image data from a URL.
      *
      * @param url the URL of the image to be downloaded
      * @param scanTypeInContent true to allow the scan of data to determine the content type if not found in the headers
@@ -399,11 +405,36 @@ public class HttpUtil {
      *         not an image or the data size is too big
      */
     public static RawType downloadImage(String url, boolean scanTypeInContent, long maxContentLength, int timeout) {
-        return downloadData(url, "image/.*", scanTypeInContent, maxContentLength, timeout);
+        final ProxyParams proxyParams = prepareProxyParams();
+
+        return downloadImage(url, scanTypeInContent, maxContentLength, timeout, proxyParams.proxyHost,
+                proxyParams.proxyPort, proxyParams.proxyUser, proxyParams.proxyPassword, proxyParams.nonProxyHosts);
     }
 
     /**
-     * Download the data from an URL.
+     * Download the image data from a URL.
+     *
+     * @param url the URL of the image to be downloaded
+     * @param scanTypeInContent true to allow the scan of data to determine the content type if not found in the headers
+     * @param maxContentLength the maximum data size in bytes to trigger the download; any negative value to ignore the
+     *            data size
+     * @param timeout the socket timeout in milliseconds to wait for data
+     * @param proxyHost the hostname of the proxy
+     * @param proxyPort the port of the proxy
+     * @param proxyUser the username to authenticate with the proxy
+     * @param proxyPassword the password to authenticate with the proxy
+     * @param nonProxyHosts the hosts that won't be routed through the proxy
+     * @return a RawType object containing the image, null if the content type could not be found or the content type is
+     *         not an image or the data size is too big
+     */
+    public static RawType downloadImage(String url, boolean scanTypeInContent, long maxContentLength, int timeout,
+            String proxyHost, Integer proxyPort, String proxyUser, String proxyPassword, String nonProxyHosts) {
+        return downloadData(url, "image/.*", scanTypeInContent, maxContentLength, timeout, proxyHost, proxyPort,
+                proxyUser, proxyPassword, nonProxyHosts);
+    }
+
+    /**
+     * Download the data from a URL.
      *
      * @param url the URL of the data to be downloaded
      * @param contentTypeRegex the REGEX the content type must match; null to ignore the content type
@@ -419,7 +450,7 @@ public class HttpUtil {
     }
 
     /**
-     * Download the data from an URL.
+     * Download the data from a URL.
      *
      * @param url the URL of the data to be downloaded
      * @param contentTypeRegex the REGEX the content type must match; null to ignore the content type
@@ -434,11 +465,34 @@ public class HttpUtil {
             long maxContentLength, int timeout) {
         final ProxyParams proxyParams = prepareProxyParams();
 
+        return downloadData(url, contentTypeRegex, scanTypeInContent, maxContentLength, timeout, proxyParams.proxyHost,
+                proxyParams.proxyPort, proxyParams.proxyUser, proxyParams.proxyPassword, proxyParams.nonProxyHosts);
+    }
+
+    /**
+     * Download the data from a URL.
+     *
+     * @param url the URL of the data to be downloaded
+     * @param contentTypeRegex the REGEX the content type must match; null to ignore the content type
+     * @param scanTypeInContent true to allow the scan of data to determine the content type if not found in the headers
+     * @param maxContentLength the maximum data size in bytes to trigger the download; any negative value to ignore the
+     *            data size
+     * @param timeout the socket timeout in milliseconds to wait for data
+     * @param proxyHost the hostname of the proxy
+     * @param proxyPort the port of the proxy
+     * @param proxyUser the username to authenticate with the proxy
+     * @param proxyPassword the password to authenticate with the proxy
+     * @param nonProxyHosts the hosts that won't be routed through the proxy
+     * @return a RawType object containing the downloaded data, null if the content type does not match the expected
+     *         type or the data size is too big
+     */
+    public static RawType downloadData(String url, String contentTypeRegex, boolean scanTypeInContent,
+            long maxContentLength, int timeout, String proxyHost, Integer proxyPort, String proxyUser,
+            String proxyPassword, String nonProxyHosts) {
         RawType rawData = null;
         try {
-            ContentResponse response = executeUrlAndGetReponse("GET", url, null, null, null, timeout,
-                    proxyParams.proxyHost, proxyParams.proxyPort, proxyParams.proxyUser, proxyParams.proxyPassword,
-                    proxyParams.nonProxyHosts);
+            ContentResponse response = executeUrlAndGetResponse("GET", url, null, null, null, timeout, proxyHost,
+                    proxyPort, proxyUser, proxyPassword, nonProxyHosts);
             byte[] data = response.getContent();
             if (data == null) {
                 data = new byte[0];
@@ -522,7 +576,8 @@ public class HttpUtil {
      * Check whether the content data is a JPEG file checking file start and end bytes.
      * {@link URLConnection#guessContentTypeFromStream(InputStream)} is wrong for some JPEG files.
      *
-     * @see https://en.wikipedia.org/wiki/JPEG#Syntax_and_structure
+     * @see <a href="https://en.wikipedia.org/wiki/JPEG#Syntax_and_structure">JPEG Syntax and structure</a>
+     *
      * @param data the data as buffer of bytes
      * @return <code>true</code> if the content is a JPEG file, <code>false</code> otherwise
      */

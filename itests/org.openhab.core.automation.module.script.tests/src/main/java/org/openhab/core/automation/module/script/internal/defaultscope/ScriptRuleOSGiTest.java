@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,8 +21,9 @@ import java.util.Optional;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 import org.openhab.core.automation.Action;
 import org.openhab.core.automation.Condition;
 import org.openhab.core.automation.Rule;
@@ -33,7 +34,6 @@ import org.openhab.core.automation.RuleStatusInfo;
 import org.openhab.core.automation.Trigger;
 import org.openhab.core.common.registry.ProviderChangeListener;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.items.Item;
@@ -93,16 +93,12 @@ public class ScriptRuleOSGiTest extends JavaOSGiTest {
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
             }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
         };
         registerService(eventSubscriber);
     }
 
-    // ignore - wip @Test
+    @Test
+    @Disabled("WIP")
     public void testPredefinedRule() throws ItemNotFoundException {
         EventPublisher eventPublisher = getService(EventPublisher.class);
         ItemRegistry itemRegistry = getService(ItemRegistry.class);
@@ -125,9 +121,8 @@ public class ScriptRuleOSGiTest extends JavaOSGiTest {
                 .findFirst();
         assertThat(trigger.isPresent(), is(true));
         assertThat(trigger.get().getTypeUID(), is("core.GenericEventTrigger"));
-        assertThat(trigger.get().getConfiguration().get("eventSource"), is("MyTrigger"));
-        assertThat(trigger.get().getConfiguration().get("eventTopic"), is("openhab/items/MyTrigger/state"));
-        assertThat(trigger.get().getConfiguration().get("eventTypes"), is("ItemStateEvent"));
+        assertThat(trigger.get().getConfiguration().get("topic"), is("openhab/items/MyTrigger/state"));
+        assertThat(trigger.get().getConfiguration().get("types"), is("ItemStateEvent"));
         Optional<? extends Condition> condition1 = rule.getConditions().stream()
                 .filter(c -> "condition".equals(c.getId())).findFirst();
         assertThat(condition1.isPresent(), is(true));

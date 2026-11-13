@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,7 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests for {@link ConfigDescriptionParameterGroupBuilder) class.
+ * Tests for {@link ConfigDescriptionParameterGroupBuilder} class.
  *
  * @author Christoph Weitkamp - Initial contribution
  */

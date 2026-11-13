@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,14 +15,14 @@ package org.openhab.core.io.transport.mqtt;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * Implement this to be notified of the success or error of a any method in {@link MqttBrokerConnection} that takes a
+ * Implement this to be notified of the success or error of any method in {@link MqttBrokerConnection} that takes a
  * callback.
  *
  * @author David Graeff - Initial contribution
  */
 @NonNullByDefault
 public interface MqttActionCallback {
-    public void onSuccess(String topic);
+    void onSuccess(String topic);
 
-    public void onFailure(String topic, Throwable error);
+    void onFailure(String topic, Throwable error);
 }

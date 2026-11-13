@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,12 +13,14 @@
 package org.openhab.core.items;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.util.Arrays;
+import java.time.Instant;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Locale;
 
@@ -26,8 +28,9 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.openhab.core.events.EventPublisher;
-import org.openhab.core.i18n.UnitProvider;
+import org.openhab.core.items.events.ItemEvent;
 import org.openhab.core.items.events.ItemStateChangedEvent;
+import org.openhab.core.items.events.ItemStateUpdatedEvent;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.RawType;
@@ -39,6 +42,7 @@ import org.openhab.core.types.CommandOption;
 import org.openhab.core.types.State;
 import org.openhab.core.types.StateDescriptionFragmentBuilder;
 import org.openhab.core.types.StateOption;
+import org.openhab.core.types.UnDefType;
 
 /**
  * The GenericItemTest tests functionality of the GenericItem.
@@ -52,49 +56,82 @@ public class GenericItemTest {
 
     @Test
     public void testItemPostsEventsCorrectly() {
+        ZonedDateTime lastStateUpdate;
+        ZonedDateTime lastStateChange;
         EventPublisher publisher = mock(EventPublisher.class);
 
         TestItem item = new TestItem("member1");
         item.setEventPublisher(publisher);
         State oldState = item.getState();
 
-        // State changes -> one change event is fired
+        // State changes -> one update and one change event is fired
         item.setState(new RawType(new byte[0], RawType.DEFAULT_MIME_TYPE));
 
-        ArgumentCaptor<ItemStateChangedEvent> captor = ArgumentCaptor.forClass(ItemStateChangedEvent.class);
+        ArgumentCaptor<ItemEvent> captor = ArgumentCaptor.forClass(ItemEvent.class);
 
-        verify(publisher, times(1)).post(captor.capture());
+        verify(publisher, times(2)).post(captor.capture());
 
-        ItemStateChangedEvent change = captor.getValue();
+        List<ItemEvent> events = captor.getAllValues();
+        assertEquals(2, events.size());
 
+        // first event should be updated event
+        assertInstanceOf(ItemStateUpdatedEvent.class, events.getFirst());
+        ItemStateUpdatedEvent updated = (ItemStateUpdatedEvent) events.getFirst();
+        assertEquals(item.getName(), updated.getItemName());
+        assertEquals("openhab/items/member1/stateupdated", updated.getTopic());
+        assertEquals(item.getState(), updated.getItemState());
+        assertEquals(null, updated.getLastStateUpdate()); // this is the first update, so there is no previous update
+        assertEquals(ItemStateUpdatedEvent.TYPE, updated.getType());
+
+        // second event should be changed event
+        assertInstanceOf(ItemStateChangedEvent.class, events.get(1));
+        ItemStateChangedEvent change = (ItemStateChangedEvent) events.get(1);
         assertEquals(item.getName(), change.getItemName());
         assertEquals("openhab/items/member1/statechanged", change.getTopic());
         assertEquals(oldState, change.getOldItemState());
         assertEquals(item.getState(), change.getItemState());
+        assertEquals(null, change.getLastStateChange()); // this is the first change, so there is no previous change
         assertEquals(ItemStateChangedEvent.TYPE, change.getType());
 
-        // State doesn't change -> no event is fired
+        // reset invocations and captor
+        clearInvocations(publisher);
+        captor = ArgumentCaptor.forClass(ItemEvent.class);
+
+        lastStateChange = item.getLastStateChange();
+        lastStateUpdate = item.getLastStateUpdate();
+
+        // State doesn't change -> only update event is fired
         item.setState(item.getState());
-        verifyNoMoreInteractions(publisher);
-    }
+        verify(publisher).post(captor.capture());
 
-    @Test
-    public void testAddGroupNameWithNull() {
-        TestItem item = new TestItem("member1");
-        assertThrows(IllegalArgumentException.class, () -> item.addGroupName(toNull()));
-    }
+        events = captor.getAllValues();
+        assertEquals(1, events.size()); // two before and one additional
 
-    @Test
-    public void testAddGroupNamesWithNull() {
-        TestItem item = new TestItem("member1");
-        assertThrows(IllegalArgumentException.class,
-                () -> item.addGroupNames(Arrays.asList("group-a", toNull(), "group-b")));
-    }
+        // event should be updated event
+        assertInstanceOf(ItemStateUpdatedEvent.class, events.getFirst());
+        updated = (ItemStateUpdatedEvent) events.getFirst();
+        assertEquals(item.getName(), updated.getItemName());
+        assertEquals("openhab/items/member1/stateupdated", updated.getTopic());
+        assertEquals(item.getState(), updated.getItemState());
+        assertEquals(lastStateUpdate, updated.getLastStateUpdate());
+        assertEquals(ItemStateUpdatedEvent.TYPE, updated.getType());
 
-    @Test
-    public void testRemoveGroupNameWithNull() {
-        TestItem item = new TestItem("member1");
-        assertThrows(IllegalArgumentException.class, () -> item.removeGroupName(toNull()));
+        // State changes -> the ItemStateChangedEvent should include the lastStateChange
+        clearInvocations(publisher);
+        captor = ArgumentCaptor.forClass(ItemEvent.class);
+
+        lastStateUpdate = item.getLastStateUpdate();
+
+        // New State
+        item.setState(new RawType(new byte[1], RawType.DEFAULT_MIME_TYPE));
+        verify(publisher, times(2)).post(captor.capture());
+
+        events = captor.getAllValues();
+        assertEquals(2, events.size());
+        assertInstanceOf(ItemStateChangedEvent.class, events.get(1));
+        change = (ItemStateChangedEvent) events.get(1);
+        assertEquals(lastStateUpdate, change.getLastStateUpdate());
+        assertEquals(lastStateChange, change.getLastStateChange());
     }
 
     @Test
@@ -126,12 +163,52 @@ public class GenericItemTest {
     }
 
     @Test
+    public void testGetLastStateUpdate() {
+        TestItem item = new TestItem("member1");
+        assertNull(item.getLastStateUpdate());
+        item.setState(PercentType.HUNDRED);
+        assertThat(item.getLastStateUpdate().toInstant().toEpochMilli() * 1.0,
+                is(closeTo(Instant.now().toEpochMilli(), 5)));
+    }
+
+    @Test
+    public void testGetLastStateChange() throws InterruptedException {
+        TestItem item = new TestItem("member1");
+        assertNull(item.getLastStateChange());
+        item.setState(PercentType.HUNDRED);
+        Instant initialChangeTime = Instant.now();
+        assertThat(item.getLastStateChange().toInstant().toEpochMilli() * 1.0,
+                is(closeTo(initialChangeTime.toEpochMilli(), 5)));
+
+        Thread.sleep(50);
+        item.setState(PercentType.HUNDRED);
+        assertThat(item.getLastStateChange().toInstant().toEpochMilli() * 1.0,
+                is(closeTo(initialChangeTime.toEpochMilli(), 5)));
+
+        Thread.sleep(50);
+        Instant secondChangeTime = Instant.now();
+        item.setState(PercentType.ZERO);
+        assertThat(item.getLastStateChange().toInstant().toEpochMilli() * 1.0,
+                is(closeTo(secondChangeTime.toEpochMilli(), 5)));
+    }
+
+    @Test
+    public void testGetLastState() {
+        TestItem item = new TestItem("member1");
+        assertEquals(UnDefType.NULL, item.getState());
+        assertNull(item.getLastState());
+        item.setState(PercentType.HUNDRED);
+        assertEquals(UnDefType.NULL, item.getLastState());
+        item.setState(PercentType.ZERO);
+        assertEquals(PercentType.HUNDRED, item.getLastState());
+    }
+
+    @Test
     public void testDispose() {
         TestItem item = new TestItem("test");
         item.setEventPublisher(mock(EventPublisher.class));
         item.setItemStateConverter(mock(ItemStateConverter.class));
         item.setStateDescriptionService(null);
-        item.setUnitProvider(mock(UnitProvider.class));
 
         item.addStateChangeListener(mock(StateChangeListener.class));
 
@@ -141,7 +218,6 @@ public class GenericItemTest {
         assertNull(item.itemStateConverter);
         // can not be tested as stateDescriptionProviders is private in GenericItem
         // assertThat(item.stateDescriptionProviders, is(nullValue()));
-        assertNull(item.unitProvider);
         assertEquals(0, item.listeners.size());
     }
 

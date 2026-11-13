@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -20,6 +20,13 @@ import java.util.Properties;
 
 import org.eclipse.jetty.http.HttpMethod;
 import org.openhab.core.io.net.http.HttpUtil;
+import org.openhab.core.items.Item;
+import org.openhab.core.items.ItemNotFoundException;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.library.types.RawType;
+import org.openhab.core.model.script.ScriptServiceUtil;
+import org.openhab.core.model.script.engine.action.ActionDoc;
+import org.openhab.core.model.script.engine.action.ParamDoc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,6 +36,8 @@ import org.slf4j.LoggerFactory;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Jan N. Klug - add timeout methods
+ * @author Dan Cunningham - add image download methods
+ * @author Jimmy Tanagra - add PATCH request methods and DRY refactoring
  */
 public class HTTP {
 
@@ -37,13 +46,15 @@ public class HTTP {
 
     private static Logger logger = LoggerFactory.getLogger(HTTP.class);
 
+    // --- GET Methods ---
+
     /**
      * Send out a GET-HTTP request. Errors will be logged, success returns response
      *
      * @param url the URL to be used for the GET request.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpGetRequest(String url) {
+    public static String sendHttpGetRequest(String url) {
         return sendHttpGetRequest(url, 5000);
     }
 
@@ -54,14 +65,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpGetRequest(String url, int timeout) {
-        String response = null;
-        try {
-            return HttpUtil.executeUrl(HttpMethod.GET.name(), url, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpGetRequest(String url, int timeout) {
+        return executeRequest(HttpMethod.GET.name(), url, timeout);
     }
 
     /**
@@ -73,15 +78,10 @@ public class HTTP {
      * @return the response body or <code>NULL</code> when the request went wrong
      */
     public static String sendHttpGetRequest(String url, Map<String, String> headers, int timeout) {
-        try {
-            Properties headerProperties = new Properties();
-            headerProperties.putAll(headers);
-            return HttpUtil.executeUrl(HttpMethod.GET.name(), url, headerProperties, null, null, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return null;
+        return executeRequest(HttpMethod.GET.name(), url, headers, timeout);
     }
+
+    // --- PUT Methods ---
 
     /**
      * Send out a PUT-HTTP request. Errors will be logged, returned values just ignored.
@@ -89,7 +89,7 @@ public class HTTP {
      * @param url the URL to be used for the PUT request.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPutRequest(String url) {
+    public static String sendHttpPutRequest(String url) {
         return sendHttpPutRequest(url, 1000);
     }
 
@@ -100,14 +100,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPutRequest(String url, int timeout) {
-        String response = null;
-        try {
-            response = HttpUtil.executeUrl(HttpMethod.PUT.name(), url, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpPutRequest(String url, int timeout) {
+        return executeRequest(HttpMethod.PUT.name(), url, timeout);
     }
 
     /**
@@ -119,7 +113,7 @@ public class HTTP {
      *            send.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPutRequest(String url, String contentType, String content) {
+    public static String sendHttpPutRequest(String url, String contentType, String content) {
         return sendHttpPutRequest(url, contentType, content, 1000);
     }
 
@@ -133,15 +127,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPutRequest(String url, String contentType, String content, int timeout) {
-        String response = null;
-        try {
-            response = HttpUtil.executeUrl(HttpMethod.PUT.name(), url,
-                    new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), contentType, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpPutRequest(String url, String contentType, String content, int timeout) {
+        return executeRequest(HttpMethod.PUT.name(), url, contentType, content, timeout);
     }
 
     /**
@@ -155,18 +142,12 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPutRequest(String url, String contentType, String content, Map<String, String> headers,
+    public static String sendHttpPutRequest(String url, String contentType, String content, Map<String, String> headers,
             int timeout) {
-        try {
-            Properties headerProperties = new Properties();
-            headerProperties.putAll(headers);
-            return HttpUtil.executeUrl(HttpMethod.PUT.name(), url, headerProperties,
-                    new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), contentType, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return null;
+        return executeRequest(HttpMethod.PUT.name(), url, contentType, content, headers, timeout);
     }
+
+    // --- POST Methods ---
 
     /**
      * Send out a POST-HTTP request. Errors will be logged, returned values just ignored.
@@ -174,7 +155,7 @@ public class HTTP {
      * @param url the URL to be used for the POST request.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPostRequest(String url) {
+    public static String sendHttpPostRequest(String url) {
         return sendHttpPostRequest(url, 1000);
     }
 
@@ -185,14 +166,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPostRequest(String url, int timeout) {
-        String response = null;
-        try {
-            response = HttpUtil.executeUrl(HttpMethod.POST.name(), url, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpPostRequest(String url, int timeout) {
+        return executeRequest(HttpMethod.POST.name(), url, timeout);
     }
 
     /**
@@ -204,7 +179,7 @@ public class HTTP {
      *            send.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPostRequest(String url, String contentType, String content) {
+    public static String sendHttpPostRequest(String url, String contentType, String content) {
         return sendHttpPostRequest(url, contentType, content, 1000);
     }
 
@@ -218,15 +193,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpPostRequest(String url, String contentType, String content, int timeout) {
-        String response = null;
-        try {
-            response = HttpUtil.executeUrl(HttpMethod.POST.name(), url,
-                    new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), contentType, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpPostRequest(String url, String contentType, String content, int timeout) {
+        return executeRequest(HttpMethod.POST.name(), url, contentType, content, timeout);
     }
 
     /**
@@ -242,16 +210,76 @@ public class HTTP {
      */
     public static String sendHttpPostRequest(String url, String contentType, String content,
             Map<String, String> headers, int timeout) {
-        try {
-            Properties headerProperties = new Properties();
-            headerProperties.putAll(headers);
-            return HttpUtil.executeUrl(HttpMethod.POST.name(), url, headerProperties,
-                    new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), contentType, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return null;
+        return executeRequest(HttpMethod.POST.name(), url, contentType, content, headers, timeout);
     }
+
+    // --- PATCH Methods ---
+
+    /**
+     * Send out a PATCH-HTTP request. Errors will be logged, returned values just ignored.
+     *
+     * @param url the URL to be used for the PATCH request.
+     * @return the response body or <code>NULL</code> when the request went wrong
+     */
+    public static String sendHttpPatchRequest(String url) {
+        return sendHttpPatchRequest(url, 1000);
+    }
+
+    /**
+     * Send out a PATCH-HTTP request. Errors will be logged, returned values just ignored.
+     *
+     * @param url the URL to be used for the PATCH request.
+     * @param timeout timeout in ms
+     * @return the response body or <code>NULL</code> when the request went wrong
+     */
+    public static String sendHttpPatchRequest(String url, int timeout) {
+        return executeRequest(HttpMethod.PATCH.name(), url, timeout);
+    }
+
+    /**
+     * Send out a PATCH-HTTP request. Errors will be logged, returned values just ignored.
+     *
+     * @param url the URL to be used for the PATCH request.
+     * @param contentType the content type of the given <code>content</code>
+     * @param content the content to be send to the given <code>url</code> or <code>null</code> if no content should be
+     *            sent.
+     * @return the response body or <code>NULL</code> when the request went wrong
+     */
+    public static String sendHttpPatchRequest(String url, String contentType, String content) {
+        return sendHttpPatchRequest(url, contentType, content, 1000);
+    }
+
+    /**
+     * Send out a PATCH-HTTP request. Errors will be logged, returned values just ignored.
+     *
+     * @param url the URL to be used for the PATCH request.
+     * @param contentType the content type of the given <code>content</code>
+     * @param content the content to be send to the given <code>url</code> or <code>null</code> if no content should be
+     *            sent.
+     * @param timeout timeout in ms
+     * @return the response body or <code>NULL</code> when the request went wrong
+     */
+    public static String sendHttpPatchRequest(String url, String contentType, String content, int timeout) {
+        return executeRequest(HttpMethod.PATCH.name(), url, contentType, content, timeout);
+    }
+
+    /**
+     * Send out a PATCH-HTTP request. Errors will be logged, returned values just ignored.
+     *
+     * @param url the URL to be used for the PATCH request.
+     * @param contentType the content type of the given <code>content</code>
+     * @param content the content to be send to the given <code>url</code> or <code>null</code> if no content should be
+     *            sent.
+     * @param headers the HTTP headers to be sent in the request.
+     * @param timeout timeout in ms
+     * @return the response body or <code>NULL</code> when the request went wrong
+     */
+    public static String sendHttpPatchRequest(String url, String contentType, String content,
+            Map<String, String> headers, int timeout) {
+        return executeRequest(HttpMethod.PATCH.name(), url, contentType, content, headers, timeout);
+    }
+
+    // --- DELETE Methods ---
 
     /**
      * Send out a DELETE-HTTP request. Errors will be logged, returned values just ignored.
@@ -259,7 +287,7 @@ public class HTTP {
      * @param url the URL to be used for the DELETE request.
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpDeleteRequest(String url) {
+    public static String sendHttpDeleteRequest(String url) {
         return sendHttpDeleteRequest(url, 1000);
     }
 
@@ -270,14 +298,8 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpDeleteRequest(String url, int timeout) {
-        String response = null;
-        try {
-            response = HttpUtil.executeUrl(HttpMethod.DELETE.name(), url, timeout);
-        } catch (IOException e) {
-            logger.error("Fatal transport error: {}", e.getMessage());
-        }
-        return response;
+    public static String sendHttpDeleteRequest(String url, int timeout) {
+        return executeRequest(HttpMethod.DELETE.name(), url, timeout);
     }
 
     /**
@@ -288,11 +310,104 @@ public class HTTP {
      * @param timeout timeout in ms
      * @return the response body or <code>NULL</code> when the request went wrong
      */
-    static public String sendHttpDeleteRequest(String url, Map<String, String> headers, int timeout) {
+    public static String sendHttpDeleteRequest(String url, Map<String, String> headers, int timeout) {
+        return executeRequest(HttpMethod.DELETE.name(), url, headers, timeout);
+    }
+
+    // --- Image Download Methods ---
+
+    @ActionDoc(text = "downloads an image from a url and updates the Image item's state with it", returns = "true if successful, false otherwise")
+    public static boolean setImage(
+            @ParamDoc(name = "itemName", text = "the name of the target Image Item") String itemName,
+            @ParamDoc(name = "url", text = "the URL of the image") String url) {
+        return setImage(itemName, HttpUtil.downloadImage(url));
+    }
+
+    @ActionDoc(text = "downloads an image from a url and updates the Image item's state with it", returns = "true if successful, false otherwise")
+    public static boolean setImage(
+            @ParamDoc(name = "itemName", text = "the name of the target Image Item") String itemName,
+            @ParamDoc(name = "url", text = "the URL of the image") String url,
+            @ParamDoc(name = "timeout", text = "timeout in milliseconds") int timeout) {
+        return setImage(itemName, HttpUtil.downloadImage(url, timeout));
+    }
+
+    @ActionDoc(text = "downloads an image from a url and updates the Image item's state with it", returns = "true if successful, false otherwise")
+    public static boolean setImage(
+            @ParamDoc(name = "itemName", text = "the name of the target Image Item") String itemName,
+            @ParamDoc(name = "url", text = "the URL of the image") String url,
+            @ParamDoc(name = "maxContentLength", text = "maximum data size in bytes, negative to ignore") long maxContentLength,
+            @ParamDoc(name = "timeout", text = "timeout in milliseconds") int timeout) {
+        return setImage(itemName, HttpUtil.downloadImage(url, true, maxContentLength, timeout));
+    }
+
+    private static boolean setImage(String itemName, RawType raw) {
+        if (raw == null) {
+            logger.error("Image download failed for item '{}'", itemName);
+            return false;
+        }
+        ItemRegistry registry = ScriptServiceUtil.getItemRegistry();
+        if (registry == null) {
+            logger.error("Item registry is not available.");
+            return false;
+        }
+        try {
+            Item item = registry.getItem(itemName);
+            BusEvent.postUpdate(item, raw);
+            return true;
+        } catch (ItemNotFoundException e) {
+            logger.error("Item '{}' does not exist.", itemName);
+            return false;
+        } catch (IllegalArgumentException e) {
+            logger.error("Cannot update item '{}' with image: {}", itemName, e.getMessage());
+            return false;
+        }
+    }
+
+    private static String executeRequest(String method, String url, int timeout) {
+        try {
+            return HttpUtil.executeUrl(method, url, timeout);
+        } catch (IOException e) {
+            logger.error("Fatal transport error: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static String executeRequest(String method, String url, Map<String, String> headers, int timeout) {
         try {
             Properties headerProperties = new Properties();
-            headerProperties.putAll(headers);
-            return HttpUtil.executeUrl(HttpMethod.DELETE.name(), url, headerProperties, null, null, timeout);
+            if (headers != null) {
+                headerProperties.putAll(headers);
+            }
+            return HttpUtil.executeUrl(method, url, headerProperties, null, null, timeout);
+        } catch (IOException e) {
+            logger.error("Fatal transport error: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static String executeRequest(String method, String url, String contentType, String content, int timeout) {
+        try {
+            ByteArrayInputStream contentStream = content != null
+                    ? new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))
+                    : null;
+            return HttpUtil.executeUrl(method, url, contentStream, contentType, timeout);
+        } catch (IOException e) {
+            logger.error("Fatal transport error: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private static String executeRequest(String method, String url, String contentType, String content,
+            Map<String, String> headers, int timeout) {
+        try {
+            Properties headerProperties = new Properties();
+            if (headers != null) {
+                headerProperties.putAll(headers);
+            }
+            ByteArrayInputStream contentStream = content != null
+                    ? new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))
+                    : null;
+            return HttpUtil.executeUrl(method, url, headerProperties, contentStream, contentType, timeout);
         } catch (IOException e) {
             logger.error("Fatal transport error: {}", e.getMessage());
         }

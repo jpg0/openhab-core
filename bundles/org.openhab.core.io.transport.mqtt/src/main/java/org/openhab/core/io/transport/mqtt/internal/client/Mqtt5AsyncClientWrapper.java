@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,10 +14,12 @@ package org.openhab.core.io.transport.mqtt.internal.client;
 
 import java.util.concurrent.CompletableFuture;
 
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.TrustManagerFactory;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.io.transport.mqtt.MqttBrokerConnection;
 import org.openhab.core.io.transport.mqtt.MqttBrokerConnection.ConnectionCallback;
 import org.openhab.core.io.transport.mqtt.MqttBrokerConnection.Protocol;
 import org.openhab.core.io.transport.mqtt.MqttWillAndTestament;
@@ -39,27 +41,36 @@ import com.hivemq.client.mqtt.mqtt5.message.unsubscribe.Mqtt5Unsubscribe;
  *
  * @author Jan N. Klug - Initial contribution
  * @author Mark Herwege - Added flag for hostname validation
+ * @author Mark Herwege - Added parameter for cleanStart
+ * @author Mark Herwege - Added parameter for WebSocket path
  */
 @NonNullByDefault
 public class Mqtt5AsyncClientWrapper extends MqttAsyncClientWrapper {
     private final Mqtt5AsyncClient client;
 
-    public Mqtt5AsyncClientWrapper(String host, int port, String clientId, Protocol protocol, boolean secure,
-            boolean hostnameValidated, ConnectionCallback connectionCallback,
-            @Nullable TrustManagerFactory trustManagerFactory) {
+    public Mqtt5AsyncClientWrapper(String host, int port, String clientId, Protocol protocol, String webSocketPath,
+            String webSocketSubprotocol, boolean secure, boolean hostnameValidated,
+            ConnectionCallback connectionCallback, @Nullable TrustManagerFactory trustManagerFactory,
+            @Nullable KeyManagerFactory keyManagerFactory) {
         Mqtt5ClientBuilder clientBuilder = Mqtt5Client.builder().serverHost(host).serverPort(port).identifier(clientId)
                 .addConnectedListener(connectionCallback).addDisconnectedListener(connectionCallback);
 
         if (protocol == Protocol.WEBSOCKETS) {
-            clientBuilder.webSocketWithDefaultConfig();
+            if (webSocketPath.isEmpty()
+                    && MqttBrokerConnection.DEFAULT_WEBSOCKET_SUBPROTOCOL.equals(webSocketSubprotocol)) {
+                clientBuilder.webSocketWithDefaultConfig();
+            } else {
+                clientBuilder.webSocketConfig().serverPath(webSocketPath).subprotocol(webSocketSubprotocol)
+                        .applyWebSocketConfig();
+            }
         }
         if (secure) {
             if (hostnameValidated) {
                 clientBuilder.sslWithDefaultConfig().sslConfig().trustManagerFactory(trustManagerFactory)
-                        .applySslConfig();
+                        .keyManagerFactory(keyManagerFactory).applySslConfig();
             } else {
                 clientBuilder.sslWithDefaultConfig().sslConfig().trustManagerFactory(trustManagerFactory)
-                        .hostnameVerifier(this).applySslConfig();
+                        .keyManagerFactory(keyManagerFactory).hostnameVerifier(this).applySslConfig();
             }
         }
 
@@ -93,12 +104,15 @@ public class Mqtt5AsyncClientWrapper extends MqttAsyncClientWrapper {
 
     @Override
     public CompletableFuture<?> connect(@Nullable MqttWillAndTestament lwt, int keepAliveInterval,
-            @Nullable String username, @Nullable String password) {
+            @Nullable String username, @Nullable String password, @Nullable Boolean cleanStart) {
         Mqtt5ConnectBuilder connectMessageBuilder = Mqtt5Connect.builder().keepAlive(keepAliveInterval);
         if (lwt != null) {
             Mqtt5Publish willPublish = Mqtt5Publish.builder().topic(lwt.getTopic()).payload(lwt.getPayload())
                     .retain(lwt.isRetain()).qos(getMqttQosFromInt(lwt.getQos())).build();
             connectMessageBuilder.willPublish(willPublish);
+        }
+        if (cleanStart != null) {
+            connectMessageBuilder.cleanStart(cleanStart);
         }
 
         if (username != null && !username.isBlank() && password != null && !password.isBlank()) {

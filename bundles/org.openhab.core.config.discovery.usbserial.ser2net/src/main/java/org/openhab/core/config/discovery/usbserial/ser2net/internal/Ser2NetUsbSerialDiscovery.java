@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -73,8 +73,9 @@ public class Ser2NetUsbSerialDiscovery implements ServiceListener, UsbSerialDisc
     private final Set<UsbSerialDiscoveryListener> discoveryListeners = new CopyOnWriteArraySet<>();
     private final MDNSClient mdnsClient;
 
-    private boolean notifyListeners = false;
+    private volatile boolean notifyListeners = false;
 
+    // All access must be guarded by "this"
     private Set<UsbSerialDeviceInformation> lastScanResult = new HashSet<>();
 
     @Activate
@@ -85,6 +86,13 @@ public class Ser2NetUsbSerialDiscovery implements ServiceListener, UsbSerialDisc
     @Override
     public void registerDiscoveryListener(UsbSerialDiscoveryListener listener) {
         discoveryListeners.add(listener);
+        Set<UsbSerialDeviceInformation> lastScanResult;
+        synchronized (this) {
+            lastScanResult = Set.copyOf(this.lastScanResult);
+        }
+        for (UsbSerialDeviceInformation deviceInfo : lastScanResult) {
+            listener.usbSerialDeviceDiscovered(deviceInfo);
+        }
     }
 
     @Override
@@ -107,24 +115,28 @@ public class Ser2NetUsbSerialDiscovery implements ServiceListener, UsbSerialDisc
     }
 
     @Override
-    public synchronized void doSingleScan() {
+    public void doSingleScan() {
         logger.debug("Starting ser2net USB-Serial mDNS single discovery scan");
 
         Set<UsbSerialDeviceInformation> scanResult = Stream.of(mdnsClient.list(SERVICE_TYPE, SINGLE_SCAN_DURATION))
                 .map(this::createUsbSerialDeviceInformation) //
-                .filter(Optional::isPresent) //
-                .map(Optional::get) //
+                .flatMap(Optional::stream) //
                 .collect(Collectors.toSet());
 
-        Set<UsbSerialDeviceInformation> added = setDifference(scanResult, lastScanResult);
-        Set<UsbSerialDeviceInformation> removed = setDifference(lastScanResult, scanResult);
-        Set<UsbSerialDeviceInformation> unchanged = setDifference(scanResult, added);
+        Set<UsbSerialDeviceInformation> added;
+        Set<UsbSerialDeviceInformation> removed;
+        Set<UsbSerialDeviceInformation> unchanged;
+        synchronized (this) {
+            added = setDifference(scanResult, lastScanResult);
+            removed = setDifference(lastScanResult, scanResult);
+            unchanged = setDifference(scanResult, added);
 
-        lastScanResult = scanResult;
+            lastScanResult = scanResult;
+        }
 
-        removed.stream().forEach(this::announceRemovedDevice);
-        added.stream().forEach(this::announceAddedDevice);
-        unchanged.stream().forEach(this::announceAddedDevice);
+        removed.forEach(this::announceRemovedDevice);
+        added.forEach(this::announceAddedDevice);
+        unchanged.forEach(this::announceAddedDevice);
 
         logger.debug("Completed ser2net USB-Serial mDNS single discovery scan");
     }
@@ -149,23 +161,35 @@ public class Ser2NetUsbSerialDiscovery implements ServiceListener, UsbSerialDisc
 
     @Override
     public void serviceAdded(@NonNullByDefault({}) ServiceEvent event) {
-        if (notifyListeners) {
-            Optional<UsbSerialDeviceInformation> deviceInfo = createUsbSerialDeviceInformation(event.getInfo());
-            deviceInfo.ifPresent(this::announceAddedDevice);
-        }
+        // The service isn't resolved yet, so don't try to use it
     }
 
     @Override
     public void serviceRemoved(@NonNullByDefault({}) ServiceEvent event) {
-        if (notifyListeners) {
-            Optional<UsbSerialDeviceInformation> deviceInfo = createUsbSerialDeviceInformation(event.getInfo());
-            deviceInfo.ifPresent(this::announceRemovedDevice);
+        Optional<UsbSerialDeviceInformation> deviceInfo = createUsbSerialDeviceInformation(event.getInfo());
+        if (deviceInfo.isPresent()) {
+            UsbSerialDeviceInformation removed = deviceInfo.get();
+            synchronized (this) {
+                lastScanResult.remove(removed);
+            }
+            if (notifyListeners) {
+                announceRemovedDevice(removed);
+            }
         }
     }
 
     @Override
     public void serviceResolved(@NonNullByDefault({}) ServiceEvent event) {
-        serviceAdded(event);
+        Optional<UsbSerialDeviceInformation> deviceInfo = createUsbSerialDeviceInformation(event.getInfo());
+        if (deviceInfo.isPresent()) {
+            UsbSerialDeviceInformation added = deviceInfo.get();
+            synchronized (this) {
+                lastScanResult.add(added);
+            }
+            if (notifyListeners) {
+                announceAddedDevice(added);
+            }
+        }
     }
 
     private Optional<UsbSerialDeviceInformation> createUsbSerialDeviceInformation(ServiceInfo serviceInfo) {
@@ -195,7 +219,8 @@ public class Ser2NetUsbSerialDiscovery implements ServiceListener, UsbSerialDisc
                     serviceInfo.getPort());
 
             UsbSerialDeviceInformation deviceInfo = new UsbSerialDeviceInformation(vendorId, productId, serialNumber,
-                    manufacturer, product, interfaceNumber, interfaceDescription, serialPortName);
+                    manufacturer, product, interfaceNumber, interfaceDescription, serialPortName).setRemote(true);
+
             logger.debug("Created {} based on {}", deviceInfo, serviceInfo);
             return Optional.of(deviceInfo);
         } catch (NumberFormatException e) {

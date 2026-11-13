@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -23,10 +23,13 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 @NonNullByDefault
 public enum ThingStatusDetail {
     NONE,
+    NOT_YET_READY,
     HANDLER_MISSING_ERROR,
     HANDLER_REGISTERING_ERROR,
     HANDLER_INITIALIZING_ERROR,
     HANDLER_CONFIGURATION_PENDING,
+    /** The Thing is waiting for user authorization before it can connect. */
+    AUTHORIZATION_PENDING,
     CONFIGURATION_PENDING,
     COMMUNICATION_ERROR,
     CONFIGURATION_ERROR,
@@ -66,7 +69,7 @@ public enum ThingStatusDetail {
         public ThingStatusDetail HANDLER_CONFIGURATION_PENDING = ThingStatusDetail.HANDLER_CONFIGURATION_PENDING;
         public ThingStatusDetail HANDLER_INITIALIZING_ERROR = ThingStatusDetail.HANDLER_INITIALIZING_ERROR;
         public ThingStatusDetail BRIDGE_UNINITIALIZED = ThingStatusDetail.BRIDGE_UNINITIALIZED;
-    };
+    }
 
     public static final class OnlineStatus {
         private OnlineStatus() {
@@ -74,7 +77,7 @@ public enum ThingStatusDetail {
 
         public ThingStatusDetail NONE = ThingStatusDetail.NONE;
         public ThingStatusDetail CONFIGURATION_PENDING = ThingStatusDetail.CONFIGURATION_PENDING;
-    };
+    }
 
     public static final class OfflineStatus {
         private OfflineStatus() {
@@ -83,9 +86,10 @@ public enum ThingStatusDetail {
         public ThingStatusDetail NONE = ThingStatusDetail.NONE;
         public ThingStatusDetail COMMUNICATION_ERROR = ThingStatusDetail.COMMUNICATION_ERROR;
         public ThingStatusDetail CONFIGURATION_ERROR = ThingStatusDetail.CONFIGURATION_ERROR;
+        public ThingStatusDetail AUTHORIZATION_PENDING = ThingStatusDetail.AUTHORIZATION_PENDING;
         public ThingStatusDetail BRIDGE_OFFLINE = ThingStatusDetail.BRIDGE_OFFLINE;
         public ThingStatusDetail FIRMWARE_UPDATING = ThingStatusDetail.FIRMWARE_UPDATING;
         public ThingStatusDetail DUTY_CYCLE = ThingStatusDetail.DUTY_CYCLE;
         public ThingStatusDetail GONE = ThingStatusDetail.GONE;
-    };
+    }
 }

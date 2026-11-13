@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,91 +15,520 @@
  */
 package org.openhab.core.model.sitemap.validation
 
-import org.openhab.core.model.sitemap.sitemap.Frame
-import org.openhab.core.model.sitemap.sitemap.LinkableWidget
-import org.openhab.core.model.sitemap.sitemap.Setpoint
-import org.openhab.core.model.sitemap.sitemap.Sitemap
-import org.openhab.core.model.sitemap.sitemap.SitemapPackage
-import org.openhab.core.model.sitemap.sitemap.Widget
-import org.eclipse.xtext.validation.Check
 import java.math.BigDecimal
+import java.util.HashSet
+import org.eclipse.emf.ecore.EAttribute
+import org.eclipse.emf.ecore.EObject
+import org.eclipse.xtext.nodemodel.util.NodeModelUtils
+import org.eclipse.xtext.nodemodel.INode
+import org.eclipse.xtext.validation.Check
+import org.openhab.core.model.sitemap.sitemap.ModelButton
+import org.openhab.core.model.sitemap.sitemap.ModelButtongrid
+import org.openhab.core.model.sitemap.sitemap.ModelChart
+import org.openhab.core.model.sitemap.sitemap.ModelColortemperaturepicker
+import org.openhab.core.model.sitemap.sitemap.ModelFrame
+import org.openhab.core.model.sitemap.sitemap.ModelImage
+import org.openhab.core.model.sitemap.sitemap.ModelInput
+import org.openhab.core.model.sitemap.sitemap.ModelLinkableWidget
+import org.openhab.core.model.sitemap.sitemap.ModelSetpoint
+import org.openhab.core.model.sitemap.sitemap.ModelSitemap
+import org.openhab.core.model.sitemap.sitemap.ModelSlider
+import org.openhab.core.model.sitemap.sitemap.ModelText
+import org.openhab.core.model.sitemap.sitemap.ModelWebview
+import org.openhab.core.model.sitemap.sitemap.ModelVideo
+import org.openhab.core.model.sitemap.sitemap.ModelWidget
+import org.openhab.core.model.sitemap.sitemap.SitemapPackage
+import org.openhab.core.model.sitemap.sitemap.ModelNestedSitemap
+import org.openhab.core.model.sitemap.sitemap.ModelSelection
+import org.openhab.core.model.sitemap.sitemap.ModelDefault
+import org.openhab.core.model.sitemap.sitemap.ModelColorpicker
+import org.openhab.core.model.sitemap.sitemap.ModelSwitch
+import org.openhab.core.model.sitemap.sitemap.ModelCondition
+import org.openhab.core.model.sitemap.valueconverter.SitemapConverters
+import org.openhab.core.items.ItemUtil
 
-//import org.eclipse.xtext.validation.Check
 /**
- * Custom validation rules. 
- * 
+ * Custom validation rules.
+ *
  * see http://www.eclipse.org/Xtext/documentation.html#validation
  */
 class SitemapValidator extends AbstractSitemapValidator {
 
+    val KEYWORDS = #{
+        "item=", "label=", "icon=", "staticIcon=", "labelcolor=", "valuecolor=", "iconcolor=", "visibility=",
+        "url=", "encoding=", "service=", "refresh=", "period=", "legend=", "forceasitem=", "yAxisDecimalPattern=",
+        "interpolation=", "mappings=", "height=", "switchSupport", "releaseOnly", "minValue=", "maxValue=", "step=",
+        "inputHint=", "buttons=", "row=", "column=", "stateless", "click=", "release=", "name="
+    }
+    val ALLOWED_HINTS = #{"text", "number", "date", "time", "datetime"}
+    val ALLOWED_INTERPOLATION = #{"linear", "step"}
+
+    static class Pos {
+        int row
+        int column
+
+        new(int row, int column) {
+            this.row = row
+            this.column = column
+        }
+
+        override equals(Object obj) {
+            if (this === obj) return true
+            if (!(obj instanceof Pos)) return false
+            val other = obj as Pos
+            return row === other.row && column === other.column
+        }
+
+        override hashCode() {
+            return 31 * row + column
+        }
+    }
+
+    def private getWidgetType(ModelWidget w) {
+        val interfaceName = w.class.interfaces.head?.simpleName ?: w.class.simpleName
+        if (interfaceName.startsWith("Model")) interfaceName.substring(5) else interfaceName
+    }
+
     @Check
-    def void checkFramesInFrame(Frame frame) {
-        for (Widget w : frame.children) {
-            if (w instanceof Frame) {
-                error("Frames must not contain other frames",
-                    SitemapPackage.Literals.FRAME.getEStructuralFeature(SitemapPackage.FRAME__CHILDREN));
+    def checkSitemapName(ModelSitemap sitemap) {
+        val name = sitemap.name
+        if (name.contains("-")) {
+            error(buildMsgWithLineNb("Sitemap name must not contain dash", sitemap, null, null),
+                SitemapPackage.Literals.MODEL_SITEMAP.getEStructuralFeature(SitemapPackage.MODEL_SITEMAP__NAME))
+        }
+    }
+    
+    @Check
+    def void checkAtLeastOneWidget(ModelSitemap sitemap) {
+        if (sitemap.children === null || sitemap.children.size === 0) {
+            warning(buildMsgWithLineNb("Sitemap should have at least one widget", sitemap, null, null),
+                SitemapPackage.Literals.MODEL_SITEMAP.getEStructuralFeature(SitemapPackage.MODEL_SITEMAP__CHILDREN))
+        }
+    }
+    
+    @Check
+    def void checkDuplicates(ModelWidget w) {
+        val seen = new HashSet<String>
+        val duplicates = new HashSet<String>
+        val node = NodeModelUtils.getNode(w)
+
+        for (leaf : node.leafNodes) {
+            val text = leaf.text.trim
+            if (KEYWORDS.contains(text) && !seen.add(text)) {
+                duplicates.add(text)
+            }
+        }
+
+        duplicates.forEach[attr |
+            val cleanAttr = attr.replaceAll("=$", "")
+            warning(buildMsgWithLineNb(getWidgetType(w) + " widget, attribute '" + cleanAttr + "' must not appear more than once", w, null, null), null)
+        ]
+    }
+
+    @Check
+    def void checkWidgetHasItem(ModelWidget w) {
+        if (w instanceof ModelFrame || w instanceof ModelText || w instanceof ModelImage || w instanceof ModelVideo || w instanceof ModelWebview || w instanceof ModelButtongrid || w instanceof ModelNestedSitemap) {
+            return
+        }
+        if (w.item === null) {
+            error(buildMsgWithLineNb(getWidgetType(w) + " widget doesn't have item defined", w, null, null),
+                SitemapPackage.Literals.MODEL_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_WIDGET__ITEM))
+        }
+    }
+
+    private def boolean isInvalidItemName(String name) {
+        return !ItemUtil.isValidItemName(name)
+    }
+
+    @Check
+    def checkWidgetItemName(ModelWidget w) {
+        val item = w.item
+        if (item === null) {
+            return
+        }
+        if (isInvalidItemName(item)) {
+            error(buildMsgWithLineNb(getWidgetType(w) + " widget item name must not contain dash and must not start with a number", w, null, null),
+                SitemapPackage.Literals.MODEL_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_WIDGET__ITEM))
+        }
+    }
+    
+    @Check
+    def checkConditionItemName(ModelCondition c) {
+        val item = c.item
+        if (item === null || item.isEmpty) {
+            return
+        }
+        if (isInvalidItemName(item)) {
+            error(buildMsgWithLineNb("Item name must not contain dash and must not start with a number", c, null, null),
+                SitemapPackage.Literals.MODEL_CONDITION.getEStructuralFeature(SitemapPackage.MODEL_CONDITION__ITEM))
+        }
+    }
+
+    @Check
+    def checkConditionAmbiguousSign(ModelCondition c) {
+        val state = c.state
+        if (c.item !== null || c.condition !== null || c.sign !== null || state === null) {
+            return
+        }
+        // a quoted state is a plain string, not an item followed by a sign
+        val node = NodeModelUtils.findNodesForFeature(c, SitemapPackage.Literals.MODEL_CONDITION__STATE).head
+        if (node !== null && (node.text.trim.startsWith("\"") || node.text.trim.startsWith("'"))) {
+            return
+        }
+        if (SitemapConverters.AMBIGUOUS_STATE_PATTERN.matcher(state).matches) {
+            error(buildMsgWithLineNb("Ambiguous condition '" + state + "', write '" + state.replaceFirst("-", " -") +
+                "' or use an explicit operator, e.g. '" + state.replaceFirst("-", " == -") + "'", c, null, null),
+                SitemapPackage.Literals.MODEL_CONDITION.getEStructuralFeature(SitemapPackage.MODEL_CONDITION__STATE))
+        }
+    }
+
+    @Check
+    def void checkWidgetIcon(ModelWidget w) {
+        val className = getWidgetType(w)
+        if (w.icon !== null && w.staticIcon !== null) {
+            warning(buildMsgWithLineNb(className + " widget has icon '" + w.icon + "' and staticIcon '" + w.staticIcon + "' defined at the same time",
+                w, SitemapPackage.Literals.MODEL_WIDGET__ICON, SitemapPackage.Literals.MODEL_WIDGET__STATIC_ICON),
+                SitemapPackage.Literals.MODEL_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_WIDGET__STATIC_ICON))
+        }
+        if (w.iconRules !== null && w.staticIcon !== null) {
+            val iconRulesNode = NodeModelUtils.getNode(w.iconRules)
+            val staticIconNode = NodeModelUtils.findNodesForFeature(w, SitemapPackage.Literals.MODEL_WIDGET__STATIC_ICON).head
+            val iconRules = NodeModelUtils.getTokenText(iconRulesNode)
+            warning(buildMsgWithLineNb(className + " widget has icon rules '" + iconRules + "' and staticIcon '" + w.staticIcon + "' defined at the same time",
+                iconRulesNode, staticIconNode),
+                SitemapPackage.Literals.MODEL_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_WIDGET__STATIC_ICON))
+        }
+    }
+
+    @Check
+    def void checkFramesInFrame(ModelFrame frame) {
+        for (w : frame.children) {
+            if (w instanceof ModelFrame) {
+                warning(buildMsgWithLineNb("Frame widget must not contain other Frames", w, null, null),
+                    SitemapPackage.Literals.MODEL_FRAME.getEStructuralFeature(SitemapPackage.MODEL_FRAME__CHILDREN))
+                return
+            }
+            if (w instanceof ModelButton) {
+                warning(buildMsgWithLineNb("Frame widget should not contain Button, Buttons are only allowed in Buttongrid", w, null, null),
+                    SitemapPackage.Literals.MODEL_FRAME.getEStructuralFeature(SitemapPackage.MODEL_FRAME__CHILDREN))
+                return
+            }
+        }
+    }
+
+    @Check
+    def void checkFramesInWidgetList(ModelSitemap sitemap) {
+        var containsFrames = false
+        var containsOtherWidgets = false
+
+        for (w : sitemap.children) {
+            if (w instanceof ModelButton) {
+                warning(buildMsgWithLineNb("Sitemap should not contain Button, Buttons are only allowed in Buttongrid", w, null, null),
+                    SitemapPackage.Literals.MODEL_SITEMAP.getEStructuralFeature(SitemapPackage.MODEL_SITEMAP__CHILDREN))
                 return;
             }
-        }
-    }
-
-    @Check
-    def void checkFramesInWidgetList(Sitemap sitemap) {
-        var containsFrames = false
-        var containsOtherWidgets = false
-
-        for (Widget w : sitemap.children) {
-            if (w instanceof Frame) {
+            if (w instanceof ModelFrame) {
                 containsFrames = true
             } else {
                 containsOtherWidgets = true
             }
             if (containsFrames && containsOtherWidgets) {
-                error("Sitemap should contain either only frames or none at all",
-                    SitemapPackage.Literals.SITEMAP.getEStructuralFeature(SitemapPackage.SITEMAP__NAME));
+                warning(buildMsgWithLineNb("Sitemap should contain either only Frames or none at all", sitemap, null, null),
+                    SitemapPackage.Literals.MODEL_SITEMAP.getEStructuralFeature(SitemapPackage.MODEL_SITEMAP__CHILDREN))
                 return
             }
         }
     }
 
     @Check
-    def void checkFramesInWidgetList(LinkableWidget widget) {
-        if (widget instanceof Frame) {
-
+    def void checkFramesInWidgetList(ModelLinkableWidget widget) {
+        if (widget instanceof ModelFrame) {
             // we have a dedicated check for frames in place
-            return;
+            return
+        }
+        if (widget instanceof ModelButtongrid) {
+            // we have a dedicated check for Buttongrid in place
+            return
         }
         var containsFrames = false
         var containsOtherWidgets = false
-        for (Widget w : widget.children) {
-            if (w instanceof Frame) {
+        val className = getWidgetType(widget)
+        for (w : widget.children) {
+            if (w instanceof ModelButton) {
+                warning(buildMsgWithLineNb(className + " widget should not contain Button, Buttons are only allowed in Buttongrid", w, null, null),
+                    SitemapPackage.Literals.MODEL_LINKABLE_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_LINKABLE_WIDGET__CHILDREN))
+                return
+            }
+            if (w instanceof ModelFrame) {
                 containsFrames = true
             } else {
                 containsOtherWidgets = true
             }
             if (containsFrames && containsOtherWidgets) {
-                error("Linkable widget should contain either only frames or none at all",
-                    SitemapPackage.Literals.FRAME.getEStructuralFeature(SitemapPackage.LINKABLE_WIDGET__CHILDREN));
+                warning(buildMsgWithLineNb(className + " widget should contain either only frames or none at all", widget, null, null),
+                    SitemapPackage.Literals.MODEL_LINKABLE_WIDGET.getEStructuralFeature(SitemapPackage.MODEL_LINKABLE_WIDGET__CHILDREN))
                 return
             }
         }
     }
 
     @Check
-    def void checkSetpoints(Setpoint sp) {
+    def void checkWidgetsInButtongrid(ModelButtongrid grid) {
+        val noVisibilityRulePositions = new HashSet<Pos>
+        val visibilityRulePositions = new HashSet<Pos>
+        val nb = grid.getButtons !== null ? grid.getButtons.getElements.size : 0
+        if (nb > 0) {
+            if (grid.item === null) {
+                error(buildMsgWithLineNb("To use the buttons parameter in a Buttongrid, the item parameter is required", grid, null, null),
+                    SitemapPackage.Literals.MODEL_BUTTONGRID.getEStructuralFeature(SitemapPackage.MODEL_BUTTONGRID__ITEM))
+                return
+            }
+            for (b : grid.getButtons.getElements) {
+                if (b.row === 0) {
+                    warning(buildMsgWithLineNb("Buttongrid button must have positive row index",
+                        b, SitemapPackage.Literals.MODEL_BUTTON_DEFINITION__ROW, null),
+                        b, SitemapPackage.Literals.MODEL_BUTTON_DEFINITION.getEStructuralFeature(SitemapPackage.MODEL_BUTTON_DEFINITION__ROW))
+                }
+                if (b.column === 0) {
+                    warning(buildMsgWithLineNb("Buttongrid button must have positive column index",
+                        b, SitemapPackage.Literals.MODEL_BUTTON_DEFINITION__COLUMN, null),
+                        b, SitemapPackage.Literals.MODEL_BUTTON_DEFINITION.getEStructuralFeature(SitemapPackage.MODEL_BUTTON_DEFINITION__COLUMN))
+                }
+                val pos = new Pos(b.row, b.column)
+                if (noVisibilityRulePositions.contains(pos) && b.row > 0 && b.column > 0) {
+                    warning(buildMsgWithLineNb("Buttongrid button already exists for position (" + b.row + "," + b.column + ")", b, null, null), b, null)
+                }
+                noVisibilityRulePositions.add(pos)
+            }
+        }
+        for (w : grid.children) {
+            if (w instanceof ModelButton) {
+                if (w.row === 0) {
+                    error(buildMsgWithLineNb("Button widget doesn't have positive row index defined",
+                        w, SitemapPackage.Literals.MODEL_BUTTON__ROW, null),
+                        w, SitemapPackage.Literals.MODEL_BUTTON.getEStructuralFeature(SitemapPackage.MODEL_BUTTON__ROW))
+                }
+                if (w.column === 0) {
+                    error(buildMsgWithLineNb("Button widget doesn't have positive column index defined",
+                        w, SitemapPackage.Literals.MODEL_BUTTON__COLUMN, null),
+                        w, SitemapPackage.Literals.MODEL_BUTTON.getEStructuralFeature(SitemapPackage.MODEL_BUTTON__COLUMN))
+                }
+                val pos = new Pos(w.row, w.column)
+                if (w.row > 0 && w.column > 0) {
+                    if (w.visibility === null || w.visibility.elements === null || w.visibility.elements.isEmpty) {
+                        if (noVisibilityRulePositions.contains(pos)) {
+                            warning(buildMsgWithLineNb("Button widget already exists for position (" + w.row + "," + w.column + ")", w, null, null), w, null)
+                        }
+                        if (visibilityRulePositions.contains(pos)) {
+                            warning(buildMsgWithLineNb("Button widget with and without visibility rule for same position (" + w.row + "," + w.column + ")", w, null, null), w, null)
+                        }
+                        noVisibilityRulePositions.add(pos)
+                    } else {
+                        if (noVisibilityRulePositions.contains(pos)) {
+                            warning(buildMsgWithLineNb("Button widget without and with visibility rule for same position (" + w.row + "," + w.column + ")", w, null, null), w, null)
+                        }
+                        visibilityRulePositions.add(pos)
+                    }
+                }
+                if (w.cmd === null) {
+                    error(buildMsgWithLineNb("Button widget doens't have click command defined", w, null, null),
+                        w, SitemapPackage.Literals.MODEL_BUTTON.getEStructuralFeature(SitemapPackage.MODEL_BUTTON__CMD))
+                }
+                if ((w.confirmCmd == true || w.confirmCmdRules !== null) && w.releaseCmd !== null) {
+                    warning(buildMsgWithLineNb("Button widget has both confirmCmd and release command defined", w, null, null), w, null)
+                }
+                w.confirmCmdRules?.elements?.forEach[ rule |
+                    if (rule.conditions.isEmpty && rule.value === null) {
+                        error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", w, null, null), w, null)
+                    }
+                ]
+            } else {
+                warning(buildMsgWithLineNb("Buttongrid must contain only Buttons", w, null, null),
+                    SitemapPackage.Literals.MODEL_BUTTONGRID.getEStructuralFeature(SitemapPackage.MODEL_BUTTONGRID__CHILDREN))
+                return
+            }
+        }
+    }
+
+    @Check
+    def void checkSetpointParameters(ModelSetpoint sp) {
         if (BigDecimal.ZERO == sp.step) {
-            error("Setpoint on item '" + sp.item + "' has step size of 0",
-                SitemapPackage.Literals.SETPOINT.getEStructuralFeature(SitemapPackage.SETPOINT__STEP));
+            warning(buildMsgWithLineNb("Setpoint widget has step size of '0'",
+                sp, SitemapPackage.Literals.MODEL_SETPOINT__STEP, null),
+                SitemapPackage.Literals.MODEL_SETPOINT.getEStructuralFeature(SitemapPackage.MODEL_SETPOINT__STEP))
         }
-
         if (sp.step !== null && sp.step < BigDecimal.ZERO) {
-            error("Setpoint on item '" + sp.item + "' has negative step size",
-                SitemapPackage.Literals.SETPOINT.getEStructuralFeature(SitemapPackage.SETPOINT__STEP));
+            warning(buildMsgWithLineNb("Setpoint widget has negative step size of '" + sp.step + "'",
+                sp, SitemapPackage.Literals.MODEL_SETPOINT__STEP, null),
+                SitemapPackage.Literals.MODEL_SETPOINT.getEStructuralFeature(SitemapPackage.MODEL_SETPOINT__STEP))
         }
-
         if (sp.minValue !== null && sp.maxValue !== null && sp.minValue > sp.maxValue) {
-            error("Setpoint on item '" + sp.item + "' has larger minValue than maxValue",
-                SitemapPackage.Literals.SETPOINT.getEStructuralFeature(SitemapPackage.SETPOINT__MIN_VALUE));
+            warning(buildMsgWithLineNb("Setpoint widget has larger minValue '" + sp.minValue + "' than maxValue '" + sp.maxValue + "'",
+                sp, SitemapPackage.Literals.MODEL_SETPOINT__MIN_VALUE, SitemapPackage.Literals.MODEL_SETPOINT__MAX_VALUE),
+                SitemapPackage.Literals.MODEL_SETPOINT.getEStructuralFeature(SitemapPackage.MODEL_SETPOINT__MIN_VALUE))
         }
+        sp.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", sp, null, null), sp, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkSliderParameters(ModelSlider s) {
+        if (BigDecimal.ZERO == s.step) {
+            warning(buildMsgWithLineNb("Slider widget has step size of '0'",
+                s, SitemapPackage.Literals.MODEL_SLIDER__STEP, null),
+                SitemapPackage.Literals.MODEL_SLIDER.getEStructuralFeature(SitemapPackage.MODEL_SLIDER__STEP))
+        }
+        if (s.step !== null && s.step < BigDecimal.ZERO) {
+            warning(buildMsgWithLineNb("Slider widget has negative step size of '" + s.step + "'",
+                s, SitemapPackage.Literals.MODEL_SLIDER__STEP, null),
+                SitemapPackage.Literals.MODEL_SLIDER.getEStructuralFeature(SitemapPackage.MODEL_SLIDER__STEP))
+        }
+        if (s.minValue !== null && s.maxValue !== null && s.minValue > s.maxValue) {
+            warning(buildMsgWithLineNb("Slider widget has larger minValue '" + s.minValue + "' than maxValue '" + s.maxValue + "'",
+                s, SitemapPackage.Literals.MODEL_SLIDER__MIN_VALUE, SitemapPackage.Literals.MODEL_SLIDER__MAX_VALUE),
+                SitemapPackage.Literals.MODEL_SLIDER.getEStructuralFeature(SitemapPackage.MODEL_SLIDER__MIN_VALUE))
+        }
+        s.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", s, null, null), s, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkColorpickerParameters(ModelColorpicker c) {
+        c.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", c, null, null), c, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkColortemperaturepickerParameters(ModelColortemperaturepicker ctp) {
+        if (ctp.minValue !== null && ctp.maxValue !== null && ctp.minValue > ctp.maxValue) {
+            warning(buildMsgWithLineNb("Colortemperaturepicker widget has larger minValue '" + ctp.minValue + "' than maxValue '" + ctp.maxValue + "'",
+                ctp, SitemapPackage.Literals.MODEL_COLORTEMPERATUREPICKER__MIN_VALUE, SitemapPackage.Literals.MODEL_COLORTEMPERATUREPICKER__MAX_VALUE),
+                SitemapPackage.Literals.MODEL_COLORTEMPERATUREPICKER.getEStructuralFeature(SitemapPackage.MODEL_COLORTEMPERATUREPICKER__MIN_VALUE))
+        }
+        ctp.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", ctp, null, null), ctp, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkInputParameters(ModelInput i) {
+        if (i.inputHint !== null && !ALLOWED_HINTS.contains(i.inputHint)) {
+            warning(buildMsgWithLineNb("Input widget has invalid inputHint '" + i.inputHint + "'",
+                i, SitemapPackage.Literals.MODEL_INPUT__INPUT_HINT, null),
+                SitemapPackage.Literals.MODEL_INPUT.getEStructuralFeature(SitemapPackage.MODEL_INPUT__INPUT_HINT))
+        }
+        i.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", i, null, null), i, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkSwitchParameters(ModelSwitch s) {
+        s.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", s, null, null), s, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkSelectionParameters(ModelSelection s) {
+        s.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", s, null, null), s, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkDefaultParameters(ModelDefault d) {
+        d.confirmCmdRules?.elements?.forEach[ rule |
+            if (rule.conditions.isEmpty && rule.value === null) {
+                error(buildMsgWithLineNb("confirmCmd rule has neither a condition nor a message", d, null, null), d, null)
+            }
+        ]
+    }
+
+    @Check
+    def void checkChartParameters(ModelChart c) {
+        if (c.period === null) {
+            error(buildMsgWithLineNb("Chart widget doesn't have period defined", c, null, null),
+                SitemapPackage.Literals.MODEL_CHART.getEStructuralFeature(SitemapPackage.MODEL_CHART__PERIOD))
+        }
+        if (c.interpolation !== null && !ALLOWED_INTERPOLATION.contains(c.interpolation)) {
+            warning(buildMsgWithLineNb("Chart widget has invalid interpolation '" + c.interpolation + "'",
+                c, SitemapPackage.Literals.MODEL_CHART__INTERPOLATION, null),
+                SitemapPackage.Literals.MODEL_CHART.getEStructuralFeature(SitemapPackage.MODEL_CHART__INTERPOLATION))
+        }
+    }
+
+    @Check
+    def void checkVideoParameters(ModelVideo v) {
+        if (v.url === null) {
+            error(buildMsgWithLineNb("Video widget doesn't have url defined", v, null, null),
+                SitemapPackage.Literals.MODEL_VIDEO.getEStructuralFeature(SitemapPackage.MODEL_VIDEO__URL))
+        }
+    }
+
+    @Check
+    def void checkWebviewParameters(ModelWebview w) {
+        if (w.url === null) {
+            error(buildMsgWithLineNb("Webview widget doesn't have url defined", w, null, null),
+                SitemapPackage.Literals.MODEL_WEBVIEW.getEStructuralFeature(SitemapPackage.MODEL_WEBVIEW__URL))
+        }
+    }
+
+    @Check
+    def void checkNestedSitemapParameters(ModelNestedSitemap w) {
+        if (w.item === null && w.sitemapName === null) {
+            error(buildMsgWithLineNb("Sitemap widget doesn't have item or name defined", w, SitemapPackage.Literals.MODEL_NESTED_SITEMAP__SITEMAP_NAME, SitemapPackage.Literals.MODEL_WIDGET__ITEM),
+                SitemapPackage.Literals.MODEL_NESTED_SITEMAP.getEStructuralFeature(SitemapPackage.MODEL_NESTED_SITEMAP__SITEMAP_NAME))
+        }
+    }
+
+    def private buildMsgWithLineNb(String msg, EObject object, EAttribute attribute1, EAttribute attribute2) {
+        var INode node1 = null
+        var INode node2 = null
+        if (attribute1 !== null) {
+            node1 = NodeModelUtils.findNodesForFeature(object, attribute1).head
+        }
+        if (attribute2 !== null) {
+            node2 = NodeModelUtils.findNodesForFeature(object, attribute2).head
+        }
+        if (node1 !== null && node2 !== null) {
+            return buildMsgWithLineNb(msg, node1, node2)
+        }
+        if (node1 !== null) {
+            return buildMsgWithLineNb(msg, node1, node1)
+        }
+        if (node2 !== null) {
+            return buildMsgWithLineNb(msg, node2, node2)
+        }
+        val node = NodeModelUtils.getNode(object)
+        return node !== null ? buildMsgWithLineNb(msg, node, node) : msg
+    }
+
+    def private buildMsgWithLineNb(String msg, INode node1, INode node2) {
+        var startLine = node1.startLine
+        var endLine = node2.endLine
+        if (endLine < startLine) {
+            startLine = node2.startLine
+            endLine = node1.endLine
+        }
+        return (startLine == endLine) ? "Line " + startLine + ": " + msg
+            : "Line " + startLine + "-" + endLine + ": " + msg
     }
 }

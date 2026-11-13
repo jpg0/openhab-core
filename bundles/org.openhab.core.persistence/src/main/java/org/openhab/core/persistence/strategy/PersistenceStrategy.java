@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.persistence.strategy;
 
+import java.util.Map;
 import java.util.Objects;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -28,6 +29,12 @@ public class PersistenceStrategy {
         public static final PersistenceStrategy UPDATE = new PersistenceStrategy("everyUpdate");
         public static final PersistenceStrategy CHANGE = new PersistenceStrategy("everyChange");
         public static final PersistenceStrategy RESTORE = new PersistenceStrategy("restoreOnStartup");
+        public static final PersistenceStrategy FORECAST = new PersistenceStrategy("forecast");
+        public static final Map<String, PersistenceStrategy> STRATEGIES = Map.of( //
+                UPDATE.name, UPDATE, //
+                CHANGE.name, CHANGE, //
+                RESTORE.name, RESTORE, //
+                FORECAST.name, FORECAST);
     }
 
     private final String name;
@@ -44,7 +51,7 @@ public class PersistenceStrategy {
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result + ((name == null) ? 0 : name.hashCode());
+        result = prime * result + name.hashCode();
         return result;
     }
 
@@ -56,14 +63,10 @@ public class PersistenceStrategy {
         if (obj == null) {
             return false;
         }
-        if (!(obj instanceof PersistenceStrategy)) {
+        if (!(obj instanceof final PersistenceStrategy other)) {
             return false;
         }
-        final PersistenceStrategy other = (PersistenceStrategy) obj;
-        if (!Objects.equals(name, other.name)) {
-            return false;
-        }
-        return true;
+        return Objects.equals(name, other.name);
     }
 
     @Override

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,7 +19,7 @@ import org.openhab.core.items.Item;
 import org.openhab.core.thing.ChannelUID;
 
 /**
- * {@link ItemChannelLink} defines a link between an {@link Item} and a {@link Channel}.
+ * {@link ItemChannelLink} defines a link between an {@link Item} and a {@link org.openhab.core.thing.Channel}.
  *
  * @author Dennis Nobel - Initial contribution, Added getIDFor method
  * @author Jochen Hiller - Bugfix 455434: added default constructor, object is now mutable
@@ -31,12 +31,14 @@ public class ItemChannelLink extends AbstractLink {
     private final @NonNullByDefault({}) ChannelUID channelUID;
     private final Configuration configuration;
 
+    // this field tracks whether the item's current tags were applied from the linked channel's default tags
+    private transient boolean tagsLinked = false;
+
     /**
      * Default constructor in package scope only. Will allow to instantiate this
      * class by reflection. Not intended to be used for normal instantiation.
      */
     ItemChannelLink() {
-        super();
         this.channelUID = null;
         this.configuration = new Configuration();
     }
@@ -62,8 +64,7 @@ public class ItemChannelLink extends AbstractLink {
 
     @Override
     public boolean equals(@Nullable Object obj) {
-        if (obj instanceof ItemChannelLink) {
-            ItemChannelLink link = (ItemChannelLink) obj;
+        if (obj instanceof ItemChannelLink link) {
             return super.equals(obj) && configuration.equals(link.getConfiguration());
         }
         return false;
@@ -72,5 +73,19 @@ public class ItemChannelLink extends AbstractLink {
     @Override
     public int hashCode() {
         return super.hashCode() * configuration.hashCode();
+    }
+
+    /**
+     * Check if the item's current tags were applied from the linked channel's default tags
+     */
+    public boolean tagsLinked() {
+        return tagsLinked;
+    }
+
+    /**
+     * Set the flag that indicates if the item's current tags were applied from the linked channel's default tags
+     */
+    public void setTagsLinked(boolean value) {
+        tagsLinked = value;
     }
 }

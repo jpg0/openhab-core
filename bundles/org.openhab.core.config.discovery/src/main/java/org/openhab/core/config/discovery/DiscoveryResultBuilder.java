@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,8 +12,6 @@
  */
 package org.openhab.core.config.discovery;
 
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -52,7 +50,7 @@ public class DiscoveryResultBuilder {
 
     private DiscoveryResultBuilder(ThingUID thingUID) {
         this.thingUID = thingUID;
-    };
+    }
 
     /**
      * Creates a new builder for a given thing UID.
@@ -62,6 +60,20 @@ public class DiscoveryResultBuilder {
      */
     public static DiscoveryResultBuilder create(ThingUID thingUID) {
         return new DiscoveryResultBuilder(thingUID);
+    }
+
+    /**
+     * Creates a new builder initialized with the values from the specified {@link DiscoveryResult}.
+     *
+     * @param discoveryResult the {@link DiscoveryResult} to use for initialization.
+     * @return The new {@link DiscoveryResultBuilder}.
+     */
+    public static DiscoveryResultBuilder create(DiscoveryResult discoveryResult) {
+        return new DiscoveryResultBuilder(discoveryResult.getThingUID()).withBridge(discoveryResult.getBridgeUID())
+                .withProperties(discoveryResult.getProperties())
+                .withRepresentationProperty(discoveryResult.getRepresentationProperty())
+                .withLabel(discoveryResult.getLabel()).withTTL(discoveryResult.getTimeToLive())
+                .withThingType(discoveryResult.getThingTypeUID());
     }
 
     /**
@@ -91,7 +103,7 @@ public class DiscoveryResultBuilder {
     /**
      * Adds a property to the desired result.
      *
-     * @param property of the desired result
+     * @param key property of the desired result
      * @return the updated builder
      */
     public DiscoveryResultBuilder withProperty(String key, Object value) {
@@ -117,7 +129,6 @@ public class DiscoveryResultBuilder {
      * @return the updated builder
      */
     public DiscoveryResultBuilder withBridge(@Nullable ThingUID bridgeUID) {
-        validateThingUID(bridgeUID);
         this.bridgeUID = bridgeUID;
         return this;
     }
@@ -166,21 +177,8 @@ public class DiscoveryResultBuilder {
                 ttl);
     }
 
-    private void validateThingUID(@Nullable ThingUID bridgeUID) {
-        if (bridgeUID != null && (!thingUID.getBindingId().equals(bridgeUID.getBindingId())
-                || !thingUID.getBridgeIds().contains(bridgeUID.getId()))) {
-            throw new IllegalArgumentException(
-                    "Thing UID '" + thingUID + "' does not match bridge UID '" + bridgeUID + "'");
-        }
-    }
-
     private String getStackTrace(final Thread thread) {
-        StackTraceElement[] elements = AccessController.doPrivileged(new PrivilegedAction<StackTraceElement[]>() {
-            @Override
-            public StackTraceElement[] run() {
-                return thread.getStackTrace();
-            }
-        });
+        StackTraceElement[] elements = thread.getStackTrace();
         return Arrays.stream(elements).map(element -> "\tat " + element.toString()).collect(Collectors.joining("\n"));
     }
 }

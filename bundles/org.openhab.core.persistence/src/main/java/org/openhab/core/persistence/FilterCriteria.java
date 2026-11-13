@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,8 @@ package org.openhab.core.persistence;
 
 import java.time.ZonedDateTime;
 
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.types.State;
 
 /**
@@ -22,7 +24,7 @@ import org.openhab.core.types.State;
  * <p>
  * It is designed as a Java bean, for which the different properties are constraints on the query result. These
  * properties include the item name, begin and end date and the item state. A compare operator can be defined to compare
- * not only state equality, but also its decimal value (<,>).
+ * not only state equality, but also its decimal value ({@code <,>}).
  *
  * <p>
  * Additionally, the filter criteria supports ordering and paging of the result, so the caller can ask to only return
@@ -33,9 +35,10 @@ import org.openhab.core.types.State;
  * a filter.
  *
  * @author Kai Kreuzer - Initial contribution
- * @author Lyubomir Papazov - Deprecate methods using java.util and add methods
- *         that use Java8's ZonedDateTime
+ * @author Lyubomir Papazov - Deprecate methods using java.util and add methods that use Java8's ZonedDateTime
+ * @author Mark Herwege - Copy constructor
  */
+@NonNullByDefault
 public class FilterCriteria {
 
     /** Enumeration with all possible compare options */
@@ -53,7 +56,7 @@ public class FilterCriteria {
             this.symbol = symbol;
         }
 
-        String getSymbol() {
+        public String getSymbol() {
             return symbol;
         }
     }
@@ -65,13 +68,13 @@ public class FilterCriteria {
     }
 
     /** filter result to only contain entries for the given item */
-    private String itemName;
+    private @Nullable String itemName;
 
-    /** filter result to only contain entries that are newer than the given date */
-    private ZonedDateTime beginDate;
+    /** filter result to only contain entries that are equal to or after the given datetime */
+    private @Nullable ZonedDateTime beginDate;
 
-    /** filter result to only contain entries that are older than the given date */
-    private ZonedDateTime endDate;
+    /** filter result to only contain entries that are equal to or before the given datetime */
+    private @Nullable ZonedDateTime endDate;
 
     /** return the result list from starting index pageNumber*pageSize only */
     private int pageNumber = 0;
@@ -86,17 +89,31 @@ public class FilterCriteria {
     private Ordering ordering = Ordering.DESCENDING;
 
     /** Filter result to only contain entries that evaluate to true with the given operator and state */
-    private State state;
+    private @Nullable State state;
 
-    public String getItemName() {
+    public FilterCriteria() {
+    }
+
+    public FilterCriteria(FilterCriteria filter) {
+        this.itemName = filter.itemName;
+        this.beginDate = filter.beginDate;
+        this.endDate = filter.endDate;
+        this.pageNumber = filter.pageNumber;
+        this.pageSize = filter.pageSize;
+        this.operator = filter.operator;
+        this.ordering = filter.ordering;
+        this.state = filter.state;
+    }
+
+    public @Nullable String getItemName() {
         return itemName;
     }
 
-    public ZonedDateTime getBeginDate() {
+    public @Nullable ZonedDateTime getBeginDate() {
         return beginDate;
     }
 
-    public ZonedDateTime getEndDate() {
+    public @Nullable ZonedDateTime getEndDate() {
         return endDate;
     }
 
@@ -116,7 +133,7 @@ public class FilterCriteria {
         return ordering;
     }
 
-    public State getState() {
+    public @Nullable State getState() {
         return state;
     }
 

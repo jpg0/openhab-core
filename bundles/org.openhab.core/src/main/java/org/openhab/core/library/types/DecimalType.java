@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,9 @@
  */
 package org.openhab.core.library.types;
 
+import java.io.Serial;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
 import java.text.ParsePosition;
@@ -34,6 +36,7 @@ import org.openhab.core.types.State;
 @NonNullByDefault
 public class DecimalType extends Number implements PrimitiveType, State, Command, Comparable<DecimalType> {
 
+    @Serial
     private static final long serialVersionUID = 4226845847123464690L;
     protected static final BigDecimal BIG_DECIMAL_HUNDRED = BigDecimal.valueOf(100);
 
@@ -45,41 +48,30 @@ public class DecimalType extends Number implements PrimitiveType, State, Command
         this(BigDecimal.ZERO);
     }
 
+    /**
+     * Creates a new {@link DecimalType} with the given value.
+     *
+     * @param value a number
+     */
     public DecimalType(Number value) {
-        this(bigDecimal(value));
-    }
-
-    // TODO: Remove these constructors. They are still in place to maintain binary compatibility and will be removed
-    // once another change breaking binary compatibility is merged
-    public DecimalType(BigDecimal value) {
-        this.value = value;
-    }
-
-    public DecimalType(long value) {
-        this(bigDecimal(value));
-    }
-
-    public DecimalType(double value) {
-        this(bigDecimal(value));
-    }
-
-    private static BigDecimal bigDecimal(Number value) {
-        if (value instanceof QuantityType) {
-            return ((QuantityType<?>) value).toBigDecimal();
+        if (value instanceof QuantityType type) {
+            this.value = type.toBigDecimal();
+        } else if (value instanceof DecimalType type) {
+            this.value = type.toBigDecimal();
+        } else if (value instanceof BigDecimal decimal) {
+            this.value = decimal;
+        } else if (value instanceof BigInteger integer) {
+            this.value = new BigDecimal(integer);
+        } else {
+            this.value = new BigDecimal(value.toString());
         }
-
-        if (value instanceof HSBType) {
-            return ((HSBType) value).toBigDecimal();
-        }
-
-        return new BigDecimal(value.toString());
     }
 
     /**
      * Creates a new {@link DecimalType} with the given value.
      * The English locale is used to determine (decimal/grouping) separator characters.
      *
-     * @param value the non null value representing a number
+     * @param value the value representing a number
      * @throws NumberFormatException when the number could not be parsed to a {@link BigDecimal}
      */
     public DecimalType(String value) {
@@ -89,7 +81,7 @@ public class DecimalType extends Number implements PrimitiveType, State, Command
     /**
      * Creates a new {@link DecimalType} with the given value.
      *
-     * @param value the non null value representing a number
+     * @param value the value representing a number
      * @param locale the locale used to determine (decimal/grouping) separator characters
      * @throws NumberFormatException when the number could not be parsed to a {@link BigDecimal}
      */
@@ -97,7 +89,7 @@ public class DecimalType extends Number implements PrimitiveType, State, Command
         DecimalFormat df = (DecimalFormat) NumberFormat.getInstance(locale);
         df.setParseBigDecimal(true);
         ParsePosition position = new ParsePosition(0);
-        BigDecimal parsedValue = (BigDecimal) df.parseObject(value, position);
+        BigDecimal parsedValue = (BigDecimal) df.parseObject(value.toUpperCase(locale), position);
         if (parsedValue == null || position.getErrorIndex() != -1 || position.getIndex() < value.length()) {
             throw new NumberFormatException("Invalid BigDecimal value: " + value);
         }
@@ -202,7 +194,7 @@ public class DecimalType extends Number implements PrimitiveType, State, Command
     @Override
     public <T extends State> @Nullable T as(@Nullable Class<T> target) {
         if (target == OnOffType.class) {
-            return target.cast(equals(ZERO) ? OnOffType.OFF : OnOffType.ON);
+            return target.cast(OnOffType.from(!equals(ZERO)));
         } else if (target == PercentType.class) {
             return target.cast(new PercentType(toBigDecimal().multiply(BIG_DECIMAL_HUNDRED)));
         } else if (target == UpDownType.class) {

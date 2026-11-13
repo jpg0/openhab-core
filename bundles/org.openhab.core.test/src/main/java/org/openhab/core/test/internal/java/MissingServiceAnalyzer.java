@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -91,34 +91,29 @@ public class MissingServiceAnalyzer {
                 .collect(toSet());
         return Stream.of(description.references) //
                 .filter(ref -> unsatisfiedRefNames.contains(ref.name)) //
-                .collect(toList());
+                .toList();
     }
 
     private List<ComponentDescriptionDTO> getComponentDescriptions(ServiceComponentRuntime scr, String interfaceName,
             Bundle[] allBundlesArrays) {
         return scr.getComponentDescriptionDTOs(allBundlesArrays).stream()
                 .filter(description -> Stream.of(description.serviceInterfaces).anyMatch(s -> s.equals(interfaceName)))
-                .collect(toList());
+                .toList();
     }
 
     private Bundle[] getAllBundles() {
         List<Bundle> allBundles = Arrays.stream(bundleContext.getBundles())
-                .filter(b -> b.getHeaders().get(Constants.FRAGMENT_HOST) == null).collect(toList());
+                .filter(b -> b.getHeaders().get(Constants.FRAGMENT_HOST) == null).toList();
         return allBundles.toArray(new Bundle[allBundles.size()]);
     }
 
     private String getState(int state) {
-        switch (state) {
-            case ComponentConfigurationDTO.UNSATISFIED_CONFIGURATION:
-                return "UNSATISFIED_CONFIGURATION";
-            case ComponentConfigurationDTO.UNSATISFIED_REFERENCE:
-                return "UNSATISFIED_REFERENCE";
-            case ComponentConfigurationDTO.SATISFIED:
-                return "SATISFIED";
-            case ComponentConfigurationDTO.ACTIVE:
-                return "ACTIVE";
-            default:
-                return state + "";
-        }
+        return switch (state) {
+            case ComponentConfigurationDTO.UNSATISFIED_CONFIGURATION -> "UNSATISFIED_CONFIGURATION";
+            case ComponentConfigurationDTO.UNSATISFIED_REFERENCE -> "UNSATISFIED_REFERENCE";
+            case ComponentConfigurationDTO.SATISFIED -> "SATISFIED";
+            case ComponentConfigurationDTO.ACTIVE -> "ACTIVE";
+            default -> state + "";
+        };
     }
 }

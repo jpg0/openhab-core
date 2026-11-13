@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,8 +13,10 @@
 package org.openhab.core.automation.rest.internal;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.HeaderParam;
@@ -100,21 +102,43 @@ public class ModuleTypeResource implements RESTResource {
     public Response getAll(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language,
             @QueryParam("tags") @Parameter(description = "tags for filtering") @Nullable String tagList,
-            @QueryParam("type") @Parameter(description = "filtering by action, condition or trigger") @Nullable String type) {
+            @QueryParam("type") @Parameter(description = "filtering by action, condition or trigger") @Nullable String type,
+            @QueryParam("asMap") @Parameter(description = "returns an object of arrays by type instead of a mixed array") @Nullable Boolean asMap) {
         final Locale locale = localeService.getLocale(language);
         final String[] tags = tagList != null ? tagList.split(",") : new String[0];
-        final List<ModuleTypeDTO> modules = new ArrayList<>();
+        Map<String, List<ModuleTypeDTO>> modulesMap = null;
+        List<ModuleTypeDTO> modules = null;
+        if (asMap == null || !asMap.booleanValue()) {
+            modules = new ArrayList<>();
+        } else {
+            modulesMap = new LinkedHashMap<>();
+        }
 
         if (type == null || "trigger".equals(type)) {
-            modules.addAll(TriggerTypeDTOMapper.map(moduleTypeRegistry.getTriggers(locale, tags)));
+            if (modules != null) {
+                modules.addAll(TriggerTypeDTOMapper.map(moduleTypeRegistry.getTriggers(locale, tags)));
+            } else if (modulesMap != null) {
+                modulesMap.put("triggers", new ArrayList<ModuleTypeDTO>(
+                        TriggerTypeDTOMapper.map(moduleTypeRegistry.getTriggers(locale, tags))));
+            }
         }
         if (type == null || "condition".equals(type)) {
-            modules.addAll(ConditionTypeDTOMapper.map(moduleTypeRegistry.getConditions(locale, tags)));
+            if (modules != null) {
+                modules.addAll(ConditionTypeDTOMapper.map(moduleTypeRegistry.getConditions(locale, tags)));
+            } else if (modulesMap != null) {
+                modulesMap.put("conditions", new ArrayList<ModuleTypeDTO>(
+                        ConditionTypeDTOMapper.map(moduleTypeRegistry.getConditions(locale, tags))));
+            }
         }
         if (type == null || "action".equals(type)) {
-            modules.addAll(ActionTypeDTOMapper.map(moduleTypeRegistry.getActions(locale, tags)));
+            if (modules != null) {
+                modules.addAll(ActionTypeDTOMapper.map(moduleTypeRegistry.getActions(locale, tags)));
+            } else if (modulesMap != null) {
+                modulesMap.put("actions", new ArrayList<ModuleTypeDTO>(
+                        ActionTypeDTOMapper.map(moduleTypeRegistry.getActions(locale, tags))));
+            }
         }
-        return Response.ok(modules).build();
+        return Response.ok(modules != null ? modules : modulesMap).build();
     }
 
     @GET
@@ -136,21 +160,21 @@ public class ModuleTypeResource implements RESTResource {
     }
 
     private ModuleTypeDTO getModuleTypeDTO(final ModuleType moduleType) {
-        if (moduleType instanceof ActionType) {
-            if (moduleType instanceof CompositeActionType) {
-                return ActionTypeDTOMapper.map((CompositeActionType) moduleType);
+        if (moduleType instanceof ActionType actionType) {
+            if (moduleType instanceof CompositeActionType compositeActionType) {
+                return ActionTypeDTOMapper.map(compositeActionType);
             }
-            return ActionTypeDTOMapper.map((ActionType) moduleType);
-        } else if (moduleType instanceof ConditionType) {
-            if (moduleType instanceof CompositeConditionType) {
-                return ConditionTypeDTOMapper.map((CompositeConditionType) moduleType);
+            return ActionTypeDTOMapper.map(actionType);
+        } else if (moduleType instanceof ConditionType conditionType) {
+            if (moduleType instanceof CompositeConditionType compositeConditionType) {
+                return ConditionTypeDTOMapper.map(compositeConditionType);
             }
-            return ConditionTypeDTOMapper.map((ConditionType) moduleType);
-        } else if (moduleType instanceof TriggerType) {
-            if (moduleType instanceof CompositeTriggerType) {
-                return TriggerTypeDTOMapper.map((CompositeTriggerType) moduleType);
+            return ConditionTypeDTOMapper.map(conditionType);
+        } else if (moduleType instanceof TriggerType triggerType) {
+            if (moduleType instanceof CompositeTriggerType compositeTriggerType) {
+                return TriggerTypeDTOMapper.map(compositeTriggerType);
             }
-            return TriggerTypeDTOMapper.map((TriggerType) moduleType);
+            return TriggerTypeDTOMapper.map(triggerType);
         } else {
             throw new IllegalArgumentException(
                     String.format("Cannot handle given module type class (%s)", moduleType.getClass()));

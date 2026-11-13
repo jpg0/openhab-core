@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,8 +12,6 @@
  */
 package org.openhab.core.automation.util;
 
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -32,7 +30,6 @@ public class ActionBuilder extends ModuleBuilder<ActionBuilder, Action> {
     private @Nullable Map<String, String> inputs;
 
     protected ActionBuilder() {
-        super();
     }
 
     protected ActionBuilder(final Action action) {
@@ -49,7 +46,7 @@ public class ActionBuilder extends ModuleBuilder<ActionBuilder, Action> {
     }
 
     public ActionBuilder withInputs(@Nullable Map<String, String> inputs) {
-        this.inputs = inputs != null ? Collections.unmodifiableMap(new HashMap<>(inputs)) : null;
+        this.inputs = inputs != null ? Map.copyOf(inputs) : null;
         return this;
     }
 

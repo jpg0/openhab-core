@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,6 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -33,6 +32,7 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.knowm.xchart.XYChart;
 import org.knowm.xchart.XYChartBuilder;
 import org.knowm.xchart.XYSeries;
+import org.knowm.xchart.style.AxesChartStyler.TextAlignment;
 import org.knowm.xchart.style.Styler.LegendPosition;
 import org.knowm.xchart.style.XYStyler;
 import org.knowm.xchart.style.markers.None;
@@ -49,6 +49,8 @@ import org.openhab.core.persistence.HistoricItem;
 import org.openhab.core.persistence.PersistenceService;
 import org.openhab.core.persistence.PersistenceServiceRegistry;
 import org.openhab.core.persistence.QueryablePersistenceService;
+import org.openhab.core.persistence.registry.PersistenceServiceConfiguration;
+import org.openhab.core.persistence.registry.PersistenceServiceConfigurationRegistry;
 import org.openhab.core.types.State;
 import org.openhab.core.ui.chart.ChartProvider;
 import org.openhab.core.ui.internal.chart.ChartServlet;
@@ -67,6 +69,8 @@ import org.slf4j.LoggerFactory;
  * @author Chris Jackson - Initial contribution
  * @author Holger Reichert - Support for themes, DPI, legend hiding
  * @author Christoph Weitkamp - Consider default persistence service
+ * @author Jan N. Klug - Add y-axis label formatter
+ * @author Mark Herwege - Implement aliases
  */
 @NonNullByDefault
 @Component(immediate = true)
@@ -79,7 +83,7 @@ public class DefaultChartProvider implements ChartProvider {
             // If the start value is below the median, then count legend position down
             // Otherwise count up.
             // We use this to decide whether to put the legend in the top or bottom corner.
-            if (yData.iterator().next().floatValue() > ((series.getYMax() - series.getYMin()) / 2 + series.getYMin())) {
+            if (yData.getFirst().floatValue() > ((series.getYMax() - series.getYMin()) / 2 + series.getYMin())) {
                 counter++;
             } else {
                 counter--;
@@ -105,20 +109,25 @@ public class DefaultChartProvider implements ChartProvider {
 
     private static final int DPI_DEFAULT = 96;
 
+    private static final String INTERPOLATION_LINEAR = "linear";
+    private static final String INTERPOLATION_STEP = "step";
+
     private final Logger logger = LoggerFactory.getLogger(DefaultChartProvider.class);
 
     private final ItemUIRegistry itemUIRegistry;
     private final PersistenceServiceRegistry persistenceServiceRegistry;
+    private final PersistenceServiceConfigurationRegistry persistenceServiceConfigurationRegistry;
 
     @Activate
     public DefaultChartProvider(final @Reference ItemUIRegistry itemUIRegistry,
-            final @Reference PersistenceServiceRegistry persistenceServiceRegistry) {
+            final @Reference PersistenceServiceRegistry persistenceServiceRegistry,
+            final @Reference PersistenceServiceConfigurationRegistry persistenceServiceConfigurationRegistry) {
         this.itemUIRegistry = itemUIRegistry;
         this.persistenceServiceRegistry = persistenceServiceRegistry;
+        this.persistenceServiceConfigurationRegistry = persistenceServiceConfigurationRegistry;
 
         if (logger.isDebugEnabled()) {
-            logger.debug("Available themes for default chart provider: {}",
-                    CHART_THEMES.keySet().stream().collect(Collectors.joining(", ")));
+            logger.debug("Available themes for default chart provider: {}", String.join(", ", CHART_THEMES.keySet()));
         }
     }
 
@@ -130,22 +139,31 @@ public class DefaultChartProvider implements ChartProvider {
     @Override
     public BufferedImage createChart(@Nullable String serviceId, @Nullable String theme, ZonedDateTime startTime,
             ZonedDateTime endTime, int height, int width, @Nullable String items, @Nullable String groups,
-            @Nullable Integer dpiValue, @Nullable Boolean legend)
+            @Nullable Integer dpiValue, @Nullable String interpolation, @Nullable Boolean legend)
             throws ItemNotFoundException, IllegalArgumentException {
+        return createChart(serviceId, theme, startTime, endTime, height, width, items, groups, dpiValue, null,
+                interpolation, legend);
+    }
+
+    @Override
+    public BufferedImage createChart(@Nullable String serviceId, @Nullable String theme, ZonedDateTime startTime,
+            ZonedDateTime endTime, int height, int width, @Nullable String items, @Nullable String groups,
+            @Nullable Integer dpiValue, @Nullable String yAxisDecimalPattern, @Nullable String interpolation,
+            @Nullable Boolean legend) throws ItemNotFoundException, IllegalArgumentException {
         logger.debug(
-                "Rendering chart: service: '{}', theme: '{}', startTime: '{}', endTime: '{}', width: '{}', height: '{}', items: '{}', groups: '{}', dpi: '{}', legend: '{}'",
-                serviceId, theme, startTime, endTime, width, height, items, groups, dpiValue, legend);
+                "Rendering chart: service: '{}', theme: '{}', startTime: '{}', endTime: '{}', width: '{}', height: '{}', items: '{}', groups: '{}', dpi: '{}', yAxisDecimalPattern: '{}', interpolation: '{}', legend: '{}'",
+                serviceId, theme, startTime, endTime, width, height, items, groups, dpiValue, yAxisDecimalPattern,
+                interpolation, legend);
 
         // If a persistence service is specified, find the provider, or use the default provider
         PersistenceService service = (serviceId == null) ? persistenceServiceRegistry.getDefault()
                 : persistenceServiceRegistry.get(serviceId);
 
         // Did we find a service?
-        QueryablePersistenceService persistenceService = (service instanceof QueryablePersistenceService)
-                ? (QueryablePersistenceService) service
+        QueryablePersistenceService persistenceService = (service instanceof QueryablePersistenceService qps) ? qps
                 : (QueryablePersistenceService) persistenceServiceRegistry.getAll() //
                         .stream() //
-                        .filter(it -> it instanceof QueryablePersistenceService) //
+                        .filter(QueryablePersistenceService.class::isInstance) //
                         .findFirst() //
                         .orElseThrow(() -> new IllegalArgumentException("No Persistence service found."));
 
@@ -163,7 +181,7 @@ public class DefaultChartProvider implements ChartProvider {
 
         // Define the time axis - the defaults are not very nice
         Duration period = Duration.between(startTime, endTime);
-        String pattern = "HH:mm";
+        String pattern;
 
         if (period.compareTo(TEN_MINUTES) <= 0) {
             pattern = "mm:ss";
@@ -180,10 +198,20 @@ public class DefaultChartProvider implements ChartProvider {
         // axis
         styler.setAxisTickLabelsFont(chartTheme.getAxisTickLabelsFont(dpi));
         styler.setAxisTickLabelsColor(chartTheme.getAxisTickLabelsColor());
-        styler.setXAxisMin(Double.valueOf(startTime.toInstant().toEpochMilli()));
-        styler.setXAxisMax(Double.valueOf(endTime.toInstant().toEpochMilli()));
+        styler.setXAxisMin((double) startTime.toInstant().toEpochMilli());
+        styler.setXAxisMax((double) endTime.toInstant().toEpochMilli());
         int yAxisSpacing = Math.max(height / 10, chartTheme.getAxisTickLabelsFont(dpi).getSize());
+        if (yAxisDecimalPattern != null) {
+            styler.setYAxisDecimalPattern(yAxisDecimalPattern);
+        }
         styler.setYAxisTickMarkSpacingHint(yAxisSpacing);
+        styler.setYAxisLabelAlignment(TextAlignment.Right);
+        // avoid overlapping labels on x-axis;
+        // Font.getSize() is related to font height, but will also give an indication of the width;
+        // pattern is not the actual label, but also gives a rough estimation of the width of the label
+        int xAxisSpacing = Math.max(width / 15,
+                chartTheme.getAxisTickLabelsFont(dpi).getSize() * pattern.length() * 4 / 3);
+        styler.setXAxisTickMarkSpacingHint(xAxisSpacing);
         // chart
         styler.setChartBackgroundColor(chartTheme.getChartBackgroundColor());
         styler.setChartFontColor(chartTheme.getChartFontColor());
@@ -207,7 +235,7 @@ public class DefaultChartProvider implements ChartProvider {
             for (String itemName : itemNames) {
                 Item item = itemUIRegistry.getItem(itemName);
                 if (addItem(chart, persistenceService, startTime, endTime, item, seriesCounter, chartTheme, dpi,
-                        legendPositionDecider)) {
+                        interpolation, legendPositionDecider)) {
                     seriesCounter++;
                 }
             }
@@ -218,11 +246,10 @@ public class DefaultChartProvider implements ChartProvider {
             String[] groupNames = groups.split(",");
             for (String groupName : groupNames) {
                 Item item = itemUIRegistry.getItem(groupName);
-                if (item instanceof GroupItem) {
-                    GroupItem groupItem = (GroupItem) item;
+                if (item instanceof GroupItem groupItem) {
                     for (Item member : groupItem.getMembers()) {
                         if (addItem(chart, persistenceService, startTime, endTime, member, seriesCounter, chartTheme,
-                                dpi, legendPositionDecider)) {
+                                dpi, interpolation, legendPositionDecider)) {
                             seriesCounter++;
                         }
                     }
@@ -280,31 +307,32 @@ public class DefaultChartProvider implements ChartProvider {
     }
 
     private double convertData(State state) {
-        if (state instanceof DecimalType) {
-            return ((DecimalType) state).doubleValue();
-        } else if (state instanceof QuantityType) {
-            return ((QuantityType<?>) state).doubleValue();
+        if (state instanceof DecimalType type) {
+            return type.doubleValue();
+        } else if (state instanceof QuantityType type) {
+            return type.doubleValue();
         } else if (state instanceof OnOffType) {
             return state == OnOffType.OFF ? 0 : 1;
         } else if (state instanceof OpenClosedType) {
             return state == OpenClosedType.CLOSED ? 0 : 1;
         } else {
-            logger.debug("Unsupported item type in chart: {}", state.getClass().toString());
+            logger.debug("Unsupported item type in chart: {}", state.getClass());
             return 0;
         }
     }
 
     private boolean addItem(XYChart chart, QueryablePersistenceService service, ZonedDateTime timeBegin,
             ZonedDateTime timeEnd, Item item, int seriesCounter, ChartTheme chartTheme, int dpi,
-            LegendPositionDecider legendPositionDecider) {
+            @Nullable String interpolation, LegendPositionDecider legendPositionDecider) {
         Color color = chartTheme.getLineColor(seriesCounter);
 
         // Get the item label
         String label = itemUIRegistry.getLabel(item.getName());
-        if (label == null) {
-            label = item.getName();
-        } else if (label.contains("[") && label.contains("]")) {
+        if (label != null && label.contains("[") && label.contains("]")) {
             label = label.substring(0, label.indexOf('['));
+        }
+        if (label == null || label.isEmpty()) {
+            label = item.getName();
         }
 
         Iterable<HistoricItem> result;
@@ -322,10 +350,13 @@ public class DefaultChartProvider implements ChartProvider {
         // after the start of the graph (or not at all if there's no change during the graph period)
         filter = new FilterCriteria();
         filter.setEndDate(timeBegin);
-        filter.setItemName(item.getName());
+        String itemName = item.getName();
+        PersistenceServiceConfiguration config = persistenceServiceConfigurationRegistry.get(service.getId());
+        String alias = config != null ? config.getAliases().get(itemName) : null;
+        filter.setItemName(itemName);
         filter.setPageSize(1);
         filter.setOrdering(Ordering.DESCENDING);
-        result = service.query(filter);
+        result = service.query(filter, alias);
         if (result.iterator().hasNext()) {
             HistoricItem historicItem = result.iterator().next();
 
@@ -341,22 +372,21 @@ public class DefaultChartProvider implements ChartProvider {
         filter.setOrdering(Ordering.ASCENDING);
 
         // Get the data from the persistence store
-        result = service.query(filter);
-        Iterator<HistoricItem> it = result.iterator();
+        result = service.query(filter, alias);
 
         // Iterate through the data
-        while (it.hasNext()) {
-            HistoricItem historicItem = it.next();
-
+        for (HistoricItem historicItem : result) {
             // For 'binary' states, we need to replicate the data
             // to avoid diagonal lines
-            if (state instanceof OnOffType || state instanceof OpenClosedType) {
-                xData.add(Date.from(historicItem.getTimestamp().toInstant().minus(1, ChronoUnit.MILLIS)));
+            if (state != null && INTERPOLATION_STEP.equals(interpolation)
+                    || ((state instanceof OnOffType || state instanceof OpenClosedType)
+                            && !INTERPOLATION_LINEAR.equals(interpolation))) {
+                xData.add(Date.from(historicItem.getInstant().minus(1, ChronoUnit.MILLIS)));
                 yData.add(convertData(state));
             }
 
             state = historicItem.getState();
-            xData.add(Date.from(historicItem.getTimestamp().toInstant()));
+            xData.add(Date.from(historicItem.getInstant()));
             yData.add(convertData(state));
         }
 
@@ -374,8 +404,8 @@ public class DefaultChartProvider implements ChartProvider {
 
         // If there's only 1 data point, plot it again!
         if (xData.size() == 1) {
-            xData.add(xData.iterator().next());
-            yData.add(yData.iterator().next());
+            xData.add(xData.getFirst());
+            yData.add(yData.getFirst());
         }
 
         XYSeries series = chart.addSeries(label, xData, yData);

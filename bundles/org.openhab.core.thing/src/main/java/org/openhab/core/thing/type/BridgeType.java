@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -32,6 +32,7 @@ import org.openhab.core.thing.ThingTypeUID;
  * @author Michael Grammling - Initial contribution
  * @author Thomas Höfer - Added thing and thing type properties
  * @author Andre Fuechsel - Added representationProperty
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class BridgeType extends ThingType {
@@ -39,9 +40,7 @@ public class BridgeType extends ThingType {
     /**
      * A new instance of BridgeType.
      *
-     * @see ThingType(uid, supportedBridgeTypeUIDs, label, description, category, listed, representationProperty,
-     *      channelDefinitions, channelGroupDefinitions, properties, configDescriptionURI,
-     *      extensibleChannelTypeIds)
+     * @see ThingType#ThingType(ThingTypeUID, List, String, String, String, boolean, String, List, List, Map, URI, List)
      *
      * @param uid the unique identifier which identifies this Thing type within the overall system
      *            (must neither be null, nor empty)
@@ -60,16 +59,17 @@ public class BridgeType extends ThingType {
      * @param properties the properties this Thing type provides (could be null)
      * @param configDescriptionURI the link to the concrete ConfigDescription (could be null)
      * @param extensibleChannelTypeIds the channel-type ids this thing-type is extensible with (could be null or empty).
-     * @throws IllegalArgumentException if the UID is null or empty, or the the meta information is null
+     * @param semanticEquipmentTag the semantic (equipment) tag of the bridge (could be null)
+     * @throws IllegalArgumentException if the UID is null or empty, or the meta information is null
      */
     BridgeType(ThingTypeUID uid, @Nullable List<String> supportedBridgeTypeUIDs, String label,
             @Nullable String description, @Nullable String category, boolean listed,
             @Nullable String representationProperty, @Nullable List<ChannelDefinition> channelDefinitions,
             @Nullable List<ChannelGroupDefinition> channelGroupDefinitions, @Nullable Map<String, String> properties,
-            @Nullable URI configDescriptionURI, @Nullable List<String> extensibleChannelTypeIds)
-            throws IllegalArgumentException {
+            @Nullable URI configDescriptionURI, @Nullable List<String> extensibleChannelTypeIds,
+            @Nullable String semanticEquipmentTag) throws IllegalArgumentException {
         super(uid, supportedBridgeTypeUIDs, label, description, category, listed, representationProperty,
-                channelDefinitions, channelGroupDefinitions, properties, configDescriptionURI,
-                extensibleChannelTypeIds);
+                channelDefinitions, channelGroupDefinitions, properties, configDescriptionURI, extensibleChannelTypeIds,
+                semanticEquipmentTag);
     }
 }

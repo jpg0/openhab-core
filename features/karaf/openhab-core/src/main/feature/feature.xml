@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-	Copyright (c) 2010-2022 Contributors to the openHAB project
+	Copyright (c) 2010-2026 Contributors to the openHAB project
 
 	See the NOTICE file(s) distributed with this work for additional
 	information.
@@ -13,7 +13,7 @@
 	SPDX-License-Identifier: EPL-2.0
 
 -->
-<features name="${project.artifactId}-${project.version}" xmlns="http://karaf.apache.org/xmlns/features/v1.3.0">
+<features name="${project.artifactId}-${project.version}" xmlns="http://karaf.apache.org/xmlns/features/v1.6.0">
 
 	<repository>mvn:org.openhab.core.features.karaf/org.openhab.core.features.karaf.openhab-tp/${project.version}/xml/features</repository>
 
@@ -28,7 +28,7 @@
 
 		<feature dependency="true">openhab.tp-gson</feature>
 
-		<requirement>openhab.tp;filter:="(&amp;(feature=xtext)(version&gt;=2.26.0)(!(version&gt;=2.27.0)))"</requirement>
+		<requirement>openhab.tp;filter:="(&amp;(feature=xtext)(version&gt;=2.44.0)(!(version&gt;=2.45.0)))"</requirement>
 		<feature dependency="true">openhab.tp-xtext</feature>
 
 		<requirement>openhab.tp;filter:="(feature=jax-rs-whiteboard)"</requirement>
@@ -37,20 +37,25 @@
 		<requirement>openhab.tp;filter:="(feature=httpclient)"</requirement>
 		<feature dependency="true">openhab.tp-httpclient</feature>
 
+		<requirement>openhab.tp;filter:="(feature=jna)"</requirement>
+		<feature dependency="true">openhab.tp-jna</feature>
+
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.automation/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.core/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery/${project.version}</bundle>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.process/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.dispatch/${project.version}</bundle>
-		<bundle start-level="75">mvn:org.openhab.core.bundles/org.openhab.core.config.xml/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core/${project.version}</bundle>
+		<bundle>mvn:org.openhab.osgiify/io.methvin.directory-watcher/0.19.1</bundle>
 		<feature dependency="true">openhab-core-storage-json</feature>
-		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.binding.xml/${project.version}</bundle>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.addon/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.ephemeris/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.id/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.persistence/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.semantics/${project.version}</bundle>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.sitemap/${project.version}</bundle>
+		<feature dependency="true">asm</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.thing/${project.version}</bundle>
-		<bundle start-level="75">mvn:org.openhab.core.bundles/org.openhab.core.thing.xml/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.transform/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.audio/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.voice/${project.version}</bundle>
@@ -62,6 +67,54 @@
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest.core/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest.sse/${project.version}</bundle>
+		<feature>openhab-core-config-discovery-addon</feature>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon-mdns" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-config-discovery-addon</feature>
+		<bundle dependency="true">mvn:org.openhab.core.bundles/org.openhab.core.io.transport.mdns/${project.version}</bundle>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.mdns/${project.version}</bundle>
+		<requirement>openhab.tp;filter:="(feature=jmdns)"</requirement>
+		<feature dependency="true">openhab.tp-jmdns</feature>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon-ip" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-config-discovery-addon</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.ip/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon-upnp" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-config-discovery-addon</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.upnp/${project.version}</bundle>
+		<requirement>openhab.tp;filter:="(feature=jupnp)"</requirement>
+		<feature dependency="true">openhab.tp-jupnp</feature>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon-usb" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-config-discovery-addon</feature>
+		<feature dependency="true">openhab-transport-serial</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.usb/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-addon-sddp" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-config-discovery-addon</feature>
+		<feature>openhab-core-config-discovery-sddp</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.addon.sddp/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-config-discovery-sddp" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.sddp/${project.version}</bundle>
 	</feature>
 
 	<feature name="openhab-core-addon-marketplace" version="${project.version}">
@@ -87,6 +140,12 @@
 	<feature name="openhab-core-automation-module-script" version="${project.version}">
 		<feature>openhab-core-base</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.automation.module.script/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-automation-module-script-providersupport" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature dependency="true">openhab-core-automation-module-script</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.automation.module.script.providersupport/${project.version}</bundle>
 	</feature>
 
 	<feature name="openhab-core-automation-module-script-rulesupport" version="${project.version}">
@@ -116,6 +175,7 @@
 	<feature name="openhab-core-io-console-karaf" description="Karaf Console support for SmartHome stuff" version="${project.version}">
 		<feature>openhab-core-base</feature>
 		<feature>shell</feature>
+		<feature>service-wrapper</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.console.karaf/${project.version}</bundle>
 	</feature>
 
@@ -142,7 +202,6 @@
 		<feature>openhab-core-base</feature>
 		<feature>openhab-core-ui</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest.sitemap/${project.version}</bundle>
-		<feature dependency="true">openhab-core-model-sitemap</feature>
 	</feature>
 
 	<feature name="openhab-core-io-rest-swagger" version="${project.version}">
@@ -173,6 +232,19 @@
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest.mdns/${project.version}</bundle>
 	</feature>
 
+	<feature name="openhab-core-io-websocket" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature dependency="true">openhab-core-io-rest-auth</feature>
+		<feature dependency="true">pax-web-jetty-websockets</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.websocket/${project.version}</bundle>
+	</feature>
+
+	<feature name="openhab-core-io-websocket-audio" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature dependency="true">openhab-core-io-websocket</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.websocket.audio/${project.version}</bundle>
+	</feature>
+
 	<feature name="openhab-core-io-transport-coap" version="${project.version}">
 		<feature>openhab-core-base</feature>
 
@@ -201,7 +273,7 @@
 		<feature>openhab-core-base</feature>
 		<feature>openhab-transport-serial</feature>
 
-		<bundle dependency="true">mvn:org.apache.commons/commons-pool2/2.8.1</bundle>
+		<bundle dependency="true">mvn:org.apache.commons/commons-pool2/2.13.1</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.transport.modbus/${project.version}</bundle>
 	</feature>
 
@@ -291,7 +363,7 @@
 
 	<feature name="openhab-core-model-script" version="${project.version}">
 		<feature>openhab-core-base</feature>
-		<feature>openhab-core-automation-module-script</feature>
+		<feature>openhab-core-automation-module-script-rulesupport</feature>
 		<feature>openhab-core-model-persistence</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.model.script/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.model.script.runtime/${project.version}</bundle>
@@ -340,10 +412,10 @@
 
 	<feature name="openhab-core-model-lsp" version="${project.version}">
 
-		<requirement>openhab.tp;filter:="(&amp;(feature=xtext-ide)(version&gt;=2.26.0)(!(version&gt;=2.27.0)))"</requirement>
+		<requirement>openhab.tp;filter:="(&amp;(feature=xtext-ide)(version&gt;=2.44.0)(!(version&gt;=2.45.0)))"</requirement>
 		<feature dependency="true">openhab.tp-xtext-ide</feature>
 
-		<requirement>openhab.tp;filter:="(&amp;(feature=lsp4j)(version&gt;=0.12.0)(!(version&gt;=0.13.0)))"</requirement>
+		<requirement>openhab.tp;filter:="(&amp;(feature=lsp4j)(version&gt;=1.0.0)(!(version&gt;=1.0.1)))"</requirement>
 		<feature dependency="true">openhab.tp-lsp4j</feature>
 
 		<feature>openhab-core-model-item-ide</feature>
@@ -355,6 +427,15 @@
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.model.lsp/${project.version}</bundle>
 	</feature>
 
+	<feature name="openhab-core-model-yaml" version="${project.version}">
+		<feature>openhab-core-base</feature>
+		<feature>openhab-core-automation-module-script-rulesupport</feature>
+		<feature>openhab-core-ui</feature>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.model.yaml/${project.version}</bundle>
+		<requirement>openhab.tp;filter:="(feature=jackson)"</requirement>
+		<feature dependency="true">openhab.tp-jackson</feature>
+	</feature>
+
 	<feature name="openhab-core-storage-json" version="${project.version}">
 		<feature>openhab-core-base</feature>
 
@@ -363,8 +444,6 @@
 
 	<feature name="openhab-core-ui" version="${project.version}">
 		<feature>openhab-core-base</feature>
-		<feature>openhab-core-model-item</feature>
-		<feature>openhab-core-model-sitemap</feature>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.ui/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.rest.ui/${project.version}</bundle>
 	</feature>
@@ -380,6 +459,7 @@
 		<feature>openhab-core-auth-jaas</feature>
 		<feature>openhab-core-automation-rest</feature>
 		<feature>openhab-core-automation-module-script</feature>
+		<feature>openhab-core-automation-module-script-providersupport</feature>
 		<feature>openhab-core-automation-module-script-rulesupport</feature>
 		<feature>openhab-core-automation-module-media</feature>
 		<feature>openhab-core-io-console-karaf</feature>
@@ -391,6 +471,8 @@
 		<feature>openhab-core-io-rest-swagger</feature>
 		<feature>openhab-core-io-rest-transform</feature>
 		<feature>openhab-core-io-rest-voice</feature>
+		<feature>openhab-core-io-websocket</feature>
+		<feature>openhab-core-io-websocket-audio</feature>
 		<feature>openhab-core-model-lsp</feature>
 		<feature>openhab-core-model-item</feature>
 		<feature>openhab-core-model-persistence</feature>
@@ -398,6 +480,7 @@
 		<feature>openhab-core-model-script</feature>
 		<feature>openhab-core-model-sitemap</feature>
 		<feature>openhab-core-model-thing</feature>
+		<feature>openhab-core-model-yaml</feature>
 		<feature>openhab-core-ui-icon</feature>
 		<feature>openhab-core-storage-json</feature>
 		<feature>openhab-runtime-certificate</feature>
@@ -407,7 +490,7 @@
 		<feature prerequisite="true">wrapper</feature>
 		<feature prerequisite="true">jaas</feature>
 		<!-- This bundle needs to be started early as it registers the 404 and startup pages on Jetty -->
-		<!-- It is temperarily disabled due to https://github.com/openhab/openhab-core/issues/422 -->
+		<!-- It is temporarily disabled due to https://github.com/openhab/openhab-core/issues/422 -->
 		<!-- <bundle start-level="30">mvn:org.openhab.core.bundles/org.openhab.ui.start/${project.version}</bundle> -->
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.karaf/${project.version}</bundle>
 		<config name="org.openhab.audio">
@@ -422,11 +505,6 @@
 		<bundle start-level="20">mvn:org.openhab.core.bundles/org.openhab.core.io.jetty.certificate/${project.version}</bundle>
 	</feature>
 
-	<feature name="openhab-runtime-jna" description="Java Native Access (JNA)" version="${project.version}">
-		<bundle>mvn:net.java.dev.jna/jna/${jna.version}</bundle>
-		<bundle>mvn:net.java.dev.jna/jna-platform/${jna.version}</bundle>
-	</feature>
-
 	<feature name="openhab-transport-coap" description="CoAP Transport" version="${project.version}">
 		<feature>openhab-core-io-transport-coap</feature>
 	</feature>
@@ -434,15 +512,8 @@
 	<feature name="openhab-transport-http" description="HTTP Transport" version="${project.version}">
 		<capability>openhab.tp;feature=httpclient;version=${jetty.version}</capability>
 		<feature>openhab-core-auth-oauth2client</feature>
-		<bundle dependency="true">mvn:javax.servlet/javax.servlet-api/3.1.0</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty/jetty-client/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty/jetty-http/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty/jetty-util/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty/jetty-io/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty/jetty-proxy/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty.websocket/websocket-api/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty.websocket/websocket-common/${jetty.version}</bundle>
-		<bundle dependency="true">mvn:org.eclipse.jetty.websocket/websocket-client/${jetty.version}</bundle>
+		<feature dependency="true">pax-web-jetty-extras</feature>
+		<feature dependency="true">pax-web-jetty-websockets</feature>
 	</feature>
 
 	<feature name="openhab-transport-mdns" description="mDNS Transport" version="${project.version}">
@@ -475,6 +546,7 @@
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.usbserial/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.usbserial.linuxsysfs/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.usbserial.ser2net/${project.version}</bundle>
+		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.config.discovery.usbserial.windowsregistry/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.transport.serial/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.transport.serial.rxtx/${project.version}</bundle>
 		<bundle>mvn:org.openhab.core.bundles/org.openhab.core.io.transport.serial.rxtx.rfc2217/${project.version}</bundle>

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,7 +18,6 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -63,7 +62,7 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
     private enum EventType {
         ADDED,
         REMOVED,
-        UPDATED;
+        UPDATED
     }
 
     private final Logger logger = LoggerFactory.getLogger(AbstractRegistry.class);
@@ -81,7 +80,7 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
 
     private final Collection<RegistryChangeListener<E>> listeners = new CopyOnWriteArraySet<>();
 
-    private Optional<ManagedProvider<E, K>> managedProvider = Optional.empty();
+    private @Nullable ManagedProvider<E, K> managedProvider = null;
 
     private @Nullable EventPublisher eventPublisher;
     private @Nullable ReadyService readyService;
@@ -188,19 +187,31 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
      */
     private boolean added(Provider<E> provider, E element, Collection<E> providerElements) {
         final K uid = element.getUID();
-        if (identifierToElement.containsKey(uid)) {
-            logger.debug(
-                    "Cannot add \"{}\" with key \"{}\". It exists already from provider \"{}\"! Failed to add a second with the same UID from provider \"{}\"!",
-                    element.getClass().getSimpleName(), uid,
-                    elementToProvider.get(identifierToElement.get(uid)).getClass().getSimpleName(),
-                    provider.getClass().getSimpleName());
+        @Nullable
+        E existingElement = identifierToElement.get(uid);
+        if (existingElement != null) {
+            Provider<E> existingElementProvider = elementToProvider.get(existingElement);
+            String elementClassName = element.getClass().getSimpleName();
+            if ("ActionType".equals(elementClassName) || "Metadata".equals(elementClassName)) {
+                logger.debug(
+                        "Cannot add \"{}\" with key \"{}\". It exists already from provider \"{}\"! Failed to add a second with the same UID from provider \"{}\"!",
+                        elementClassName, uid,
+                        existingElementProvider != null ? existingElementProvider.getClass().getSimpleName() : null,
+                        provider.getClass().getSimpleName());
+            } else {
+                logger.warn(
+                        "Cannot add \"{}\" with key \"{}\". It exists already from provider \"{}\"! Failed to add a second with the same UID from provider \"{}\"!",
+                        elementClassName, uid,
+                        existingElementProvider != null ? existingElementProvider.getClass().getSimpleName() : null,
+                        provider.getClass().getSimpleName());
+            }
             return false;
         }
         try {
             onAddElement(element);
         } catch (final RuntimeException ex) {
             logger.warn("Cannot add \"{}\" with key \"{}\": {}", element.getClass().getSimpleName(), uid,
-                    ex.getMessage(), ex);
+                    ex.getMessage(), logger.isDebugEnabled() ? ex : null);
             return false;
         }
         identifierToElement.put(element.getUID(), element);
@@ -242,6 +253,14 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
             if (existingElement == null) {
                 logger.debug("Cannot remove \"{}\" with key \"{}\" from provider \"{}\" because it does not exist!",
                         element.getClass().getSimpleName(), uid, provider.getClass().getSimpleName());
+                return;
+            }
+            Provider<E> elementProvider = elementToProvider.get(existingElement);
+            if (elementProvider != null && !elementProvider.equals(provider)) {
+                logger.warn(
+                        "Provider '{}' is not allowed to remove element '{}' with key '{}' from the registry because it was added by provider '{}'.",
+                        provider.getClass().getSimpleName(), element.getClass().getSimpleName(), uid,
+                        elementProvider.getClass().getSimpleName());
                 return;
             }
             try {
@@ -343,20 +362,33 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
 
     @Override
     public E add(E element) {
-        managedProvider.orElseThrow(() -> new IllegalStateException("ManagedProvider is not available")).add(element);
+        @Nullable
+        ManagedProvider<E, K> mp = managedProvider;
+        if (mp == null) {
+            throw new IllegalStateException("ManagedProvider is not available");
+        }
+        mp.add(element);
         return element;
     }
 
     @Override
     public @Nullable E update(E element) {
-        return managedProvider.orElseThrow(() -> new IllegalStateException("ManagedProvider is not available"))
-                .update(element);
+        @Nullable
+        ManagedProvider<E, K> mp = managedProvider;
+        if (mp == null) {
+            throw new IllegalStateException("ManagedProvider is not available");
+        }
+        return mp.update(element);
     }
 
     @Override
     public @Nullable E remove(K key) {
-        return managedProvider.orElseThrow(() -> new IllegalStateException("ManagedProvider is not available"))
-                .remove(key);
+        @Nullable
+        ManagedProvider<E, K> mp = managedProvider;
+        if (mp == null) {
+            throw new IllegalStateException("ManagedProvider is not available");
+        }
+        return mp.remove(key);
     }
 
     protected void notifyListeners(E element, EventType eventType) {
@@ -431,9 +463,13 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
         }
         elementsAdded.forEach(this::notifyListenersAboutAddedElement);
 
-        if (provider instanceof ManagedProvider && readyService != null) {
-            readyService.markReady(
-                    new ReadyMarker("managed", providerClazz.getSimpleName().replace("Provider", "").toLowerCase()));
+        if (provider.equals(managedProvider) && providerClazz instanceof Class clazz
+                && readyService instanceof ReadyService rs) {
+            ReadyMarker marker = new ReadyMarker("managed",
+                    clazz.getSimpleName().replace("Provider", "").toLowerCase());
+            logger.debug("Create ready marker \"{}\" for provider \"{}\" ({} elements added)", marker,
+                    provider.getClass().getSimpleName(), elementsAdded.size());
+            rs.markReady(marker);
         }
         logger.debug("Provider \"{}\" has been added.", provider.getClass().getName());
     }
@@ -543,17 +579,17 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
         }
     }
 
-    protected Optional<ManagedProvider<E, K>> getManagedProvider() {
+    protected @Nullable ManagedProvider<E, K> getManagedProvider() {
         return managedProvider;
     }
 
     protected void setManagedProvider(ManagedProvider<E, K> provider) {
-        managedProvider = Optional.ofNullable(provider);
+        managedProvider = provider;
     }
 
     protected void unsetManagedProvider(ManagedProvider<E, K> provider) {
-        if (managedProvider.isPresent() && managedProvider.get().equals(provider)) {
-            managedProvider = Optional.empty();
+        if (managedProvider != null && managedProvider.equals(provider)) {
+            managedProvider = null;
         }
     }
 
@@ -677,9 +713,9 @@ public abstract class AbstractRegistry<@NonNull E extends Identifiable<K>, @NonN
      * @param event the event
      */
     protected void postEvent(Event event) {
-        if (eventPublisher != null) {
+        if (eventPublisher instanceof EventPublisher ep) {
             try {
-                eventPublisher.post(event);
+                ep.post(event);
             } catch (RuntimeException ex) {
                 logger.error("Cannot post event of type \"{}\".", event.getType(), ex);
             }

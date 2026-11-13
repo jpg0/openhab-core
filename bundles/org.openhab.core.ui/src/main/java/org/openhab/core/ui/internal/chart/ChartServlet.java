@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,23 +12,26 @@
  */
 package org.openhab.core.ui.internal.chart;
 
-import static java.util.Map.entry;
-
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.Serial;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.Period;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.TemporalAmount;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javax.imageio.ImageIO;
 import javax.imageio.stream.ImageOutputStream;
+import javax.servlet.Servlet;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
+import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
@@ -36,19 +39,19 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.config.core.ConfigurableService;
 import org.openhab.core.i18n.TimeZoneProvider;
-import org.openhab.core.io.http.servlet.OpenHABServlet;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.ui.chart.ChartProvider;
 import org.osgi.framework.Constants;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Modified;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
 import org.osgi.service.component.annotations.ReferencePolicy;
-import org.osgi.service.http.HttpContext;
-import org.osgi.service.http.HttpService;
+import org.osgi.service.http.whiteboard.propertytypes.HttpWhiteboardServletName;
+import org.osgi.service.http.whiteboard.propertytypes.HttpWhiteboardServletPattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This servlet generates time-series charts for a given set of items. It
@@ -61,19 +64,24 @@ import org.osgi.service.http.HttpService;
  * <li>groups: A comma separated list of group names, whose members should be displayed</li>
  * <li>service: The persistence service name. If not supplied the first service found will be used.</li>
  * <li>theme: The chart theme to use. If not supplied the chart provider uses a default theme.</li>
- * <li>dpi: The DPI (dots per inch) value. If not supplied, a default is used.</code></li>
+ * <li>dpi: The DPI (dots per inch) value. If not supplied, a default is used.</li>
  * <li>legend: Show the legend? If not supplied, the ChartProvider should make his own decision.</li>
  * </ul>
  *
  * @author Chris Jackson - Initial contribution
  * @author Holger Reichert - Support for themes, DPI, legend hiding
+ * @author Laurent Garnier - Extend support to ISO8601 format for chart period parameter
+ * @author Laurent Garnier - Extend support to past and future for chart period parameter
  */
-@NonNullByDefault
-@Component(immediate = true, service = ChartServlet.class, configurationPid = "org.openhab.chart", //
+@Component(immediate = true, service = { ChartServlet.class, Servlet.class }, configurationPid = "org.openhab.chart", //
         property = Constants.SERVICE_PID + "=org.openhab.chart")
 @ConfigurableService(category = "system", label = "Charts", description_uri = ChartServlet.CONFIG_URI)
-public class ChartServlet extends OpenHABServlet {
+@HttpWhiteboardServletName(ChartServlet.SERVLET_PATH)
+@HttpWhiteboardServletPattern(ChartServlet.SERVLET_PATH + "/*")
+@NonNullByDefault
+public class ChartServlet extends HttpServlet {
 
+    @Serial
     private static final long serialVersionUID = 7700873790924746422L;
 
     protected static final String CONFIG_URI = "system:chart";
@@ -81,6 +89,8 @@ public class ChartServlet extends OpenHABServlet {
     private static final int CHART_WIDTH = 480;
     private static final String DATE_FORMAT = "yyyyMMddHHmm";
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern(DATE_FORMAT);
+
+    private final Logger logger = LoggerFactory.getLogger(ChartServlet.class);
 
     private final TimeZoneProvider timeZoneProvider;
 
@@ -91,26 +101,14 @@ public class ChartServlet extends OpenHABServlet {
     private int maxWidth = -1;
 
     // The URI of this servlet
-    public static final String SERVLET_NAME = "/chart";
+    public static final String SERVLET_PATH = "/chart";
 
-    private static final Duration DEFAULT_PERIOD = Duration.ofDays(1);
-
-    private static final Map<String, Duration> PERIODS = Map.ofEntries( //
-            entry("h", Duration.ofHours(1)), entry("4h", Duration.ofHours(4)), //
-            entry("8h", Duration.ofHours(8)), entry("12h", Duration.ofHours(12)), //
-            entry("D", Duration.ofDays(1)), entry("2D", Duration.ofDays(2)), //
-            entry("3D", Duration.ofDays(3)), entry("W", Duration.ofDays(7)), //
-            entry("2W", Duration.ofDays(14)), entry("M", Duration.ofDays(30)), //
-            entry("2M", Duration.ofDays(60)), entry("4M", Duration.ofDays(120)), //
-            entry("Y", Duration.ofDays(365))//
-    );
+    protected static final Duration DEFAULT_PERIOD = Duration.ofDays(1);
 
     protected static final Map<String, ChartProvider> CHART_PROVIDERS = new ConcurrentHashMap<>();
 
     @Activate
-    public ChartServlet(final @Reference HttpService httpService, final @Reference HttpContext httpContext,
-            final @Reference TimeZoneProvider timeZoneProvider) {
-        super(httpService, httpContext);
+    public ChartServlet(final @Reference TimeZoneProvider timeZoneProvider) {
         this.timeZoneProvider = timeZoneProvider;
     }
 
@@ -129,13 +127,7 @@ public class ChartServlet extends OpenHABServlet {
 
     @Activate
     protected void activate(Map<String, Object> config) {
-        super.activate(SERVLET_NAME);
         applyConfig(config);
-    }
-
-    @Deactivate
-    protected void deactivate() {
-        super.deactivate(SERVLET_NAME);
     }
 
     @Modified
@@ -227,6 +219,7 @@ public class ChartServlet extends OpenHABServlet {
         String periodParam = req.getParameter("period");
         String timeBeginParam = req.getParameter("begin");
         String timeEndParam = req.getParameter("end");
+
         // To avoid ambiguity you are not allowed to specify period, begin and end time at the same time.
         if (periodParam != null && timeBeginParam != null && timeEndParam != null) {
             res.sendError(HttpServletResponse.SC_BAD_REQUEST,
@@ -234,8 +227,6 @@ public class ChartServlet extends OpenHABServlet {
             return;
         }
 
-        // Read out the parameter period, begin and end and save them.
-        Duration period = periodParam == null ? DEFAULT_PERIOD : PERIODS.getOrDefault(periodParam, DEFAULT_PERIOD);
         ZonedDateTime timeBegin = null;
         ZonedDateTime timeEnd = null;
 
@@ -259,18 +250,11 @@ public class ChartServlet extends OpenHABServlet {
             }
         }
 
-        // Set begin and end time and check legality.
-        if (timeBegin == null && timeEnd == null) {
-            timeEnd = ZonedDateTime.now(timeZoneProvider.getTimeZone());
-            timeBegin = timeEnd.minus(period);
-            logger.debug("No begin or end is specified, use now as end and now-period as begin.");
-        } else if (timeEnd == null) {
-            timeEnd = timeBegin.plus(period);
-            logger.debug("No end is specified, use begin + period as end.");
-        } else if (timeBegin == null) {
-            timeBegin = timeEnd.minus(period);
-            logger.debug("No begin is specified, use end-period as begin");
-        } else if (timeEnd.isBefore(timeBegin)) {
+        PeriodPastFuture period = getPeriodPastFuture(periodParam);
+        PeriodBeginEnd beginEnd = getPeriodBeginEnd(timeBegin, timeEnd, period,
+                ZonedDateTime.now(timeZoneProvider.getTimeZone()));
+
+        if (beginEnd.begin() != null && beginEnd.end() != null && beginEnd.end().isBefore(beginEnd.begin())) {
             res.sendError(HttpServletResponse.SC_BAD_REQUEST, "The end is before the begin.");
             return;
         }
@@ -300,6 +284,9 @@ public class ChartServlet extends OpenHABServlet {
             }
         }
 
+        String yAxisDecimalPattern = req.getParameter("yAxisDecimalPattern");
+        String interpolation = req.getParameter("interpolation");
+
         // Read out parameter 'legend'
         String legendParam = req.getParameter("legend");
         Boolean legend = null;
@@ -317,8 +304,9 @@ public class ChartServlet extends OpenHABServlet {
 
         logger.debug("chart building with width {} height {} dpi {}", width, height, dpi);
         try {
-            BufferedImage chart = provider.createChart(serviceName, req.getParameter("theme"), timeBegin, timeEnd,
-                    height, width, req.getParameter("items"), req.getParameter("groups"), dpi, legend);
+            BufferedImage chart = provider.createChart(serviceName, req.getParameter("theme"), beginEnd.begin(),
+                    beginEnd.end(), height, width, req.getParameter("items"), req.getParameter("groups"), dpi,
+                    yAxisDecimalPattern, interpolation, legend);
             // Set the content type to that provided by the chart provider
             res.setContentType("image/" + provider.getChartType());
             try (ImageOutputStream imageOutputStream = ImageIO.createImageOutputStream(res.getOutputStream())) {
@@ -357,5 +345,105 @@ public class ChartServlet extends OpenHABServlet {
 
     @Override
     public void destroy() {
+    }
+
+    protected static @Nullable TemporalAmount convertToTemporalAmount(@Nullable String periodParam,
+            @Nullable TemporalAmount defaultPeriod) {
+        TemporalAmount period = defaultPeriod;
+        String convertedPeriod = convertPeriodToISO8601(periodParam);
+        if (convertedPeriod != null) {
+            boolean failed = false;
+            try {
+                period = Period.parse(convertedPeriod);
+            } catch (DateTimeParseException e) {
+                failed = true;
+            }
+            if (failed) {
+                try {
+                    period = Duration.parse(convertedPeriod);
+                } catch (DateTimeParseException e) {
+                    // Ignored
+                }
+            }
+        }
+        return period;
+    }
+
+    private static @Nullable String convertPeriodToISO8601(@Nullable String period) {
+        if (period == null || period.startsWith("P") || !(period.endsWith("h") || period.endsWith("D")
+                || period.endsWith("W") || period.endsWith("M") || period.endsWith("Y"))) {
+            return period;
+        }
+        String newPeriod = period.length() == 1 ? "1" + period : period;
+        if (newPeriod.endsWith("h")) {
+            newPeriod = "T" + newPeriod.replace("h", "H");
+        }
+        return "P" + newPeriod;
+    }
+
+    protected static PeriodPastFuture getPeriodPastFuture(@Nullable String periodParam) {
+        String periodParamPast = null;
+        String periodParamFuture = null;
+        TemporalAmount defaultPeriodPast = DEFAULT_PERIOD;
+        TemporalAmount defaultPeriodFuture = null;
+        if (periodParam != null) {
+            int idx = periodParam.indexOf("-");
+            if (idx < 0) {
+                periodParamPast = periodParam;
+            } else {
+                if (idx > 0) {
+                    periodParamPast = periodParam.substring(0, idx);
+                } else {
+                    defaultPeriodPast = null;
+                    defaultPeriodFuture = DEFAULT_PERIOD;
+                }
+                periodParamFuture = periodParam.substring(idx + 1);
+            }
+        }
+        TemporalAmount periodPast = convertToTemporalAmount(periodParamPast, defaultPeriodPast);
+        TemporalAmount periodFuture = convertToTemporalAmount(periodParamFuture, defaultPeriodFuture);
+        return new PeriodPastFuture(periodPast, periodFuture);
+    }
+
+    protected static PeriodBeginEnd getPeriodBeginEnd(@Nullable ZonedDateTime begin, @Nullable ZonedDateTime end,
+            PeriodPastFuture period, ZonedDateTime now) {
+        ZonedDateTime timeBegin = begin;
+        ZonedDateTime timeEnd = end;
+        TemporalAmount periodPast = period.past();
+        TemporalAmount periodFuture = period.future();
+
+        if (timeBegin == null && timeEnd == null) {
+            timeBegin = timeEnd = now;
+            if (periodPast != null) {
+                timeBegin = timeBegin.minus(periodPast);
+            }
+            if (periodFuture != null) {
+                timeEnd = timeEnd.plus(periodFuture);
+            }
+        } else if (timeBegin != null && timeEnd == null) {
+            timeEnd = timeBegin;
+            if (periodPast != null) {
+                timeEnd = timeEnd.plus(periodPast);
+            }
+            if (periodFuture != null) {
+                timeEnd = timeEnd.plus(periodFuture);
+            }
+        } else if (timeBegin == null && timeEnd != null) {
+            timeBegin = timeEnd;
+            if (periodFuture != null) {
+                timeBegin = timeBegin.minus(periodFuture);
+            }
+            if (periodPast != null) {
+                timeBegin = timeBegin.minus(periodPast);
+            }
+        }
+
+        return new PeriodBeginEnd(Objects.requireNonNull(timeBegin), Objects.requireNonNull(timeEnd));
+    }
+
+    record PeriodPastFuture(@Nullable TemporalAmount past, @Nullable TemporalAmount future) {
+    }
+
+    record PeriodBeginEnd(ZonedDateTime begin, ZonedDateTime end) {
     }
 }

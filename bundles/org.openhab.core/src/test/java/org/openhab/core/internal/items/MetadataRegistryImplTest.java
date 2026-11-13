@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,10 +13,9 @@
 package org.openhab.core.internal.items;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.util.Collections;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.core.items.ManagedMetadataProvider;
 import org.openhab.core.items.Metadata;
 import org.openhab.core.items.MetadataKey;
+import org.openhab.core.service.ReadyService;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceEvent;
 import org.osgi.framework.ServiceListener;
@@ -44,6 +44,7 @@ public class MetadataRegistryImplTest {
     private @Mock @NonNullByDefault({}) ServiceReference managedProviderRefMock;
     private @Mock @NonNullByDefault({}) BundleContext bundleContextMock;
     private @Mock @NonNullByDefault({}) ManagedMetadataProvider managedProviderMock;
+    private @Mock @NonNullByDefault({}) ReadyService readyServiceMock;
 
     private @NonNullByDefault({}) MetadataRegistryImpl registry;
     private @NonNullByDefault({}) ServiceListener providerTracker;
@@ -53,7 +54,7 @@ public class MetadataRegistryImplTest {
     public void setup() throws Exception {
         when(bundleContextMock.getService(same(managedProviderRefMock))).thenReturn(managedProviderMock);
 
-        registry = new MetadataRegistryImpl();
+        registry = new MetadataRegistryImpl(readyServiceMock);
         registry.setManagedProvider(managedProviderMock);
         registry.activate(bundleContextMock);
         registry.waitForCompletedAsyncActivationTasks();
@@ -75,11 +76,9 @@ public class MetadataRegistryImplTest {
     @Test
     public void testGet() throws Exception {
         MetadataKey key = new MetadataKey("namespace", "itemName");
-        registry.added(managedProviderMock, new Metadata(key, "value", Collections.emptyMap()));
-        registry.added(managedProviderMock,
-                new Metadata(new MetadataKey("other", "itemName"), "other", Collections.emptyMap()));
-        registry.added(managedProviderMock,
-                new Metadata(new MetadataKey("namespace", "other"), "other", Collections.emptyMap()));
+        registry.added(managedProviderMock, new Metadata(key, "value", Map.of()));
+        registry.added(managedProviderMock, new Metadata(new MetadataKey("other", "itemName"), "other", Map.of()));
+        registry.added(managedProviderMock, new Metadata(new MetadataKey("namespace", "other"), "other", Map.of()));
 
         Metadata res = registry.get(key);
         assertNotNull(res);

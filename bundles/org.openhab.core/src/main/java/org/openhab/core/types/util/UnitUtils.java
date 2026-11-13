@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,8 +16,9 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.Arrays;
+import java.lang.reflect.WildcardType;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -31,6 +32,7 @@ import javax.measure.spi.SystemOfUnits;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.internal.library.unit.UnitInitializer;
+import org.openhab.core.library.unit.CurrencyUnits;
 import org.openhab.core.library.unit.ImperialUnits;
 import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
@@ -58,8 +60,8 @@ public class UnitUtils {
     private static final String SI_DIMENSION_PREFIX = "si.uom.quantity.";
     private static final String FRAMEWORK_DIMENSION_PREFIX = "org.openhab.core.library.dimension.";
 
-    private static final Collection<Class<? extends SystemOfUnits>> ALL_SYSTEM_OF_UNITS = Arrays.asList(SIUnits.class,
-            ImperialUnits.class, Units.class, tech.units.indriya.unit.Units.class);
+    private static final Collection<Class<? extends SystemOfUnits>> ALL_SYSTEM_OF_UNITS = List.of(SIUnits.class,
+            ImperialUnits.class, Units.class, tech.units.indriya.unit.Units.class, CurrencyUnits.class);
 
     static {
         UnitInitializer.init();
@@ -75,8 +77,8 @@ public class UnitUtils {
      * @return the {@link Class} instance of the interface or {@code null} if the given dimension is blank.
      * @throws IllegalArgumentException in case no class instance could be parsed from the given dimension.
      */
-    public static @Nullable Class<? extends Quantity<?>> parseDimension(String dimension) {
-        if (dimension.isBlank()) {
+    public static @Nullable Class<? extends Quantity<?>> parseDimension(@Nullable String dimension) {
+        if (dimension == null || dimension.isBlank()) {
             return null;
         }
 
@@ -115,9 +117,12 @@ public class UnitUtils {
             for (Field field : system.getDeclaredFields()) {
                 if (field.getType().isAssignableFrom(Unit.class) && Modifier.isStatic(field.getModifiers())) {
                     Type genericType = field.getGenericType();
-                    if (genericType instanceof ParameterizedType) {
-                        String dimension = ((Class<?>) ((ParameterizedType) genericType).getActualTypeArguments()[0])
-                                .getSimpleName();
+                    if (genericType instanceof ParameterizedType type) {
+                        Type typeParam = type.getActualTypeArguments()[0];
+                        if (typeParam instanceof WildcardType) {
+                            continue;
+                        }
+                        String dimension = ((Class<?>) typeParam).getSimpleName();
                         try {
                             Unit<?> systemUnit = (Unit<?>) field.get(null);
                             if (systemUnit == null) {
@@ -145,7 +150,7 @@ public class UnitUtils {
      * label). In the latter case, the unit is expected to be the last part of the pattern separated by " " (e.g. "%.2f
      * °C" for °C).
      *
-     * @param stringWithUnit the string to extract the unit symbol from
+     * @param pattern the string to extract the unit symbol from
      * @return the unit symbol extracted from the string or {@code null} if no unit could be parsed
      *
      */
@@ -184,14 +189,12 @@ public class UnitUtils {
                 || (siUnits.contains(thatUnit) && usUnits.contains(thisUnit));
 
         if (!differentSystems) {
-            if (thisUnit instanceof TransformedUnit
-                    && isMetricConversion(((TransformedUnit<?>) thisUnit).getConverter())) {
-                return isDifferentMeasurementSystem(((TransformedUnit<?>) thisUnit).getParentUnit(), thatUnit);
+            if (thisUnit instanceof TransformedUnit unit && isMetricConversion(unit.getConverter())) {
+                return isDifferentMeasurementSystem(unit.getParentUnit(), thatUnit);
             }
 
-            if (thatUnit instanceof TransformedUnit
-                    && isMetricConversion(((TransformedUnit<?>) thatUnit).getConverter())) {
-                return isDifferentMeasurementSystem(thisUnit, ((TransformedUnit<?>) thatUnit).getParentUnit());
+            if (thatUnit instanceof TransformedUnit unit && isMetricConversion(unit.getConverter())) {
+                return isDifferentMeasurementSystem(thisUnit, unit.getParentUnit());
             }
         }
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -29,6 +29,14 @@ import org.openhab.core.automation.Trigger;
  */
 @NonNullByDefault
 public interface ConditionHandler extends ModuleHandler {
+    /**
+     * Called to compile the {@link Condition} when the {@link Rule} is initialized.
+     *
+     * @throws Exception if the compilation fails
+     */
+    default void compile() throws Exception {
+        // Do nothing by default
+    }
 
     /**
      * Checks if the Condition is satisfied in the given {@code context}.
@@ -37,5 +45,5 @@ public interface ConditionHandler extends ModuleHandler {
      *            and the inputs of the {@link Condition}.
      * @return {@code true} if {@link Condition} is satisfied, {@code false} otherwise.
      */
-    public boolean isSatisfied(Map<String, Object> context);
+    boolean isSatisfied(Map<String, Object> context);
 }

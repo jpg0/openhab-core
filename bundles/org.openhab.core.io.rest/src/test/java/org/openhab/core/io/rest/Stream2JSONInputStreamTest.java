@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,15 +18,16 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.openhab.core.library.types.DateTimeType;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParser;
 
 /**
  * Tests {@link Stream2JSONInputStream}.
@@ -36,11 +37,11 @@ import com.google.gson.GsonBuilder;
 @NonNullByDefault
 public class Stream2JSONInputStreamTest {
 
-    private static final Gson GSON = new GsonBuilder().create();
+    private static final Gson GSON = new GsonBuilder().setDateFormat(DateTimeType.DATE_PATTERN_JSON_COMPAT).create();
 
     @Test
     public void shouldReturnForEmptyStream() throws Exception {
-        List<Object> emptyList = Collections.emptyList();
+        List<Object> emptyList = List.of();
         Stream2JSONInputStream collection2InputStream = new Stream2JSONInputStream(emptyList.stream());
 
         assertThat(inputStreamToString(collection2InputStream), is(GSON.toJson(emptyList)));
@@ -52,7 +53,8 @@ public class Stream2JSONInputStreamTest {
         List<DummyObject> dummyList = List.of(dummyObject);
         Stream2JSONInputStream collection2InputStream = new Stream2JSONInputStream(Stream.of(dummyObject));
 
-        assertThat(inputStreamToString(collection2InputStream), is(GSON.toJson(dummyList)));
+        assertThat(JsonParser.parseString(inputStreamToString(collection2InputStream)),
+                is(JsonParser.parseString(GSON.toJson(dummyList))));
     }
 
     @Test
@@ -62,7 +64,8 @@ public class Stream2JSONInputStreamTest {
         List<DummyObject> dummyCollection = List.of(dummyObject1, dummyObject2);
         Stream2JSONInputStream collection2InputStream = new Stream2JSONInputStream(dummyCollection.stream());
 
-        assertThat(inputStreamToString(collection2InputStream), is(GSON.toJson(dummyCollection)));
+        assertThat(JsonParser.parseString(inputStreamToString(collection2InputStream)),
+                is(JsonParser.parseString(GSON.toJson(dummyCollection))));
     }
 
     private String inputStreamToString(InputStream in) throws IOException {
@@ -70,7 +73,7 @@ public class Stream2JSONInputStreamTest {
     }
 
     @SuppressWarnings("unused")
-    private class DummyObject {
+    private static class DummyObject {
         private final String key;
         private final String value;
 

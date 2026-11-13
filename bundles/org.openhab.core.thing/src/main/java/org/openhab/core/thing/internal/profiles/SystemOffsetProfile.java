@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,22 +15,19 @@ package org.openhab.core.thing.internal.profiles;
 import java.math.BigDecimal;
 
 import javax.measure.UnconvertibleException;
-import javax.measure.quantity.Temperature;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.QuantityType;
-import org.openhab.core.library.unit.ImperialUnits;
-import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
 import org.openhab.core.thing.profiles.ProfileCallback;
 import org.openhab.core.thing.profiles.ProfileContext;
 import org.openhab.core.thing.profiles.ProfileTypeUID;
-import org.openhab.core.thing.profiles.StateProfile;
 import org.openhab.core.thing.profiles.SystemProfiles;
+import org.openhab.core.thing.profiles.TimeSeriesProfile;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
+import org.openhab.core.types.TimeSeries;
 import org.openhab.core.types.Type;
 import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
@@ -42,12 +39,8 @@ import org.slf4j.LoggerFactory;
  * @author Stefan Triller - Initial contribution
  */
 @NonNullByDefault
-public class SystemOffsetProfile implements StateProfile {
+public class SystemOffsetProfile implements TimeSeriesProfile {
 
-    private static final @Nullable QuantityType<Temperature> ZERO_CELSIUS_IN_KELVIN = new QuantityType<>(0,
-            SIUnits.CELSIUS).toUnit(Units.KELVIN);
-    private static final @Nullable QuantityType<Temperature> ZERO_FAHRENHEIT_IN_KELVIN = new QuantityType<>(0,
-            ImperialUnits.FAHRENHEIT).toUnit(Units.KELVIN);
     static final String OFFSET_PARAM = "offset";
 
     private final Logger logger = LoggerFactory.getLogger(SystemOffsetProfile.class);
@@ -61,16 +54,15 @@ public class SystemOffsetProfile implements StateProfile {
 
         Object paramValue = context.getConfiguration().get(OFFSET_PARAM);
         logger.debug("Configuring profile with {} parameter '{}'", OFFSET_PARAM, paramValue);
-        if (paramValue instanceof String) {
+        if (paramValue instanceof String string) {
             try {
-                offset = new QuantityType<>((String) paramValue);
+                offset = new QuantityType<>(string);
             } catch (IllegalArgumentException e) {
                 logger.error(
                         "Cannot convert value '{}' of parameter '{}' into a valid offset of type QuantityType. Using offset 0 now.",
                         paramValue, OFFSET_PARAM);
             }
-        } else if (paramValue instanceof BigDecimal) {
-            BigDecimal bd = (BigDecimal) paramValue;
+        } else if (paramValue instanceof BigDecimal bd) {
             offset = new QuantityType<>(bd.toString());
         } else {
             logger.error(
@@ -103,6 +95,14 @@ public class SystemOffsetProfile implements StateProfile {
         callback.sendUpdate((State) applyOffset(state, true));
     }
 
+    @Override
+    public void onTimeSeriesFromHandler(TimeSeries timeSeries) {
+        TimeSeries transformedTimeSeries = new TimeSeries(timeSeries.getPolicy());
+        timeSeries.getStates().forEach(
+                entry -> transformedTimeSeries.add(entry.timestamp(), (State) applyOffset(entry.state(), true)));
+        callback.sendTimeSeries(transformedTimeSeries);
+    }
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private Type applyOffset(Type state, boolean towardsItem) {
         if (state instanceof UnDefType) {
@@ -112,8 +112,7 @@ public class SystemOffsetProfile implements StateProfile {
 
         QuantityType finalOffset = towardsItem ? offset : offset.negate();
         Type result = UnDefType.UNDEF;
-        if (state instanceof QuantityType) {
-            QuantityType qtState = (QuantityType) state;
+        if (state instanceof QuantityType qtState) {
             try {
                 if (Units.ONE.equals(finalOffset.getUnit()) && !Units.ONE.equals(qtState.getUnit())) {
                     // allow offsets without unit -> implicitly assume its the same as the one from the state, but warn
@@ -123,20 +122,11 @@ public class SystemOffsetProfile implements StateProfile {
                             state, offset);
                     finalOffset = new QuantityType<>(finalOffset.toBigDecimal(), qtState.getUnit());
                 }
-                // take care of temperatures because they start at offset -273°C = 0K
-                if (Units.KELVIN.equals(qtState.getUnit().getSystemUnit())) {
-                    QuantityType<Temperature> tmp = handleTemperature(qtState, finalOffset);
-                    if (tmp != null) {
-                        result = tmp;
-                    }
-                } else {
-                    result = qtState.add(finalOffset);
-                }
+                result = qtState.add(finalOffset);
             } catch (UnconvertibleException e) {
                 logger.warn("Cannot apply offset '{}' to state '{}' because types do not match.", finalOffset, qtState);
             }
-        } else if (state instanceof DecimalType && Units.ONE.equals(finalOffset.getUnit())) {
-            DecimalType decState = (DecimalType) state;
+        } else if (state instanceof DecimalType decState && Units.ONE.equals(finalOffset.getUnit())) {
             result = new DecimalType(decState.toBigDecimal().add(finalOffset.toBigDecimal()));
         } else {
             logger.warn(
@@ -145,27 +135,5 @@ public class SystemOffsetProfile implements StateProfile {
             result = state;
         }
         return result;
-    }
-
-    @SuppressWarnings("null")
-    private @Nullable QuantityType<Temperature> handleTemperature(QuantityType<Temperature> qtState,
-            QuantityType<Temperature> offset) {
-        // do the math in Kelvin and afterwards convert it back to the unit of the state
-        final QuantityType<Temperature> kelvinState = qtState.toUnit(Units.KELVIN);
-        final QuantityType<Temperature> kelvinOffset = offset.toUnit(Units.KELVIN);
-        if (kelvinState == null || kelvinOffset == null) {
-            return null;
-        }
-
-        final QuantityType<Temperature> finalOffset;
-        if (SIUnits.CELSIUS.equals(offset.getUnit())) {
-            finalOffset = kelvinOffset.add(ZERO_CELSIUS_IN_KELVIN.negate());
-        } else if (ImperialUnits.FAHRENHEIT.equals(offset.getUnit())) {
-            finalOffset = kelvinOffset.add(ZERO_FAHRENHEIT_IN_KELVIN.negate());
-        } else {
-            // offset is already in Kelvin
-            finalOffset = offset;
-        }
-        return kelvinState.add(finalOffset).toUnit(qtState.getUnit());
     }
 }

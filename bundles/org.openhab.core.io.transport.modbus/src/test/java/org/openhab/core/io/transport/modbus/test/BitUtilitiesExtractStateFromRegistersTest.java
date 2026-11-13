@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,10 +17,8 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Collection;
-import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,7 +39,7 @@ public class BitUtilitiesExtractStateFromRegistersTest {
     }
 
     public static Collection<Object[]> data() {
-        return Collections.unmodifiableList(Stream.of(
+        return List.of(
                 //
                 // BIT
                 //
@@ -350,25 +348,22 @@ public class BitUtilitiesExtractStateFromRegistersTest {
                 new Object[] {
                         // out of bounds of unsigned 64bit
                         new DecimalType("16124500437522872585"), ValueType.UINT64_SWAP,
-                        shortArrayToRegisterArray(0x7909, 0x772E, 0xBBB7, 0xDFC5), 0 })
-                .collect(Collectors.toList()));
+                        shortArrayToRegisterArray(0x7909, 0x772E, 0xBBB7, 0xDFC5), 0 });
     }
 
-    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @SuppressWarnings("unchecked")
     @ParameterizedTest
     @MethodSource("data")
     public void testextractStateFromRegisters(Object expectedResult, ValueType type, ModbusRegisterArray registers,
             int index) {
-        if (expectedResult instanceof Class && Exception.class.isAssignableFrom((Class) expectedResult)) {
-            assertThrows((Class) expectedResult,
-                    () -> ModbusBitUtilities.extractStateFromRegisters(registers, index, type));
+        if (expectedResult instanceof Class class1 && Exception.class.isAssignableFrom(class1)) {
+            assertThrows(class1, () -> ModbusBitUtilities.extractStateFromRegisters(registers, index, type));
             return;
         }
 
         Optional<DecimalType> actualState = ModbusBitUtilities.extractStateFromRegisters(registers, index, type);
         // Wrap given expectedResult to Optional, if necessary
-        Optional<DecimalType> expectedStateWrapped = expectedResult instanceof DecimalType
-                ? Optional.of((DecimalType) expectedResult)
+        Optional<DecimalType> expectedStateWrapped = expectedResult instanceof DecimalType dt ? Optional.of(dt)
                 : (Optional<DecimalType>) expectedResult;
         assertThat(String.format("registers=%s, index=%d, type=%s", registers, index, type), actualState,
                 is(equalTo(expectedStateWrapped)));

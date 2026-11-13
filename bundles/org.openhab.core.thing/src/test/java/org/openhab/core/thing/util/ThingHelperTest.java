@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,11 +12,10 @@
  */
 package org.openhab.core.thing.util;
 
-import static java.util.stream.Collectors.toList;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
-import java.util.stream.Stream;
+import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
@@ -138,8 +137,24 @@ public class ThingHelperTest {
 
         assertThrows(IllegalArgumentException.class,
                 () -> ThingHelper.addChannelsToThing(thing,
-                        Stream.of(ChannelBuilder.create(new ChannelUID(thingUID, "channel2"), "").build(),
-                                ChannelBuilder.create(new ChannelUID(thingUID, "channel3"), "").build())
-                                .collect(toList())));
+                        List.of(ChannelBuilder.create(new ChannelUID(thingUID, "channel2"), "").build(),
+                                ChannelBuilder.create(new ChannelUID(thingUID, "channel3"), "").build())));
+    }
+
+    @Test
+    public void asserThatChannelsWithDifferentConfigurationAreDetectedAsDifferent() {
+        Thing thingA = ThingBuilder.create(THING_TYPE_UID, THING_UID)
+                .withChannels(ChannelBuilder.create(new ChannelUID("binding:type:thingId:channel1"), "itemType")
+                        .withConfiguration(new Configuration(Map.of("key", "v1"))).build())
+                .withConfiguration(new Configuration()).build();
+
+        assertTrue(ThingHelper.equals(thingA, thingA));
+
+        Thing thingB = ThingBuilder.create(THING_TYPE_UID, THING_UID)
+                .withChannels(ChannelBuilder.create(new ChannelUID("binding:type:thingId:channel1"), "itemType")
+                        .withConfiguration(new Configuration(Map.of("key", "v2"))).build())
+                .withConfiguration(new Configuration()).build();
+
+        assertFalse(ThingHelper.equals(thingA, thingB));
     }
 }

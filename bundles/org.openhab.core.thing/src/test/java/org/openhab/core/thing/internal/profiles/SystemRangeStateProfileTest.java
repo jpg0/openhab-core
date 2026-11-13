@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,7 +18,6 @@ import static org.mockito.Mockito.*;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -77,7 +76,7 @@ public class SystemRangeStateProfileTest {
             this.commands = (List<Command>) sources;
             this.resultingCommands = new ArrayList<>(results.size());
             results.forEach(result -> {
-                resultingCommands.add(result instanceof Command ? (Command) result : null);
+                resultingCommands.add(result instanceof Command c ? c : null);
             });
             this.lower = lower;
             this.upper = upper;
@@ -86,7 +85,7 @@ public class SystemRangeStateProfileTest {
     }
 
     public static Collection<Object[]> parameters() {
-        return Arrays.asList(new Object[][] { //
+        return List.of(new Object[][] { //
                 // lower bound = 10, upper bound = 40 (as BigDecimal), one state update / command (PercentType), not
                 // inverted
                 { new ParameterSet(List.of(PercentType.HUNDRED), List.of(OnOffType.OFF), BigDecimal.TEN,

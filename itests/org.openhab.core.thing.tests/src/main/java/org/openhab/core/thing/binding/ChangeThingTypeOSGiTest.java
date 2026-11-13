@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,7 +16,8 @@ import static java.util.Map.entry;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -24,6 +25,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -44,9 +46,12 @@ import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.ManagedThingProvider;
 import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
+import org.openhab.core.thing.dto.ThingDTOMapper;
+import org.openhab.core.thing.internal.ThingStorageEntity;
 import org.openhab.core.thing.link.ItemChannelLink;
 import org.openhab.core.thing.link.ManagedItemChannelLinkProvider;
 import org.openhab.core.thing.type.ChannelDefinition;
@@ -104,6 +109,7 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
     private @NonNullByDefault({}) ManagedThingProvider managedThingProvider;
     private @NonNullByDefault({}) ManagedItemProvider managedItemProvider;
     private @NonNullByDefault({}) SampleThingHandlerFactory thingHandlerFactory;
+    private @NonNullByDefault({}) ThingRegistry thingRegistry;
 
     private @NonNullByDefault({}) ThingType thingTypeGeneric;
     private @NonNullByDefault({}) ThingType thingTypeSpecific;
@@ -116,6 +122,9 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
 
     @BeforeEach
     public void setup() throws URISyntaxException {
+        thingRegistry = getService(ThingRegistry.class);
+        assertThat(thingRegistry, is(notNullValue()));
+
         registerVolatileStorageService();
         managedThingProvider = getService(ManagedThingProvider.class);
         assertThat(managedThingProvider, is(notNullValue()));
@@ -154,7 +163,7 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
         ThingTypeRegistry thingTypeRegistry = mock(ThingTypeRegistry.class);
         when(thingTypeRegistry.getThingType(any(), any()))
                 .thenAnswer(invocation -> thingTypes.get(invocation.getArgument(0)));
-        registerService(thingTypeRegistry);
+        registerService(thingTypeRegistry, ThingTypeRegistry.class.getName());
 
         ConfigDescriptionProvider configDescriptionProvider = mock(ConfigDescriptionProvider.class);
         when(configDescriptionProvider.getConfigDescription(any(), any()))
@@ -264,7 +273,7 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
         assertThat(thing.getConfiguration().get("parametergeneric"), is("defaultgeneric"));
         assertThat(thing.getConfiguration().get("providedspecific"), is(nullValue()));
         assertThat(thing.getChannels().size(), is(1));
-        assertThat(thing.getChannels().get(0).getUID(), is(CHANNEL_GENERIC_UID));
+        assertThat(thing.getChannels().getFirst().getUID(), is(CHANNEL_GENERIC_UID));
         assertThat(thing.getProperties().get("universal"), is("survives"));
 
         ThingHandlerFactory handlerFactory = getService(ThingHandlerFactory.class, SampleThingHandlerFactory.class);
@@ -324,7 +333,8 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
         Thing persistedThing = ThingFactory.createThing(thingTypeSpecific,
                 new ThingUID("testBinding", "persistedThing"), new Configuration(properties), null, null);
         persistedThing.setProperty("universal", "survives");
-        storage.getStorage(Thing.class.getName()).put("testBinding::persistedThing", persistedThing);
+        storage.getStorage(Thing.class.getName()).put("testBinding::persistedThing",
+                new ThingStorageEntity(ThingDTOMapper.map(persistedThing), false));
         selfChanging = true;
 
         unregisterService(storage);
@@ -335,7 +345,7 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
         managedThingProvider = getService(ManagedThingProvider.class);
         assertThat(managedThingProvider, is(notNullValue()));
 
-        Collection<Thing> res = managedThingProvider.getAll();
+        Collection<Thing> res = thingRegistry.getAll();
         assertThat(res.size(), is(1));
 
         Thing thing = res.iterator().next();
@@ -382,7 +392,7 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
 
         // Ensure that the new set of channels is there
         assertThat(thing.getChannels().size(), is(1));
-        assertThat(thing.getChannels().get(0).getUID().getId(), containsString("specific"));
+        assertThat(thing.getChannels().getFirst().getUID().getId(), containsString("specific"));
 
         // Ensure that the old properties are still there
         assertThat(thing.getProperties().get("universal"), is("survives"));
@@ -400,8 +410,8 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
         assertThat(thing.getStatus(), is(ThingStatus.ONLINE));
 
         // Ensure the new thing type has been persisted into the database
-        Storage<Thing> storage = getService(StorageService.class).getStorage(Thing.class.getName());
-        Thing persistedThing = storage.get("testBinding::testThing");
+        Storage<ThingStorageEntity> storage = getService(StorageService.class).getStorage(Thing.class.getName());
+        Thing persistedThing = ThingDTOMapper.map(Objects.requireNonNull(storage.get("testBinding::testThing")), false);
         assertThat(persistedThing.getThingTypeUID().getAsString(), is("testBinding:specific"));
     }
 
@@ -428,12 +438,16 @@ public class ChangeThingTypeOSGiTest extends JavaOSGiTest {
     }
 
     private List<ChannelDefinition> getChannelDefinitions(ThingTypeUID thingTypeUID) throws URISyntaxException {
+        URI configDescriptionUri = new URI("scheme", "channelType:" + thingTypeUID.getId(), null);
         ChannelTypeUID channelTypeUID = new ChannelTypeUID("test:" + thingTypeUID.getId());
         ChannelType channelType = ChannelTypeBuilder.state(channelTypeUID, "channelLabel", "itemType")
                 .withDescription("description") //
                 .withCategory("category") //
-                .withConfigDescriptionURI(new URI("scheme", "channelType:" + thingTypeUID.getId(), null)).build();
+                .withConfigDescriptionURI(configDescriptionUri).build();
         channelTypes.put(channelTypeUID, channelType);
+
+        ConfigDescription configDescription = ConfigDescriptionBuilder.create(configDescriptionUri).build();
+        configDescriptions.put(configDescriptionUri, configDescription);
 
         ChannelDefinition cd = new ChannelDefinitionBuilder("channel" + thingTypeUID.getId(), channelTypeUID).build();
         return List.of(cd);

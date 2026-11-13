@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,8 @@
  */
 package org.openhab.core.model.item;
 
+import java.io.Serial;
+
 /**
  * This exception is used by {@link BindingConfigReader} instances if parsing configurations fails
  *
@@ -19,6 +21,7 @@ package org.openhab.core.model.item;
  */
 public class BindingConfigParseException extends Exception {
 
+    @Serial
     private static final long serialVersionUID = 1434607160082879845L;
 
     public BindingConfigParseException(String msg) {
@@ -28,5 +31,4 @@ public class BindingConfigParseException extends Exception {
     public BindingConfigParseException(String msg, Exception e) {
         super(msg, e);
     }
-
 }

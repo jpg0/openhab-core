@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,23 +14,35 @@ package org.openhab.core.io.rest.sitemap.internal;
 
 import org.openhab.core.io.rest.core.item.EnrichedItemDTO;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * A sitemap event, which provides details about a widget that has changed.
  *
  * @author Kai Kreuzer - Initial contribution
+ * @author Laurent Garnier - New field iconcolor
+ * @author Laurent Garnier - New field reloadIcon
+ * @author Danny Baumann - New field labelSource
+ * @author Mark Herwege - Add support for confirmation dialog for commands
  */
 public class SitemapWidgetEvent extends SitemapEvent {
 
+    /** Always present; distinguishes this event from the other {@link SitemapEvent} types in the SSE stream. */
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public String widgetId;
 
     public String label;
+    public String labelSource;
     public String icon;
+    public boolean reloadIcon;
     public String labelcolor;
     public String valuecolor;
+    public String iconcolor;
     public boolean visibility;
     public String state;
     public EnrichedItemDTO item;
     public boolean descriptionChanged;
+    public String commandConfirmMessage;
 
     public SitemapWidgetEvent() {
     }

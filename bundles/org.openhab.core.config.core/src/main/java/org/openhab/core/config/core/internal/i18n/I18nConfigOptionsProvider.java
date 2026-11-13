@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,6 @@ import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -30,7 +29,7 @@ import org.openhab.core.config.core.ParameterOption;
 import org.osgi.service.component.annotations.Component;
 
 /**
- * {@link ConfigOptionProvider} that provides a list of
+ * A {@link ConfigOptionProvider} that provides a list of config options for the i18n service
  *
  * @author Simon Kaufmann - Initial contribution
  * @author Erdoan Hadzhiyusein - Added time zone
@@ -51,44 +50,32 @@ public class I18nConfigOptionsProvider implements ConfigOptionProvider {
     @Override
     public @Nullable Collection<ParameterOption> getParameterOptions(URI uri, String param, @Nullable String context,
             @Nullable Locale locale) {
-        switch (uri.toString()) {
-            case "system:i18n":
-                return processParamType(param, locale, locale != null ? locale : Locale.getDefault());
-            case "profile:system:timestamp-offset":
-                return TIMEZONE.equals(param) ? processTimeZoneParam() : null;
-            default:
-                return null;
-        }
+        return switch (uri.toString()) {
+            case "system:i18n" -> processParamType(param, locale, locale != null ? locale : Locale.getDefault());
+            case "profile:system:timestamp-offset" -> TIMEZONE.equals(param) ? processTimeZoneParam() : null;
+            default -> null;
+        };
     }
 
     private @Nullable Collection<ParameterOption> processParamType(String param, @Nullable Locale locale,
             Locale translation) {
-        switch (param) {
-            case LANGUAGE:
-                return getAvailable(locale,
-                        l -> new ParameterOption(l.getLanguage(), l.getDisplayLanguage(translation)));
-            case REGION:
-                return getAvailable(locale, l -> new ParameterOption(l.getCountry(), l.getDisplayCountry(translation)));
-            case VARIANT:
-                return getAvailable(locale, l -> new ParameterOption(l.getVariant(), l.getDisplayVariant(translation)));
-            case TIMEZONE:
-                return processTimeZoneParam();
-            default:
-                return null;
-        }
+        return switch (param) {
+            case LANGUAGE ->
+                getAvailable(locale, l -> new ParameterOption(l.getLanguage(), l.getDisplayLanguage(translation)));
+            case REGION ->
+                getAvailable(locale, l -> new ParameterOption(l.getCountry(), l.getDisplayCountry(translation)));
+            case VARIANT ->
+                getAvailable(locale, l -> new ParameterOption(l.getVariant(), l.getDisplayVariant(translation)));
+            case TIMEZONE -> processTimeZoneParam();
+            default -> null;
+        };
     }
 
     private Collection<ParameterOption> processTimeZoneParam() {
-        Comparator<TimeZone> byOffset = (t1, t2) -> {
-            return t1.getRawOffset() - t2.getRawOffset();
-        };
-        Comparator<TimeZone> byID = (t1, t2) -> {
-            return t1.getID().compareTo(t2.getID());
-        };
+        Comparator<TimeZone> byOffset = Comparator.comparingInt(TimeZone::getRawOffset);
+        Comparator<TimeZone> byID = Comparator.comparing(TimeZone::getID);
         return ZoneId.getAvailableZoneIds().stream().map(TimeZone::getTimeZone).sorted(byOffset.thenComparing(byID))
-                .map(tz -> {
-                    return new ParameterOption(tz.getID(), getTimeZoneRepresentation(tz));
-                }).collect(Collectors.toList());
+                .map(tz -> new ParameterOption(tz.getID(), getTimeZoneRepresentation(tz))).toList();
     }
 
     private static String getTimeZoneRepresentation(TimeZone tz) {
@@ -112,7 +99,7 @@ public class I18nConfigOptionsProvider implements ConfigOptionProvider {
                 .map(mapFunction) //
                 .distinct() //
                 .filter(po -> !po.getValue().isEmpty()) //
-                .sorted(Comparator.comparing(a -> a.getLabel())) //
-                .collect(Collectors.toList());
+                .sorted(Comparator.comparing(ParameterOption::getLabel)) //
+                .toList();
     }
 }

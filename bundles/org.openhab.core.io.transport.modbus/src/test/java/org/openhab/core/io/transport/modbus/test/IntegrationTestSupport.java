@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,6 +26,8 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.HashMap;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.LongSupplier;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -278,7 +280,7 @@ public class IntegrationTestSupport extends JavaTest {
     }
 
     public ModbusSlaveEndpoint getEndpoint() {
-        assert tcpModbusPort > 0;
+        assertTrue(tcpModbusPort > 0);
         return new ModbusTCPSlaveEndpoint("127.0.0.1", tcpModbusPort, false);
     }
 
@@ -309,9 +311,20 @@ public class IntegrationTestSupport extends JavaTest {
 
     public class TCPSlaveConnectionFactoryImpl implements TCPSlaveConnectionFactory {
 
+        private final Queue<Socket> acceptedSockets = new ConcurrentLinkedQueue<>();
+
         @Override
         public TCPSlaveConnection create(@NonNullByDefault({}) Socket socket) {
+            acceptedSockets.add(socket);
             return new TCPSlaveConnection(socket, new SpyingModbusTCPTransportFactory());
+        }
+
+        public long countOpenSockets() {
+            return acceptedSockets.stream().filter(s -> !s.isClosed()).count();
+        }
+
+        public void clearAcceptedSockets() {
+            acceptedSockets.clear();
         }
     }
 
@@ -328,7 +341,7 @@ public class IntegrationTestSupport extends JavaTest {
     public class SerialConnectionFactoryImpl implements SerialConnectionFactory {
         @Override
         public SerialConnection create(@NonNullByDefault({}) SerialParameters parameters) {
-            SerialConnection serialConnection = new SerialConnection(parameters) {
+            return new SerialConnection(parameters) {
                 @Override
                 public ModbusTransport getModbusTransport() {
                     ModbusTransport transport = spy(super.getModbusTransport());
@@ -336,7 +349,6 @@ public class IntegrationTestSupport extends JavaTest {
                     return transport;
                 }
             };
-            return serialConnection;
         }
     }
 

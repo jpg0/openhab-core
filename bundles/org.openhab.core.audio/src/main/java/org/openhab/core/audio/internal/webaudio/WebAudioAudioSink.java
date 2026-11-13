@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,9 +21,9 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioHTTPServer;
 import org.openhab.core.audio.AudioSink;
+import org.openhab.core.audio.AudioSinkAsync;
 import org.openhab.core.audio.AudioStream;
-import org.openhab.core.audio.FixedLengthAudioStream;
-import org.openhab.core.audio.URLAudioStream;
+import org.openhab.core.audio.StreamServed;
 import org.openhab.core.audio.UnsupportedAudioFormatException;
 import org.openhab.core.audio.UnsupportedAudioStreamException;
 import org.openhab.core.events.EventPublisher;
@@ -44,16 +44,16 @@ import org.slf4j.LoggerFactory;
  */
 @NonNullByDefault
 @Component(service = AudioSink.class, immediate = true)
-public class WebAudioAudioSink implements AudioSink {
+public class WebAudioAudioSink extends AudioSinkAsync {
 
     private final Logger logger = LoggerFactory.getLogger(WebAudioAudioSink.class);
 
-    private static final Set<AudioFormat> SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.MP3, AudioFormat.WAV);
-    private static final Set<Class<? extends AudioStream>> SUPPORTED_AUDIO_STREAMS = Set
-            .of(FixedLengthAudioStream.class, URLAudioStream.class);
+    private static final Set<AudioFormat> SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.MP3, AudioFormat.WAV,
+            AudioFormat.FLAC);
+    private static final Set<Class<? extends AudioStream>> SUPPORTED_AUDIO_STREAMS = Set.of(AudioStream.class);
 
-    private AudioHTTPServer audioHTTPServer;
-    private EventPublisher eventPublisher;
+    private final AudioHTTPServer audioHTTPServer;
+    private final EventPublisher eventPublisher;
 
     @Activate
     public WebAudioAudioSink(@Reference AudioHTTPServer audioHTTPServer, @Reference EventPublisher eventPublisher) {
@@ -62,31 +62,24 @@ public class WebAudioAudioSink implements AudioSink {
     }
 
     @Override
-    public void process(@Nullable AudioStream audioStream)
+    public void processAsynchronously(@Nullable AudioStream audioStream)
             throws UnsupportedAudioFormatException, UnsupportedAudioStreamException {
         if (audioStream == null) {
             // in case the audioStream is null, this should be interpreted as a request to end any currently playing
             // stream.
-            logger.debug("Web Audio sink does not support stopping the currently playing stream.");
+            sendEvent("");
             return;
         }
-        try (AudioStream stream = audioStream) {
-            logger.debug("Received audio stream of format {}", audioStream.getFormat());
-            if (audioStream instanceof URLAudioStream) {
-                // it is an external URL, so we can directly pass this on.
-                URLAudioStream urlAudioStream = (URLAudioStream) audioStream;
-                sendEvent(urlAudioStream.getURL());
-            } else if (audioStream instanceof FixedLengthAudioStream) {
-                // we need to serve it for a while and make it available to multiple clients, hence only
-                // FixedLengthAudioStreams are supported.
-                sendEvent(audioHTTPServer.serve((FixedLengthAudioStream) audioStream, 10).toString());
-            } else {
-                throw new UnsupportedAudioStreamException(
-                        "Web audio sink can only handle FixedLengthAudioStreams and URLAudioStreams.",
-                        audioStream.getClass());
-            }
+        logger.debug("Received audio stream of format {}", audioStream.getFormat());
+
+        // we need to serve it for a while and make it available to multiple clients
+        try {
+            StreamServed servedStream = audioHTTPServer.serve(audioStream, 10, true);
+            // we will let the HTTP servlet run the delayed task when finished with the stream
+            servedStream.playEnd().thenRun(() -> this.playbackFinished(audioStream));
+            sendEvent(servedStream.url());
         } catch (IOException e) {
-            logger.debug("Error while closing the audio stream: {}", e.getMessage(), e);
+            logger.warn("Cannot precache the audio stream to serve it", e);
         }
     }
 

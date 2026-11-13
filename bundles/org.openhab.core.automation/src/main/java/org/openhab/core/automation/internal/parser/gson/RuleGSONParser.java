@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,8 +14,7 @@ package org.openhab.core.automation.internal.parser.gson;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.Collections;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -45,7 +44,7 @@ public class RuleGSONParser extends AbstractGSONParser<Rule> {
     public Set<Rule> parse(InputStreamReader reader) throws ParsingException {
         JsonReader jr = new JsonReader(reader);
         try {
-            Set<Rule> rules = new HashSet<>();
+            Set<Rule> rules = new LinkedHashSet<>();
             if (jr.hasNext()) {
                 JsonToken token = jr.peek();
                 if (JsonToken.BEGIN_ARRAY.equals(token)) {
@@ -68,6 +67,6 @@ public class RuleGSONParser extends AbstractGSONParser<Rule> {
             } catch (IOException e) {
             }
         }
-        return Collections.emptySet();
+        return Set.of();
     }
 }

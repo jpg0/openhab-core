@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -43,15 +43,15 @@ public enum AutoUpdatePolicy {
     RECOMMEND;
 
     /**
-     * Parses the input string into a {@link AutoUpdatePolicy}.
+     * Parses the input string into an {@link AutoUpdatePolicy}.
      *
      * @param input the input string
-     * @return the parsed AutoUpdatePolicy
+     * @return the parsed AutoUpdatePolicy or null if the input was null
      * @throws IllegalArgumentException if the input couldn't be parsed.
      */
-    public static AutoUpdatePolicy parse(@Nullable String input) {
+    public static @Nullable AutoUpdatePolicy parse(@Nullable String input) {
         if (input == null) {
-            return DEFAULT;
+            return null;
         }
 
         for (AutoUpdatePolicy value : values()) {

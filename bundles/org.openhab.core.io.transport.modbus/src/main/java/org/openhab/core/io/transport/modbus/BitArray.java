@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -113,13 +113,12 @@ public class BitArray implements Iterable<Boolean> {
 
     @Override
     public String toString() {
-        return new StringBuilder("BitArray(bits=").append(length == 0 ? "<empty>" : toBinaryString()).append(")")
-                .toString();
+        return "BitArray(bits=" + (length == 0 ? "<empty>" : toBinaryString()) + ")";
     }
 
     @Override
     public Iterator<Boolean> iterator() {
-        return IntStream.range(0, size()).mapToObj(i -> getBit(i)).iterator();
+        return IntStream.range(0, size()).mapToObj(this::getBit).iterator();
     }
 
     @Override

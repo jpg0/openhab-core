@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,13 +15,14 @@ package org.openhab.core.thing.binding.builder;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.openhab.core.thing.DefaultSystemChannelTypeProvider.SYSTEM_OUTDOOR_TEMPERATURE;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.library.CoreItemFactory;
@@ -43,15 +44,12 @@ public class ChannelBuilderTest {
 
     private static final String KEY1 = "key1";
     private static final String KEY2 = "key2";
+    private static final String KEY3 = "key3";
     private static final String VALUE1 = "value1";
     private static final String VALUE2 = "value2";
-    private final Map<String, String> properties = new HashMap<String, String>() {
-        private static final long serialVersionUID = 1L;
-        {
-            put(KEY1, VALUE1);
-            put(KEY2, VALUE2);
-        }
-    };
+
+    private static final Map<String, String> PROPERTIES = Map.of(KEY1, VALUE1, KEY2, VALUE2);
+
     private @NonNullByDefault({}) ChannelBuilder builder;
     private @NonNullByDefault({}) Channel channel;
 
@@ -62,7 +60,7 @@ public class ChannelBuilderTest {
         ChannelUID channelUID = new ChannelUID(new ThingUID(thingType.getUID(), "thingId"), "temperature");
         builder = ChannelBuilder.create(channelUID, SYSTEM_OUTDOOR_TEMPERATURE.getItemType()).withLabel("Test")
                 .withDescription("My test channel").withType(SYSTEM_OUTDOOR_TEMPERATURE.getUID())
-                .withProperties(properties);
+                .withProperties(PROPERTIES);
         channel = builder.build();
     }
 
@@ -90,6 +88,7 @@ public class ChannelBuilderTest {
         assertThat(otherChannel.getDescription(), is(channel.getDescription()));
         assertThat(otherChannel.getKind(), is(channel.getKind()));
         assertThat(otherChannel.getLabel(), is(channel.getLabel()));
+        assertThat(otherChannel.getAutoUpdatePolicy(), is(channel.getAutoUpdatePolicy()));
         assertThat(otherChannel.getProperties().size(), is(channel.getProperties().size()));
         assertThat(otherChannel.getProperties().get(KEY1), is(channel.getProperties().get(KEY1)));
         assertThat(otherChannel.getProperties().get(KEY2), is(channel.getProperties().get(KEY2)));
@@ -99,11 +98,32 @@ public class ChannelBuilderTest {
     @Test
     public void subsequentBuildsCreateIndependentChannels() {
         Channel otherChannel = builder.withLabel("Second Test").withDescription("My second test channel")
-                .withAcceptedItemType(CoreItemFactory.NUMBER).withProperties(Collections.emptyMap()).build();
+                .withAcceptedItemType(CoreItemFactory.NUMBER).withProperties(Map.of()).build();
 
         assertThat(otherChannel.getDescription(), is(not(channel.getDescription())));
         assertThat(otherChannel.getLabel(), is(not(channel.getLabel())));
         assertThat(otherChannel.getAcceptedItemType(), is(not(channel.getAcceptedItemType())));
         assertThat(otherChannel.getProperties().size(), is(not(channel.getProperties().size())));
+    }
+
+    @Test
+    public void testChannelBuilderWithInvalidProperties() {
+        Map<@Nullable String, @Nullable String> map = new HashMap<>();
+        map.put(KEY1, null);
+        map.put(KEY2, VALUE2);
+        map.put(KEY3, null);
+        map.put(null, VALUE1);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
+            builder.withProperties(toNonNullStringMap(map));
+        });
+        assertEquals(
+                "Unexpected properties (key1, key3, null) with null key or value for channel bindingId:thingTypeId:thingId:temperature",
+                exception.getMessage());
+    }
+
+    @SuppressWarnings("unchecked") // Map may contain null keys or values; this is intentional for this test
+    private static Map<String, String> toNonNullStringMap(Map<@Nullable String, @Nullable String> source) {
+        return (Map<String, String>) (Map<?, ?>) source;
     }
 }

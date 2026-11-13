@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -89,7 +89,7 @@ public class SymmetricKeyCipher implements StorageCipher {
         }
 
         // Generate IV
-        byte iv[] = new byte[IV_BYTE_SIZE];
+        byte[] iv = new byte[IV_BYTE_SIZE];
         random.nextBytes(iv);
         Cipher cipherEnc = Cipher.getInstance(ENCRYPTION_ALGO_MODE_WITH_PADDING);
         cipherEnc.init(Cipher.ENCRYPT_MODE, encryptionKey, new IvParameterSpec(iv));
@@ -100,9 +100,8 @@ public class SymmetricKeyCipher implements StorageCipher {
         System.arraycopy(iv, 0, encryptedBytesWithIV, 0, IV_BYTE_SIZE);
         // append encrypted text to tail
         System.arraycopy(encryptedBytes, 0, encryptedBytesWithIV, IV_BYTE_SIZE, encryptedBytes.length);
-        String encryptedBase64String = Base64.getEncoder().encodeToString(encryptedBytesWithIV);
 
-        return encryptedBase64String;
+        return Base64.getEncoder().encodeToString(encryptedBytesWithIV);
     }
 
     @Override
@@ -128,13 +127,12 @@ public class SymmetricKeyCipher implements StorageCipher {
     private static SecretKey generateEncryptionKey() throws NoSuchAlgorithmException {
         KeyGenerator keygen = KeyGenerator.getInstance(ENCRYPTION_ALGO);
         keygen.init(ENCRYPTION_KEY_SIZE_BITS);
-        SecretKey secretKey = keygen.generateKey();
-        return secretKey;
+        return keygen.generateKey();
     }
 
     private SecretKey getOrGenerateEncryptionKey() throws NoSuchAlgorithmException, IOException {
         Configuration configuration = configurationAdmin.getConfiguration(PID);
-        String encryptionKeyInBase64 = null;
+        String encryptionKeyInBase64;
         Dictionary<String, Object> properties = configuration.getProperties();
         if (properties == null) {
             properties = new Hashtable<>();

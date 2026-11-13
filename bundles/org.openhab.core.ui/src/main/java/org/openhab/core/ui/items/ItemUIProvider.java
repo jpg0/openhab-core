@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,7 @@ package org.openhab.core.ui.items;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.items.Item;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.sitemap.Widget;
 
 /**
  * This interface describes the methods that need to be implemented by a provider that
@@ -32,15 +32,17 @@ public interface ItemUIProvider {
      * @param itemName the name of the item to return the icon for
      * @return the name of the category to use or null if undefined.
      */
-    public @Nullable String getCategory(String itemName);
+    @Nullable
+    String getCategory(String itemName);
 
     /**
      * Returns the label text to be used for an item in the UI.
      *
-     * @param item the name of the item to return the label text for
+     * @param itemName the name of the item to return the label text for
      * @return the label text to be used in the UI or null if undefined.
      */
-    public @Nullable String getLabel(String itemName);
+    @Nullable
+    String getLabel(String itemName);
 
     /**
      * Provides a default widget for a given item (class). This is used whenever
@@ -52,7 +54,8 @@ public interface ItemUIProvider {
      * @return a widget implementation that can be used for the given item or null, if no default is available for the
      *         type
      */
-    public @Nullable Widget getDefaultWidget(@Nullable Class<? extends Item> itemType, String itemName);
+    @Nullable
+    Widget getDefaultWidget(@Nullable Class<? extends Item> itemType, String itemName);
 
     /**
      * <p>
@@ -66,5 +69,6 @@ public interface ItemUIProvider {
      * @param itemName the item name to get the widget for
      * @return a widget to use for the given item or <code>null</code> if sitemap should not be overridden.
      */
-    public @Nullable Widget getWidget(String itemName);
+    @Nullable
+    Widget getWidget(String itemName);
 }

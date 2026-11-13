@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,6 @@
  */
 package org.openhab.core.automation.type;
 
-import java.util.Collections;
 import java.util.Set;
 
 import org.openhab.core.automation.Module;
@@ -46,7 +45,7 @@ import org.openhab.core.automation.Rule;
 public class Output {
 
     /**
-     * is an unique name of the {@code Output} in scope of the {@link Module}.
+     * is a unique name of the {@code Output} in scope of the {@link Module}.
      */
     private String name;
 
@@ -60,7 +59,7 @@ public class Output {
     /**
      * This field is associated with the {@code Output}. The tags add additional restrictions to connections between
      * {@link Input}s and {@link Output}s. The {@link Input}'s tags must be subset of the {@code Output}'s tags to
-     * succeed the connection.</br>
+     * succeed the connection.<br>
      * For example: When we want to connect {@link Input} to {@code Output} and both have same java.lang.double data
      * type. The the output has assign "temperature" and "celsius" tags then the input must have at least one of these
      * output's tags (i.e. "temperature") to connect this input to the selected {@code Output}.
@@ -112,7 +111,7 @@ public class Output {
      * @param name a unique name of the {@code Output}.
      * @param type the type of the output data.
      * @param label a single word description of the {@code Output}.
-     * @param description is an user friendly description of the {@code Output}.
+     * @param description is a user friendly description of the {@code Output}.
      * @param tags are associated with the {@code Output}. The tags add additional restrictions to connections
      *            between {@link Input}s and {@link Output}s. The {@link Input}'s tags must be subset of the
      *            {@code Output}'s tags to succeed the connection.<br>
@@ -147,7 +146,7 @@ public class Output {
      * This method is used for getting the name of {@code Output}. It must be unique in
      * scope of {@link Rule}.
      *
-     * @return name is an unique identifier of the {@code Output}.
+     * @return name is a unique identifier of the {@code Output}.
      */
     public String getName() {
         return name;
@@ -205,7 +204,7 @@ public class Output {
      * @return the tags, associated with this {@link Input}.
      */
     public Set<String> getTags() {
-        return tags != null ? tags : Collections.<String> emptySet();
+        return tags != null ? tags : Set.of();
     }
 
     /**

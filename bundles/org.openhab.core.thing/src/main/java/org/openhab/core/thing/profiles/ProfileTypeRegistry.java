@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -32,7 +32,7 @@ public interface ProfileTypeRegistry {
      *
      * @return all profile types
      */
-    public List<ProfileType> getProfileTypes();
+    List<ProfileType> getProfileTypes();
 
     /**
      * Get the available {@link ProfileType}s from all providers.
@@ -40,5 +40,5 @@ public interface ProfileTypeRegistry {
      * @param locale the language to use (may be null)
      * @return all profile types
      */
-    public List<ProfileType> getProfileTypes(@Nullable Locale locale);
+    List<ProfileType> getProfileTypes(@Nullable Locale locale);
 }

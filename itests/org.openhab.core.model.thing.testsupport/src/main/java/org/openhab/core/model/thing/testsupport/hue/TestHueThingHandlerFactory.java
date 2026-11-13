@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -110,8 +110,8 @@ public class TestHueThingHandlerFactory extends BaseThingHandlerFactory {
 
     @Override
     protected @Nullable ThingHandler createHandler(Thing thing) {
-        if (thing instanceof Bridge) {
-            return new BaseBridgeHandler((Bridge) thing) {
+        if (thing instanceof Bridge bridge) {
+            return new BaseBridgeHandler(bridge) {
                 @Override
                 public void handleCommand(ChannelUID channelUID, Command command) {
                 }

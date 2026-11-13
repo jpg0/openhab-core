@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,9 +12,7 @@
  */
 package org.openhab.core.automation.internal.module.handler;
 
-import java.util.Dictionary;
 import java.util.HashMap;
-import java.util.Hashtable;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,7 +25,12 @@ import org.openhab.core.automation.handler.TriggerHandlerCallback;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.events.TopicEventFilter;
+import org.openhab.core.events.TopicPrefixEventFilter;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.items.events.ItemAddedEvent;
 import org.openhab.core.items.events.ItemCommandEvent;
+import org.openhab.core.items.events.ItemRemovedEvent;
 import org.openhab.core.types.Command;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceRegistration;
@@ -35,14 +38,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This is an ModuleHandler implementation for Triggers which trigger the rule
+ * This is a ModuleHandler implementation for Triggers which trigger the rule
  * if an item receives a command. The eventType and command value can be set with the
  * configuration.
  *
  * @author Kai Kreuzer - Initial contribution
  */
 @NonNullByDefault
-public class ItemCommandTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber, EventFilter {
+public class ItemCommandTriggerHandler extends BaseTriggerModuleHandler implements EventSubscriber {
 
     public static final String MODULE_TYPE_ID = "core.ItemCommandTrigger";
 
@@ -53,24 +56,35 @@ public class ItemCommandTriggerHandler extends BaseTriggerModuleHandler implemen
 
     private final String itemName;
     private final @Nullable String command;
-    private final String topic;
 
     private final Set<String> types;
     private final BundleContext bundleContext;
+    private final String ruleUID;
+    private final EventFilter eventFilter;
 
-    private @Nullable ServiceRegistration<?> eventSubscriberRegistration;
+    private final ServiceRegistration<?> eventSubscriberRegistration;
 
-    public ItemCommandTriggerHandler(Trigger module, BundleContext bundleContext) {
+    public ItemCommandTriggerHandler(Trigger module, String ruleUID, BundleContext bundleContext,
+            ItemRegistry itemRegistry) {
         super(module);
         this.itemName = (String) module.getConfiguration().get(CFG_ITEMNAME);
+        boolean isWildcard = itemName.contains("?") || itemName.contains("*");
+        if (isWildcard) {
+            this.eventFilter = new TopicEventFilter(
+                    "^openhab/items/" + itemName.replace("?", ".?").replace("*", ".*?") + "/.*$");
+            this.types = Set.of(ItemCommandEvent.TYPE);
+        } else {
+            this.eventFilter = new TopicPrefixEventFilter("openhab/items/" + itemName + "/");
+            this.types = Set.of(ItemCommandEvent.TYPE, ItemAddedEvent.TYPE, ItemRemovedEvent.TYPE);
+        }
         this.command = (String) module.getConfiguration().get(CFG_COMMAND);
-        this.types = Set.of(ItemCommandEvent.TYPE);
         this.bundleContext = bundleContext;
-        Dictionary<String, Object> properties = new Hashtable<>();
-        this.topic = "openhab/items/" + itemName + "/command";
-        properties.put("event.topics", topic);
-        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this,
-                properties);
+        this.ruleUID = ruleUID;
+        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this, null);
+        if (!isWildcard && itemRegistry.get(itemName) == null) {
+            logger.warn("Item '{}' needed for rule '{}' is missing. Trigger '{}' will not work.", itemName, ruleUID,
+                    module.getId());
+        }
     }
 
     @Override
@@ -80,19 +94,33 @@ public class ItemCommandTriggerHandler extends BaseTriggerModuleHandler implemen
 
     @Override
     public @Nullable EventFilter getEventFilter() {
-        return this;
+        return eventFilter;
     }
 
     @Override
     public void receive(Event event) {
+        if (event instanceof ItemAddedEvent addedEvent) {
+            if (itemName.equals(addedEvent.getItem().name)) {
+                logger.info("Item '{}' needed for rule '{}' added. Trigger '{}' will now work.", itemName, ruleUID,
+                        module.getId());
+                return;
+            }
+        } else if (event instanceof ItemRemovedEvent removedEvent) {
+            if (itemName.equals(removedEvent.getItem().name)) {
+                logger.warn("Item '{}' needed for rule '{}' removed. Trigger '{}' will no longer work.", itemName,
+                        ruleUID, module.getId());
+                return;
+            }
+        }
+
         ModuleHandlerCallback callback = this.callback;
         if (callback != null) {
             logger.trace("Received Event: Source: {} Topic: {} Type: {}  Payload: {}", event.getSource(),
                     event.getTopic(), event.getType(), event.getPayload());
             Map<String, Object> values = new HashMap<>();
-            if (event instanceof ItemCommandEvent) {
+            if (event instanceof ItemCommandEvent commandEvent) {
                 String command = this.command;
-                Command itemCommand = ((ItemCommandEvent) event).getItemCommand();
+                Command itemCommand = commandEvent.getItemCommand();
                 if (command == null || command.equals(itemCommand.toFullString())) {
                     values.put("command", itemCommand);
                     values.put("event", event);
@@ -108,15 +136,6 @@ public class ItemCommandTriggerHandler extends BaseTriggerModuleHandler implemen
     @Override
     public void dispose() {
         super.dispose();
-        if (eventSubscriberRegistration != null) {
-            eventSubscriberRegistration.unregister();
-            eventSubscriberRegistration = null;
-        }
-    }
-
-    @Override
-    public boolean apply(Event event) {
-        logger.trace("->FILTER: {}:{}", event.getTopic(), itemName);
-        return event.getTopic().equals(topic);
+        eventSubscriberRegistration.unregister();
     }
 }

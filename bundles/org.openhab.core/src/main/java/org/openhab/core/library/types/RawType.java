@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -101,9 +101,6 @@ public class RawType implements PrimitiveType, State {
         if (!mimeType.equals(other.mimeType)) {
             return false;
         }
-        if (!Arrays.equals(bytes, other.bytes)) {
-            return false;
-        }
-        return true;
+        return Arrays.equals(bytes, other.bytes);
     }
 }

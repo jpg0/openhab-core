@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -64,24 +64,25 @@ public class CompositeActionHandler extends AbstractCompositeModuleHandler<Actio
      * @see org.openhab.core.automation.handler.ActionHandler#execute(java.util.Map)
      */
     @Override
-    public @Nullable Map<String, Object> execute(Map<String, Object> context) {
-        final Map<String, Object> result = new HashMap<>();
+    public @Nullable Map<String, @Nullable Object> execute(Map<String, Object> context) {
+        final Map<String, @Nullable Object> result = new HashMap<>();
         final List<Action> children = getChildren();
         final Map<String, Object> compositeContext = getCompositeContext(context);
         for (Action child : children) {
             ActionHandler childHandler = moduleHandlerMap.get(child);
             Map<String, Object> childContext = Collections.unmodifiableMap(getChildContext(child, compositeContext));
-            Map<String, Object> childResults = childHandler == null ? null : childHandler.execute(childContext);
+            Map<String, @Nullable Object> childResults = childHandler == null ? null
+                    : childHandler.execute(childContext);
             if (childResults != null) {
-                for (Entry<String, Object> childResult : childResults.entrySet()) {
-                    String childOuputName = child.getId() + "." + childResult.getKey();
-                    Output output = compositeOutputs.get(childOuputName);
+                for (Entry<String, @Nullable Object> childResult : childResults.entrySet()) {
+                    String childOutputName = child.getId() + "." + childResult.getKey();
+                    Output output = compositeOutputs.get(childOutputName);
                     if (output != null) {
-                        String childOuputRef = output.getReference();
-                        if (childOuputRef != null && childOuputRef.length() > childOuputName.length()) {
-                            childOuputRef = childOuputRef.substring(childOuputName.length());
+                        String childOutputRef = output.getReference();
+                        if (childOutputRef != null && childOutputRef.length() > childOutputName.length()) {
+                            childOutputRef = childOutputRef.substring(childOutputName.length());
                             result.put(output.getName(), ReferenceResolver
-                                    .resolveComplexDataReference(childResult.getValue(), childOuputRef));
+                                    .resolveComplexDataReference(childResult.getValue(), childOutputRef));
                         } else {
                             result.put(output.getName(), childResult.getValue());
                         }

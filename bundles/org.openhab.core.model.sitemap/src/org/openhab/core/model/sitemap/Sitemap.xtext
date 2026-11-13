@@ -4,148 +4,257 @@ import "http://www.eclipse.org/emf/2002/Ecore" as ecore
 generate sitemap "https://openhab.org/model/Sitemap"
 
 SitemapModel:
-    'sitemap' Sitemap;
+    {SitemapModel} (sitemaps += ModelSitemap)*;
 
-Sitemap:
-    name=ID ('label=' label=STRING)? ('icon=' icon=STRING)? '{'
-    (children+=Widget)+
+ModelSitemap:
+    'sitemap' name=ID ('label=' label=STRING)? ('icon=' icon=Icon)? '{'
+    (children+=ModelWidget)*
     '}';
 
-Widget:
-    (LinkableWidget | NonLinkableWidget);
+ModelWidget:
+    ModelLinkableWidget | ModelNonLinkableWidget;
 
-NonLinkableWidget:
-    Switch | Selection | Slider | List | Setpoint | Video | Chart | Webview | Colorpicker | Mapview | Default;
+ModelNonLinkableWidget:
+    ModelSwitch | ModelSelection | ModelSlider | ModelSetpoint | ModelVideo | ModelChart | ModelWebview | ModelColorpicker | ModelColortemperaturepicker | ModelMapview | ModelInput | ModelButton | ModelNestedSitemap | ModelDefault;
 
-LinkableWidget:
-    (Text | Group | Image | Frame)
+ModelLinkableWidget:
+    (ModelText | ModelGroup | ModelImage | ModelFrame | ModelButtongrid)
     ('{'
-    (children+=Widget)+
+    (children+=ModelWidget)+
     '}')?;
 
-Frame:
-    {Frame} 'Frame' (('item=' item=ItemRef)? & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelNestedSitemap:
+    {ModelNestedSitemap} 'Sitemap' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('name=' sitemapName=ID) | 
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Text:
-    {Text} 'Text' (('item=' item=ItemRef)? & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelFrame:
+    {ModelFrame} 'Frame' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Group:
-    'Group' (('item=' item=GroupItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelText:
+    {ModelText} 'Text' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Image:
-    'Image' (('item=' item=ItemRef)? & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('url=' url=STRING)? & ('refresh=' refresh=INT)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('iconcolor=[' (IconColor+=ColorArray (',' IconColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelGroup:
+    'Group' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Video:
-    'Video' (('item=' item=ItemRef)? & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('url=' url=(STRING)) & ('encoding=' encoding=(STRING))? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelImage:
+    'Image' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('url=' url=STRING) | ('refresh=' refresh=INT) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Chart:
-    'Chart' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('service=' service=(STRING))? & ('refresh=' refresh=INT)? & ('period=' period=ID) &
-    ('legend=' legend=BOOLEAN_OBJECT)? & ('forceasitem=' forceAsItem=BOOLEAN_OBJECT)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelVideo:
+    'Video' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('url=' url=STRING) | ('encoding=' encoding=STRING) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Webview:
-    'Webview' (('item=' item=ItemRef)? & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('height=' height=INT)? & ('url=' url=(STRING)) &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelChart:
+    'Chart' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('service=' service=STRING) | ('refresh=' refresh=INT) | ('period=' period=Period) |
+    ('legend=' legend=BOOLEAN_OBJECT) | ('forceasitem=' forceAsItem=BOOLEAN_OBJECT) |
+    ('yAxisDecimalPattern=' yAxisDecimalPattern=(STRING)) |
+    ('interpolation=' interpolation=(STRING)) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Switch:
-    'Switch' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('mappings=[' mappings+=Mapping (',' mappings+=Mapping)* ']')? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelWebview:
+    'Webview' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('height=' height=INT) | ('url=' url=STRING) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Mapview:
-    'Mapview' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('height=' height=INT)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelSwitch:
+    'Switch' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('mappings=' mappings=ModelMappingList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Slider:
-    'Slider' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('sendFrequency=' frequency=INT)? & (switchEnabled?='switchSupport')? &
-    ('minValue=' minValue=Number)? & ('maxValue=' maxValue=Number)? & ('step=' step=Number)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelMapview:
+    'Mapview' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('height=' height=INT) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Selection:
-    'Selection' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('mappings=[' mappings+=Mapping (',' mappings+=Mapping)* ']')? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelSlider:
+    'Slider' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    (switchEnabled?='switchSupport') | (releaseOnly?='releaseOnly') |
+    ('minValue=' minValue=Number) | ('maxValue=' maxValue=Number) | ('step=' step=Number) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-List:
-    'List' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)?
-    ('separator=' separator=STRING) &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelSelection:
+    'Selection' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('mappings=' mappings=ModelMappingList) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Setpoint:
-    'Setpoint' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('minValue=' minValue=Number)? & ('maxValue=' maxValue=Number)? & ('step=' step=Number)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelSetpoint:
+    'Setpoint' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('minValue=' minValue=Number) | ('maxValue=' maxValue=Number) | ('step=' step=Number) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Colorpicker:
-    'Colorpicker' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? & ('sendFrequency='
-    frequency=INT)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelColorpicker:
+    'Colorpicker' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Default:
-    'Default' (('item=' item=ItemRef) & ('label=' label=(ID | STRING))? & ('icon=' icon=Icon)? &
-    ('height=' height=INT)? &
-    ('labelcolor=[' (LabelColor+=ColorArray (',' LabelColor+=ColorArray)* ']'))? &
-    ('valuecolor=[' (ValueColor+=ColorArray (',' ValueColor+=ColorArray)* ']'))? &
-    ('visibility=[' (Visibility+=VisibilityRule (',' Visibility+=VisibilityRule)* ']'))?);
+ModelColortemperaturepicker:
+    'Colortemperaturepicker' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('minValue=' minValue=Number) | ('maxValue=' maxValue=Number) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-Mapping:
-    cmd=Command '=' label=(ID | STRING);
+ModelInput:
+    'Input' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('inputHint=' inputHint=STRING) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
 
-VisibilityRule:
-    (item=ID) (condition=("==" | ">" | "<" | ">=" | "<=" | "!=")) (sign=('-' | '+'))? (state=XState);
+ModelButtongrid:
+    {ModelButtongrid} 'Buttongrid' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('buttons=' buttons=ModelButtonDefinitionList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
+
+ModelButton:
+    'Button' (('row=' row=INT) | ('column=' column=INT) |
+    ('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    (stateless?='stateless') | ('click=' cmd=Command) | ('release=' releaseCmd=Command) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
+
+ModelDefault:
+    'Default' (('item=' item=ItemRef) | ('label=' label=(ID | STRING)) |
+    ('icon=' icon=Icon) | ('icon=' iconRules=ModelIconRuleList) | ('staticIcon=' staticIcon=Icon) |
+    ('height=' height=INT) |
+    ('confirmCmd=' confirmCmd=BOOLEAN_OBJECT) | ('confirmCmd=' confirmCmdRules=ModelConfirmCmdRuleList) |
+    ('labelcolor=' labelColor=ModelColorArrayList) |
+    ('valuecolor=' valueColor=ModelColorArrayList) |
+    ('iconcolor=' iconColor=ModelColorArrayList) |
+    ('visibility=' visibility=ModelVisibilityRuleList))*;
+
+ModelButtonDefinitionList returns ModelButtonDefinitionList:
+    '[' elements+=ModelButtonDefinition (',' elements+=ModelButtonDefinition)* ']';
+
+ModelButtonDefinition:
+    row=INT ':' column=INT ':' cmd=Command '=' label=(ID | STRING) ('=' icon=Icon)?;
+
+ModelMappingList returns ModelMappingList:
+    '[' elements+=ModelMapping (',' elements+=ModelMapping)* ']';
+
+ModelMapping:
+    cmd=Command (':' releaseCmd=Command)? '=' label=(ID | STRING) ('=' icon=Icon)?;
+
+ModelColorArrayList returns ModelColorArrayList:
+    '[' elements+=ModelColorArray (',' elements+=ModelColorArray)* ']';
+
+ModelColorArray:
+    ((conditions+=ModelCondition ('AND' conditions+=ModelCondition)*) '=')? (value=STRING);
+
+ModelIconRuleList returns ModelIconRuleList:
+    '[' elements+=ModelIconRule (',' elements+=ModelIconRule)* ']';
+
+ModelIconRule:
+    ((conditions+=ModelCondition ('AND' conditions+=ModelCondition)*) '=')? (value=Icon);
+
+ModelConfirmCmdRuleList returns ModelConfirmCmdRuleList:
+    '[' elements+=ModelConfirmCmdRule (',' elements+=ModelConfirmCmdRule)* ']';
+
+ModelConfirmCmdRule:
+    { ModelConfirmCmdRule } (conditions+=ModelCondition ('AND' conditions+=ModelCondition)*)? ('=' value=STRING)?;
+
+ModelVisibilityRuleList returns ModelVisibilityRuleList:
+    '[' elements+=ModelVisibilityRule (',' elements+=ModelVisibilityRule)* ']';
+
+ModelVisibilityRule:
+    conditions+=ModelCondition ('AND' conditions+=ModelCondition)*;
+
+ModelCondition:
+    (item=ItemRef)? (condition=('==' | '>' | '<' | '>=' | '<=' | '!='))? (sign=('-' | '+'))? (state=XState);
 
 ItemRef:
     ID;
 
-GroupItemRef:
-    ID;
-
 Icon returns ecore::EString:
-    STRING | ID;
+    STRING | (IconSegment ':' (IconSegment ':')?)? IconSegment;
 
-ColorArray:
-    ((item=ID)? (condition=("==" | ">" | "<" | ">=" | "<=" | "!="))? (sign=('-' | '+'))? (state=XState) '=')?
-    (arg=STRING);
+// Allow hyphen inside an icon segment
+IconSegment:
+    INT | ID;
+
+Period:
+    STRING | ('-'? ID);
 
 Command returns ecore::EString:
     Number | ID | STRING;
@@ -156,9 +265,10 @@ Number returns ecore::EBigDecimal:
 XState returns ecore::EString:
     INT | ID | STRING | FLOAT;
 
+@Override
 terminal ID:
-    ('^'? ('a'..'z' | 'A'..'Z' | '_') ('a'..'z' | 'A'..'Z' | '_' | '0'..'9')*) |
-    (('0'..'9')+ ('a'..'z' | 'A'..'Z' | '_') ('0'..'9' | 'a'..'z' | 'A'..'Z' | '_')*);
+    ('^'? ('a'..'z' | 'A'..'Z' | '_') ('a'..'z' | 'A'..'Z' | '_' | '-' | '0'..'9')*) |
+    (('0'..'9')+ ('a'..'z' | 'A'..'Z' | '_' | '-') ('a'..'z' | 'A'..'Z' | '_' | '-' | '0'..'9')*);
 
 terminal FLOAT returns ecore::EBigDecimal:
     INT '.' INT;

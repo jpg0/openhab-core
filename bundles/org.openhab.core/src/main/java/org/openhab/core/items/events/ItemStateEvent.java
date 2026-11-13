@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,7 +30,7 @@ public class ItemStateEvent extends ItemEvent {
      */
     public static final String TYPE = ItemStateEvent.class.getSimpleName();
 
-    private final State itemState;
+    protected final State itemState;
 
     /**
      * Constructs a new item state event.
@@ -62,6 +62,6 @@ public class ItemStateEvent extends ItemEvent {
 
     @Override
     public String toString() {
-        return String.format("Item '%s' updated to %s", itemName, itemState);
+        return String.format("Item '%s' shall update to %s", itemName, itemState);
     }
 }

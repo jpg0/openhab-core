@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,7 @@
  */
 package org.openhab.core.config.discovery.usbserial.ser2net.internal;
 
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.openhab.core.config.discovery.usbserial.ser2net.internal.Ser2NetUsbSerialDiscovery.*;
 
@@ -61,11 +61,11 @@ public class Ser2NetUsbSerialDiscoveryTest {
     private @NonNullByDefault({}) Ser2NetUsbSerialDiscovery discovery;
 
     private UsbSerialDeviceInformation usb1 = new UsbSerialDeviceInformation(0x100, 0x111, "serial1", "manufacturer1",
-            "product1", 0x1, "interface1", "rfc2217://1.1.1.1:1000");
+            "product1", 0x1, "interface1", "rfc2217://1.1.1.1:1000").setRemote(true);
     private UsbSerialDeviceInformation usb2 = new UsbSerialDeviceInformation(0x200, 0x222, "serial2", "manufacturer2",
-            "product2", 0x2, "interface2", "rfc2217://[0:0:0:0:0:ffff:0202:0202]:2222");
+            "product2", 0x2, "interface2", "rfc2217://[0:0:0:0:0:ffff:0202:0202]:2222").setRemote(true);
     private UsbSerialDeviceInformation usb3 = new UsbSerialDeviceInformation(0x300, 0x333, null, null, null, 0x3, null,
-            "rfc2217://123.222.100.000:3030");
+            "rfc2217://123.222.100.000:3030").setRemote(true);
 
     @BeforeEach
     public void beforeEach() {
@@ -184,12 +184,14 @@ public class Ser2NetUsbSerialDiscoveryTest {
         discovery.registerDiscoveryListener(discoveryListenerMock);
         discovery.doSingleScan();
 
-        // Expectation: discovery listener called once for removing usb1, and once for adding usb2/usb3 each.
+        // Expectation: discovery listener called once for adding usb1 and usb2 (on registration)
+        // then once for removing usb1, and once again for adding usb2 (another registration)
+        // and once for usb3
 
-        verify(discoveryListenerMock, never()).usbSerialDeviceDiscovered(usb1);
+        verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb1);
         verify(discoveryListenerMock, times(1)).usbSerialDeviceRemoved(usb1);
 
-        verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb2);
+        verify(discoveryListenerMock, times(2)).usbSerialDeviceDiscovered(usb2);
         verify(discoveryListenerMock, never()).usbSerialDeviceRemoved(usb2);
 
         verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb3);
@@ -200,7 +202,7 @@ public class Ser2NetUsbSerialDiscoveryTest {
     public void backgroundScanning() {
         discovery.startBackgroundScanning();
 
-        discovery.serviceAdded(serviceEvent1Mock);
+        discovery.serviceResolved(serviceEvent1Mock);
         discovery.serviceRemoved(serviceEvent1Mock);
         discovery.serviceAdded(serviceEvent2Mock);
         discovery.serviceAdded(invalidServiceEventMock);
@@ -213,7 +215,7 @@ public class Ser2NetUsbSerialDiscoveryTest {
         verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb1);
         verify(discoveryListenerMock, times(1)).usbSerialDeviceRemoved(usb1);
 
-        verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb2);
+        verify(discoveryListenerMock, never()).usbSerialDeviceDiscovered(usb2);
         verify(discoveryListenerMock, never()).usbSerialDeviceRemoved(usb2);
 
         verify(discoveryListenerMock, times(1)).usbSerialDeviceDiscovered(usb3);

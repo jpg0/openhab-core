@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,15 +12,11 @@
  */
 package org.openhab.core.automation.internal;
 
-import static java.util.stream.Collectors.toSet;
-
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -47,7 +43,6 @@ public class TestModuleTypeProvider implements ModuleTypeProvider {
     public static final String CONDITION_TYPE = "conditionTypeUID";
 
     public TestModuleTypeProvider() {
-        super();
     }
 
     private TriggerType createTriggerType() {
@@ -55,17 +50,16 @@ public class TestModuleTypeProvider implements ModuleTypeProvider {
         outputs.add(createOutput("out1", Set.of("tagA")));
         outputs.add(createOutput("out2", Set.of("tagB", "tagC")));
         outputs.add(createOutput("out3", Set.of("tagA", "tagB", "tagC")));
-        TriggerType t = new TriggerType(TRIGGER_TYPE, null, outputs);
-        return t;
+        return new TriggerType(TRIGGER_TYPE, null, outputs);
     }
 
     private ConditionType createConditionType() {
         List<Input> inputs = new ArrayList<>(3);
         inputs.add(createInput("in0", Set.of("tagE"))); // no connection, missing condition tag
         inputs.add(createInput("in1", Set.of("tagA"))); // conflict in2 -> out1 or in2 -> out3
-        inputs.add(createInput("in2", Set.of("tagA", "tagB"))); // in2 -> out3
-        ConditionType t = new ConditionType(CONDITION_TYPE, null, inputs);
-        return t;
+        inputs.add(createInput("in2", Set.of("tagA", "tagB")));
+        // in2 -> out3
+        return new ConditionType(CONDITION_TYPE, null, inputs);
     }
 
     private ActionType createActionType() {
@@ -78,8 +72,7 @@ public class TestModuleTypeProvider implements ModuleTypeProvider {
         List<Output> outputs = new ArrayList<>(3);
         outputs.add(createOutput("out4", Set.of("tagD")));
         outputs.add(createOutput("out5", Set.of("tagD", "tagE")));
-        ActionType t = new ActionType(ACTION_TYPE, null, inputs, outputs);
-        return t;
+        return new ActionType(ACTION_TYPE, null, inputs, outputs);
     }
 
     private Output createOutput(String name, Set<String> tags) {
@@ -96,7 +89,7 @@ public class TestModuleTypeProvider implements ModuleTypeProvider {
 
     @Override
     public Collection<ModuleType> getAll() {
-        return Stream.of(createTriggerType(), createConditionType(), createActionType()).collect(toSet());
+        return Set.of(createTriggerType(), createConditionType(), createActionType());
     }
 
     @Override
@@ -104,12 +97,12 @@ public class TestModuleTypeProvider implements ModuleTypeProvider {
     }
 
     @Override
-    public <T extends ModuleType> @Nullable T getModuleType(String UID, @Nullable Locale locale) {
+    public <T extends ModuleType> @Nullable T getModuleType(String uid, @Nullable Locale locale) {
         return null;
     }
 
     @Override
     public <T extends ModuleType> Collection<T> getModuleTypes(@Nullable Locale locale) {
-        return Collections.emptyList();
+        return List.of();
     }
 }

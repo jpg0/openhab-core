@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,8 @@ package org.openhab.core.thing.dto;
 
 import java.util.Map;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
  * This is a data transfer object that is used to serialize things.
  *
@@ -22,28 +24,36 @@ import java.util.Map;
  * @author Stefan Bußweiler - Added new thing status handling
  * @author Simon Kaufmann - Added label
  * @author Wouter Born - Let (Enriched)ThingDTO extend AbstractThingDTO so both can define their own "channels" type
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 public abstract class AbstractThingDTO {
 
     public String label;
     public String bridgeUID;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public Map<String, Object> configuration;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public Map<String, String> properties;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public String UID;
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     public String thingTypeUID;
     public String location;
+    public String semanticEquipmentTag;
 
-    public AbstractThingDTO() {
+    protected AbstractThingDTO() {
     }
 
-    protected AbstractThingDTO(String thingTypeUID, String UID, String label, String bridgeUID,
-            Map<String, Object> configuration, Map<String, String> properties, String location) {
+    protected AbstractThingDTO(String thingTypeUID, String uid, String label, String bridgeUID,
+            Map<String, Object> configuration, Map<String, String> properties, String location,
+            String semanticEquipmentTag) {
         this.thingTypeUID = thingTypeUID;
-        this.UID = UID;
+        this.UID = uid;
         this.label = label;
         this.bridgeUID = bridgeUID;
         this.configuration = configuration;
         this.properties = properties;
         this.location = location;
+        this.semanticEquipmentTag = semanticEquipmentTag;
     }
 }

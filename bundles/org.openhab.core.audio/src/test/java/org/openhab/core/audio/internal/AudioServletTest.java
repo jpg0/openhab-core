@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,9 +14,13 @@ package org.openhab.core.audio.internal;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.*;
 
 import java.io.File;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.api.ContentResponse;
@@ -24,7 +28,10 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioStream;
+import org.openhab.core.audio.ByteArrayAudioStream;
 import org.openhab.core.audio.FileAudioStream;
+import org.openhab.core.audio.PipedAudioStream;
+import org.openhab.core.audio.StreamServed;
 import org.openhab.core.audio.internal.utils.BundledSoundFileHandler;
 
 /**
@@ -56,7 +63,7 @@ public class AudioServletTest extends AbstractAudioServletTest {
     }
 
     @Test
-    public void audioServletProcessesStreamFromWavFile() throws Exception {
+    public void audioServletProcessesStreamFromWavFileWithoutAcceptHeader() throws Exception {
         try (BundledSoundFileHandler fileHandler = new BundledSoundFileHandler()) {
             AudioStream audioStream = new FileAudioStream(new File(fileHandler.wavFilePath()));
 
@@ -65,6 +72,18 @@ public class AudioServletTest extends AbstractAudioServletTest {
             assertThat("The response status was not as expected", response.getStatus(), is(HttpStatus.OK_200));
             assertThat("The response media type was not as expected", response.getMediaType(),
                     is(MEDIA_TYPE_AUDIO_WAV));
+        }
+    }
+
+    @Test
+    public void audioServletProcessesStreamFromWavFileWithAcceptHeader() throws Exception {
+        try (BundledSoundFileHandler fileHandler = new BundledSoundFileHandler()) {
+            AudioStream audioStream = new FileAudioStream(new File(fileHandler.wavFilePath()));
+
+            ContentResponse response = getHttpResponseWithAccept(audioStream, "audio/invalid, audio/x-wav");
+
+            assertThat("The response status was not as expected", response.getStatus(), is(HttpStatus.OK_200));
+            assertThat("The response media type was not as expected", response.getMediaType(), is("audio/x-wav"));
         }
     }
 
@@ -110,7 +129,7 @@ public class AudioServletTest extends AbstractAudioServletTest {
     }
 
     @Test
-    public void requestToMultitimeStreamCannotBeDoneAfterTheTimeoutOfTheStreamHasExipred() throws Exception {
+    public void requestToMultitimeStreamCannotBeDoneAfterTheTimeoutOfTheStreamHasExpired() throws Exception {
         final int streamTimeout = 3;
 
         AudioStream audioStream = getByteArrayAudioStream(testByteArray, AudioFormat.CONTAINER_NONE,
@@ -133,8 +152,8 @@ public class AudioServletTest extends AbstractAudioServletTest {
             assertThat("The response media type was not as expected", response.getMediaType(),
                     is(MEDIA_TYPE_AUDIO_MPEG));
 
-            assertThat("The audio stream was not added to the multitime streams",
-                    audioServlet.getMultiTimeStreams().containsValue(audioStream), is(true));
+            assertThat("The audio stream was not added to the multitime streams", audioServlet.getServedStreams()
+                    .values().stream().map(StreamServed::audioStream).toList().contains(audioStream), is(true));
         }
 
         waitForAssert(() -> {
@@ -143,11 +162,142 @@ public class AudioServletTest extends AbstractAudioServletTest {
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
-            assertThat("The audio stream was not removed from multitime streams",
-                    audioServlet.getMultiTimeStreams().containsValue(audioStream), is(false));
+            assertThat("The audio stream was not removed from multitime streams", audioServlet.getServedStreams()
+                    .values().stream().map(StreamServed::audioStream).toList().contains(audioStream), is(false));
         });
 
         response = getHttpRequest(url).send();
         assertThat("The response status was not as expected", response.getStatus(), is(HttpStatus.NOT_FOUND_404));
+    }
+
+    @Test
+    public void oneTimeStreamIsRecreatedAsAClonable() throws Exception {
+        AudioStream audioStream = mock(AudioStream.class);
+        AudioFormat audioFormat = mock(AudioFormat.class);
+        when(audioStream.getFormat()).thenReturn(audioFormat);
+        when(audioFormat.getCodec()).thenReturn(AudioFormat.CODEC_MP3);
+        when(audioStream.readNBytes(anyInt())).thenReturn(testByteArray);
+
+        String url = serveStream(audioStream, 10);
+        String uuid = url.substring(url.lastIndexOf("/") + 1);
+        StreamServed servedStream = audioServlet.getServedStreams().get(uuid);
+
+        // does not contain directly the stream because it is now a new stream wrapper
+        assertThat(servedStream.audioStream(), not(audioStream));
+        // it is now a ByteArrayAudioStream wrapper :
+        assertThat(servedStream.audioStream(), instanceOf(ByteArrayAudioStream.class));
+
+        ContentResponse response = getHttpRequest(url).send();
+        assertThat("The response content was not as expected", response.getContent(), is(testByteArray));
+
+        verify(audioStream).close();
+    }
+
+    @Test
+    public void oneTimeStreamIsClosedAndRemovedAfterServed() throws Exception {
+        AudioStream audioStream = mock(AudioStream.class);
+        AudioFormat audioFormat = mock(AudioFormat.class);
+        when(audioStream.getFormat()).thenReturn(audioFormat);
+        when(audioFormat.getCodec()).thenReturn(AudioFormat.CODEC_MP3);
+        when(audioStream.readNBytes(anyInt())).thenReturn(new byte[] { 1, 2, 3 });
+
+        String url = serveStream(audioStream);
+        assertThat(audioServlet.getServedStreams().values().stream().map(StreamServed::audioStream).toList(),
+                contains(audioStream));
+
+        getHttpRequest(url).send();
+
+        verify(audioStream).close();
+        assertThat(audioServlet.getServedStreams().values().stream().map(StreamServed::audioStream).toList(),
+                not(contains(audioStream)));
+    }
+
+    @Test
+    public void multiTimeStreamIsClosedAfterExpired() throws Exception {
+        AtomicInteger cloneCounter = new AtomicInteger();
+        ByteArrayAudioStream audioStream = mock(ByteArrayAudioStream.class);
+        AudioStream clonedStream = mock(AudioStream.class);
+        AudioFormat audioFormat = mock(AudioFormat.class);
+        when(audioStream.getFormat()).thenReturn(audioFormat);
+        when(audioStream.getClonedStream()).thenAnswer(answer -> {
+            cloneCounter.getAndIncrement();
+            return clonedStream;
+        });
+        when(audioStream.readNBytes(anyInt())).thenReturn(new byte[] { 1, 2, 3 });
+        when(clonedStream.readNBytes(anyInt())).thenReturn(new byte[] { 1, 2, 3 });
+        when(audioFormat.getCodec()).thenReturn(AudioFormat.CODEC_MP3);
+
+        String url = serveStream(audioStream, 2);
+        assertThat(audioServlet.getServedStreams().values().stream().map(StreamServed::audioStream).toList(),
+                contains(audioStream));
+
+        waitForAssert(() -> {
+            try {
+                ContentResponse resp = getHttpRequest(url).send();
+                assertThat(resp.getStatus(), is(404));
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+
+        });
+
+        verify(audioStream).close();
+        assertThat(audioServlet.getServedStreams().values().stream().map(StreamServed::audioStream).toList(),
+                not(contains(audioStream)));
+
+        verify(clonedStream, times(cloneCounter.get())).close();
+    }
+
+    @Test
+    public void streamsAreClosedOnDeactivate() throws Exception {
+        AudioStream oneTimeStream = mock(AudioStream.class);
+        ByteArrayAudioStream multiTimeStream = mock(ByteArrayAudioStream.class);
+
+        serveStream(oneTimeStream);
+        serveStream(multiTimeStream, 10);
+
+        audioServlet.deactivate();
+
+        verify(oneTimeStream).close();
+        verify(multiTimeStream).close();
+    }
+
+    @Test
+    public void audioServletProcessesPipedAudioStreamChunked() throws Exception {
+        AudioFormat format = AudioFormat.FLAC;
+        PipedAudioStream.Group group = PipedAudioStream.newGroup(format, 8192);
+        PipedAudioStream pipedStream = group.getAudioStreamInGroup();
+
+        byte[] payload = new byte[] { 10, 20, 30, 40, 50 };
+        group.write(payload);
+        group.close();
+
+        String url = serveStream(pipedStream);
+        ContentResponse response = getHttpRequest(url).send();
+
+        assertThat("Status should be 200", response.getStatus(), is(HttpStatus.OK_200));
+        assertThat("Content should match", response.getContent(), is(payload));
+        assertThat("Cache-Control must prevent caching for streaming", response.getHeaders().get("Cache-Control"),
+                is("no-cache, no-store, must-revalidate"));
+        assertThat("Content-Length should not be set for piped streaming", response.getHeaders().get("Content-Length"),
+                is(nullValue()));
+
+        assertThat(audioServlet.getServedStreams().values().stream().map(StreamServed::audioStream).toList(),
+                not(contains(pipedStream)));
+    }
+
+    @Test
+    public void pipedAudioStreamIsNotCachedAsClonable() throws Exception {
+        AudioFormat format = AudioFormat.FLAC;
+        PipedAudioStream.Group group = PipedAudioStream.newGroup(format, 8192);
+        PipedAudioStream pipedStream = group.getAudioStreamInGroup();
+        group.close();
+
+        String url = serveStream(pipedStream, 10);
+        String uuid = url.substring(url.lastIndexOf("/") + 1);
+        StreamServed servedStream = audioServlet.getServedStreams().get(uuid);
+        assertNotNull(servedStream);
+        assertThat(servedStream.audioStream(), is(pipedStream));
+        assertThat(servedStream.multiTimeStream(), is(false));
     }
 }

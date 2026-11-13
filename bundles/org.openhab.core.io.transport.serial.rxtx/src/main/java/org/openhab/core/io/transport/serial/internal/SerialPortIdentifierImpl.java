@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -51,11 +51,11 @@ public class SerialPortIdentifierImpl implements SerialPortIdentifier {
     public SerialPort open(String owner, int timeout) throws PortInUseException {
         try {
             final CommPort cp = id.open(owner, timeout);
-            if (cp instanceof gnu.io.SerialPort) {
-                return new RxTxSerialPort((gnu.io.SerialPort) cp);
+            if (cp instanceof gnu.io.SerialPort port) {
+                return new RxTxSerialPort(port);
             } else {
                 throw new IllegalStateException(
-                        String.format("We expect an serial port instead of '%s'", cp.getClass()));
+                        String.format("We expect a serial port instead of '%s'", cp.getClass()));
             }
         } catch (gnu.io.PortInUseException e) {
             String message = e.getMessage();

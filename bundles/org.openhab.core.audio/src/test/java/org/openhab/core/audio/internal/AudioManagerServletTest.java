@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -37,24 +37,26 @@ import org.openhab.core.audio.internal.fake.AudioSinkFake;
 public class AudioManagerServletTest extends AbstractAudioServletTest {
 
     private @NonNullByDefault({}) AudioManagerImpl audioManager;
+    private @NonNullByDefault({}) AudioSinkRegistryImpl audioSinkRegistry;
     private @NonNullByDefault({}) AudioSinkFake audioSink;
 
     @BeforeEach
     public void setup() {
-        audioManager = new AudioManagerImpl();
+        audioSinkRegistry = new AudioSinkRegistryImpl();
+        audioManager = new AudioManagerImpl(audioSinkRegistry, new AudioSourceRegistryImpl());
         audioSink = new AudioSinkFake();
     }
 
     @Test
     public void audioManagerProcessesMultitimeStreams() throws Exception {
-        audioManager.addAudioSink(audioSink);
+        audioSinkRegistry.addAudioSink(audioSink);
         int streamTimeout = 10;
         assertServedStream(streamTimeout);
     }
 
     @Test
     public void audioManagerProcessesOneTimeStream() throws Exception {
-        audioManager.addAudioSink(audioSink);
+        audioSinkRegistry.addAudioSink(audioSink);
         assertServedStream(null);
     }
 
@@ -83,9 +85,10 @@ public class AudioManagerServletTest extends AbstractAudioServletTest {
         int bitDepth = 16;
         int bitRate = 1000;
         long frequency = 16384;
+        int channels = 1;
         byte[] testByteArray = new byte[] { 0, 1, 2 };
 
-        AudioFormat audioFormat = new AudioFormat(container, codec, true, bitDepth, bitRate, frequency);
+        AudioFormat audioFormat = new AudioFormat(container, codec, true, bitDepth, bitRate, frequency, channels);
 
         return new ByteArrayAudioStream(testByteArray, audioFormat);
     }

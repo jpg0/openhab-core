@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -37,14 +37,13 @@ public class UserSession {
     /**
      * Constructs a new session.
      *
-     * @param sessionId an unique ID for the session
+     * @param sessionId a unique ID for the session
      * @param refreshToken the refresh token associated to the session
      * @param clientId the client ID associated to the session
      * @param redirectUri the callback URI provided when the client was authorized by the user
      * @param scope the granted scope provided when the client was authorized by the user
      */
     public UserSession(String sessionId, String refreshToken, String clientId, String redirectUri, String scope) {
-        super();
         this.sessionId = sessionId;
         this.refreshToken = refreshToken;
         this.createdTime = new Date();

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,9 +13,7 @@
 package org.openhab.core.io.monitor.internal.metrics;
 
 import java.util.Collection;
-import java.util.Dictionary;
 import java.util.HashMap;
-import java.util.Hashtable;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -23,7 +21,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.thing.ThingRegistry;
 import org.openhab.core.thing.ThingStatus;
@@ -43,16 +40,18 @@ import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
 
 /**
- * The {@link ThingStateMetric} class implements a metric for the openHAB things states.
+ * The {@link ThingStateMetric} class implements a metric for the openHAB things
+ * states.
  *
  * @author Robert Bach - Initial contribution
+ * @author Scott Hraban - Create Meter using thingUid instead of thingId during
+ *         bind phase
  */
 @NonNullByDefault
 public class ThingStateMetric implements OpenhabCoreMeterBinder, EventSubscriber {
     private final Logger logger = LoggerFactory.getLogger(ThingStateMetric.class);
     public static final String METRIC_NAME = "openhab.thing.state";
     private static final String THING_TAG_NAME = "thing";
-    private static final String THINGSTATUS_TOPIC_PREFIX = "openhab/things/";
     private final ThingRegistry thingRegistry;
     private final Meter.Id commonMeterId;
     private final Map<Meter.Id, AtomicInteger> registeredMeters = new HashMap<>();
@@ -73,11 +72,8 @@ public class ThingStateMetric implements OpenhabCoreMeterBinder, EventSubscriber
         logger.debug("ThingStateMetric is being bound...");
         this.meterRegistry = meterRegistry;
         thingRegistry.getAll().forEach(
-                thing -> createOrUpdateMetricForBundleState(thing.getUID().getId(), thing.getStatus().ordinal()));
-        Dictionary<String, Object> properties = new Hashtable<>();
-        properties.put("event.topics", "openhab/things/*");
-        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this,
-                properties);
+                thing -> createOrUpdateMetricForBundleState(thing.getUID().getAsString(), thing.getStatus().ordinal()));
+        eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this, null);
     }
 
     private void createOrUpdateMetricForBundleState(String thingUid, int thingStatus) {
@@ -116,16 +112,14 @@ public class ThingStateMetric implements OpenhabCoreMeterBinder, EventSubscriber
     }
 
     @Override
-    public @Nullable EventFilter getEventFilter() {
-        return null;
-    }
-
-    @Override
     public void receive(Event event) {
-        logger.trace("Received ThingStatusInfo(Changed)Event...");
-        String thingId = event.getTopic().substring(THINGSTATUS_TOPIC_PREFIX.length(),
-                event.getTopic().lastIndexOf('/'));
-        ThingStatus status = gson.fromJson(event.getPayload(), ThingStatusInfo.class).getStatus();
-        createOrUpdateMetricForBundleState(thingId, status.ordinal());
+        if (event instanceof ThingStatusInfoEvent thingEvent) {
+            logger.trace("Received ThingStatusInfo(Changed)Event...");
+            String thingUid = thingEvent.getThingUID().getAsString();
+            ThingStatus status = gson.fromJson(event.getPayload(), ThingStatusInfo.class).getStatus();
+            createOrUpdateMetricForBundleState(thingUid, status.ordinal());
+        } else {
+            logger.trace("Received unsubscribed for event type {}", event.getClass().getSimpleName());
+        }
     }
 }

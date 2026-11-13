@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,6 +14,7 @@ package org.openhab.core.thing.binding;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -40,6 +41,7 @@ import org.slf4j.LoggerFactory;
  *         values
  * @author Thomas Höfer - added thing and thing type properties
  * @author Chris Jackson - Added properties, label, description
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingFactory {
@@ -53,7 +55,7 @@ public class ThingFactory {
      */
     public static ThingUID generateRandomThingUID(ThingTypeUID thingTypeUID) {
         String uuid = UUID.randomUUID().toString();
-        String thingId = uuid.substring(uuid.length() - 12, uuid.length());
+        String thingId = uuid.substring(uuid.length() - 12);
         return new ThingUID(thingTypeUID, thingId);
     }
 
@@ -63,7 +65,7 @@ public class ThingFactory {
      * @param thingType thing type (must not be null)
      * @param thingUID thindUID (must not be null)
      * @param configuration (must not be null)
-     * @param bridge (can be null)
+     * @param bridgeUID (can be null)
      * @return thing the thing
      */
     public static Thing createThing(ThingType thingType, ThingUID thingUID, Configuration configuration,
@@ -90,7 +92,8 @@ public class ThingFactory {
         List<Channel> channels = ThingFactoryHelper.createChannels(thingType, thingUID, configDescriptionRegistry);
 
         return createThingBuilder(thingType, thingUID).withConfiguration(configuration).withChannels(channels)
-                .withProperties(thingType.getProperties()).withBridge(bridgeUID).build();
+                .withProperties(thingType.getProperties()).withBridge(bridgeUID)
+                .withSemanticEquipmentTag(thingType.getSemanticEquipmentTag()).build();
     }
 
     public static @Nullable Thing createThing(ThingUID thingUID, Configuration configuration,
@@ -105,8 +108,8 @@ public class ThingFactory {
                             thingHandlerFactory.getClass(), thingTypeUID);
                 } else {
                     if (properties != null) {
-                        for (String key : properties.keySet()) {
-                            thing.setProperty(key, properties.get(key));
+                        for (Entry<String, String> entry : properties.entrySet()) {
+                            thing.setProperty(entry.getKey(), entry.getValue());
                         }
                     }
                 }

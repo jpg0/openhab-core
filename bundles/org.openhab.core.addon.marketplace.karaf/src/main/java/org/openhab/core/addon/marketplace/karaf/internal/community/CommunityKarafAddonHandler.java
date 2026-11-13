@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,12 +12,13 @@
  */
 package org.openhab.core.addon.marketplace.karaf.internal.community;
 
-import static org.openhab.core.addon.marketplace.internal.community.CommunityMarketplaceAddonService.KAR_CONTENT_TYPE;
+import static org.openhab.core.addon.marketplace.MarketplaceConstants.*;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -25,7 +26,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.apache.karaf.kar.KarService;
@@ -56,7 +56,6 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
     private static final Path KAR_CACHE_PATH = Path.of(OpenHAB.getUserDataFolder(), "marketplace", "kar");
     private static final List<String> SUPPORTED_EXT_TYPES = List.of("automation", "binding", "misc", "persistence",
             "transformation", "ui", "voice");
-    private static final String KAR_DOWNLOAD_URL_PROPERTY = "kar_download_url";
     private static final String KAR_EXTENSION = ".kar";
 
     private final Logger logger = LoggerFactory.getLogger(CommunityKarafAddonHandler.class);
@@ -78,8 +77,13 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
     }
 
     private Stream<Path> karFilesStream(Path addonDirectory) throws IOException {
-        return Files.isDirectory(addonDirectory) ? Files.list(addonDirectory).map(Path::getFileName)
-                .filter(path -> path.toString().endsWith(KAR_EXTENSION)) : Stream.empty();
+        if (Files.isDirectory(addonDirectory)) {
+            try (Stream<Path> files = Files.list(addonDirectory)) {
+                return files.map(Path::getFileName).filter(path -> path.toString().endsWith(KAR_EXTENSION)).toList()
+                        .stream();
+            }
+        }
+        return Stream.empty();
     }
 
     private String pathToKarRepoName(Path path) {
@@ -104,21 +108,22 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
 
     @Override
     public void install(Addon addon) throws MarketplaceHandlerException {
+        URL sourceUrl;
         try {
-            URL sourceUrl = new URL((String) addon.getProperties().get(KAR_DOWNLOAD_URL_PROPERTY));
-            addKarToCache(addon.getId(), sourceUrl);
-            installFromCache(addon.getId());
-        } catch (MalformedURLException e) {
+            sourceUrl = (new URI((String) addon.getProperties().get(KAR_DOWNLOAD_URL_PROPERTY))).toURL();
+        } catch (IllegalArgumentException | MalformedURLException | URISyntaxException e) {
             throw new MarketplaceHandlerException("Malformed source URL: " + e.getMessage(), e);
         }
+        addKarToCache(addon.getUid(), sourceUrl);
+        installFromCache(addon.getUid());
     }
 
     @Override
     public void uninstall(Addon addon) throws MarketplaceHandlerException {
         try {
-            Path addonPath = getAddonCacheDirectory(addon.getId());
+            Path addonPath = getAddonCacheDirectory(addon.getUid());
             List<String> repositories = karService.list();
-            for (Path path : karFilesStream(addonPath).collect(Collectors.toList())) {
+            for (Path path : karFilesStream(addonPath).toList()) {
                 String karRepoName = pathToKarRepoName(path);
                 if (repositories.contains(karRepoName)) {
                     karService.uninstall(karRepoName);
@@ -153,14 +158,14 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
     private void installFromCache(String addonId) throws MarketplaceHandlerException {
         Path addonPath = getAddonCacheDirectory(addonId);
         if (Files.isDirectory(addonPath)) {
-            try {
-                List<Path> karFiles = Files.list(addonPath).collect(Collectors.toList());
+            try (Stream<Path> files = Files.list(addonPath)) {
+                List<Path> karFiles = files.toList();
                 if (karFiles.size() != 1) {
                     throw new MarketplaceHandlerException(
                             "The local cache folder doesn't contain a single file: " + addonPath, null);
                 }
                 try {
-                    karService.install(karFiles.get(0).toUri(), false);
+                    karService.install(karFiles.getFirst().toUri(), false);
                 } catch (Exception e) {
                     throw new MarketplaceHandlerException(
                             "Cannot install KAR from marketplace cache: " + e.getMessage(), e);
@@ -172,10 +177,10 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
     }
 
     private void ensureCachedKarsAreInstalled() {
-        try {
-            if (Files.isDirectory(KAR_CACHE_PATH)) {
-                Files.list(KAR_CACHE_PATH).filter(Files::isDirectory).map(this::addonIdFromPath)
-                        .filter(addonId -> !isInstalled(addonId)).forEach(addonId -> {
+        if (Files.isDirectory(KAR_CACHE_PATH)) {
+            try (Stream<Path> files = Files.list(KAR_CACHE_PATH)) {
+                files.filter(Files::isDirectory).map(this::addonIdFromPath).filter(addonId -> !isInstalled(addonId))
+                        .forEach(addonId -> {
                             logger.info("Reinstalling missing marketplace KAR: {}", addonId);
                             try {
                                 installFromCache(addonId);
@@ -183,9 +188,9 @@ public class CommunityKarafAddonHandler implements MarketplaceAddonHandler {
                                 logger.warn("Failed reinstalling add-on from cache", e);
                             }
                         });
+            } catch (IOException e) {
+                logger.warn("Failed to re-install KARs: {}", e.getMessage());
             }
-        } catch (IOException e) {
-            logger.warn("Failed to re-install KARs: {}", e.getMessage());
         }
         isReady = true;
     }

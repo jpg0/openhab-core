@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,39 +12,48 @@
  */
 package org.openhab.core.ui.internal.items;
 
-import java.time.DateTimeException;
-import java.time.ZonedDateTime;
+import static org.openhab.core.transform.util.ItemDisplayStateUtil.EXTRACT_TRANSFORM_FUNCTION_PATTERN;
+
+import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.measure.Unit;
+import javax.script.ScriptException;
 
-import org.eclipse.emf.common.util.BasicEList;
-import org.eclipse.emf.common.util.EList;
-import org.eclipse.emf.ecore.EObject;
-import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.registry.RegistryChangeListener;
 import org.openhab.core.config.core.ConfigurableService;
+import org.openhab.core.i18n.LocaleProvider;
+import org.openhab.core.i18n.TimeZoneProvider;
+import org.openhab.core.i18n.TranslationProvider;
 import org.openhab.core.items.GroupItem;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemNotUniqueException;
 import org.openhab.core.items.ItemRegistry;
-import org.openhab.core.items.RegistryHook;
+import org.openhab.core.items.Metadata;
+import org.openhab.core.items.MetadataKey;
+import org.openhab.core.items.MetadataRegistry;
 import org.openhab.core.library.items.CallItem;
 import org.openhab.core.library.items.ColorItem;
 import org.openhab.core.library.items.ContactItem;
@@ -65,33 +74,46 @@ import org.openhab.core.library.types.PercentType;
 import org.openhab.core.library.types.PlayPauseType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
-import org.openhab.core.model.sitemap.sitemap.ColorArray;
-import org.openhab.core.model.sitemap.sitemap.Default;
-import org.openhab.core.model.sitemap.sitemap.Group;
-import org.openhab.core.model.sitemap.sitemap.LinkableWidget;
-import org.openhab.core.model.sitemap.sitemap.Mapping;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.SitemapFactory;
-import org.openhab.core.model.sitemap.sitemap.Slider;
-import org.openhab.core.model.sitemap.sitemap.Switch;
-import org.openhab.core.model.sitemap.sitemap.VisibilityRule;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.sitemap.Button;
+import org.openhab.core.sitemap.Chart;
+import org.openhab.core.sitemap.Colortemperaturepicker;
+import org.openhab.core.sitemap.Default;
+import org.openhab.core.sitemap.Group;
+import org.openhab.core.sitemap.Image;
+import org.openhab.core.sitemap.Input;
+import org.openhab.core.sitemap.LinkableWidget;
+import org.openhab.core.sitemap.Mapping;
+import org.openhab.core.sitemap.Mapview;
+import org.openhab.core.sitemap.NestedSitemap;
+import org.openhab.core.sitemap.Parent;
+import org.openhab.core.sitemap.Rule;
+import org.openhab.core.sitemap.Selection;
+import org.openhab.core.sitemap.Setpoint;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Slider;
+import org.openhab.core.sitemap.Switch;
+import org.openhab.core.sitemap.Text;
+import org.openhab.core.sitemap.Video;
+import org.openhab.core.sitemap.Webview;
+import org.openhab.core.sitemap.Widget;
+import org.openhab.core.sitemap.registry.SitemapFactory;
+import org.openhab.core.sitemap.registry.SitemapRegistry;
 import org.openhab.core.transform.TransformationException;
-import org.openhab.core.transform.TransformationHelper;
-import org.openhab.core.transform.TransformationService;
+import org.openhab.core.transform.util.ItemDisplayStateUtil;
 import org.openhab.core.types.CommandDescription;
 import org.openhab.core.types.State;
 import org.openhab.core.types.StateDescription;
 import org.openhab.core.types.StateOption;
-import org.openhab.core.types.Type;
 import org.openhab.core.types.UnDefType;
 import org.openhab.core.types.util.UnitUtils;
-import org.openhab.core.ui.internal.UIActivator;
 import org.openhab.core.ui.items.ItemUIProvider;
 import org.openhab.core.ui.items.ItemUIRegistry;
+import org.osgi.framework.Bundle;
 import org.osgi.framework.Constants;
+import org.osgi.framework.FrameworkUtil;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Modified;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -108,42 +130,98 @@ import org.slf4j.LoggerFactory;
  * @author Chris Jackson - Initial contribution
  * @author Stefan Triller - Method to convert a state into something a sitemap entity can understand
  * @author Erdoan Hadzhiyusein - Adapted the class to work with the new DateTimeType
+ * @author Laurent Garnier - new method getIconColor
+ * @author Mark Herwege - new method getFormatPattern(widget), clean pattern
+ * @author Laurent Garnier - Support added for multiple AND conditions in labelcolor/valuecolor/visibility
+ * @author Laurent Garnier - new icon parameter based on conditional rules
+ * @author Danny Baumann - widget label source support
+ * @author Laurent Garnier - Consider Colortemperaturepicker element as possible default widget
+ * @author Mark Herwege - Implement sitemap registry
+ * @author Florian Hotze - Refactor getLabel(Widget w) to use {@link ItemDisplayStateUtil}
+ * @author Laurent Garnier - Change widget id coding to support any number of widgets in frame/page
+ * @author Mark Herwege - Add support for nested sitemaps
+ * @author Mark Herwege - Add support for confirmation dialog for commands
  */
 @NonNullByDefault
 @Component(immediate = true, configurationPid = "org.openhab.sitemap", //
         property = Constants.SERVICE_PID + "=org.openhab.sitemap")
 @ConfigurableService(category = "system", label = "Sitemap", description_uri = ItemUIRegistryImpl.CONFIG_URI)
-public class ItemUIRegistryImpl implements ItemUIRegistry {
+public class ItemUIRegistryImpl implements ItemUIRegistry, RegistryChangeListener<Sitemap> {
 
     protected static final String CONFIG_URI = "system:sitemap";
 
-    /* the image location inside the installation folder */
-    protected static final String IMAGE_LOCATION = "./webapps/images/";
-
-    /* RegEx to extract and parse a function String <code>'(.*?)\((.*)\):(.*)'</code> */
-    protected static final Pattern EXTRACT_TRANSFORMFUNCTION_PATTERN = Pattern.compile("(.*?)\\((.*)\\):(.*)");
-
     /* RegEx to identify format patterns. See java.util.Formatter#formatSpecifier (without the '%' at the very end). */
-    protected static final String IDENTIFY_FORMAT_PATTERN_PATTERN = "%((unit%)|((\\d+\\$)?([-#+ 0,(\\<]*)?(\\d+)?(\\.\\d+)?([tT])?([a-zA-Z])))";
+    protected static final String IDENTIFY_FORMAT_PATTERN_PATTERN = "%(?:(unit%)|(?:(?:\\d+\\$)?(?:[-#+ 0,(<]*)?(?:\\d+)?(?:\\.\\d+)?(?:[tT])?(?:[a-zA-Z])))";
+    private static final Pattern FORMAT_PATTERN = Pattern.compile("(?:^|[^%])" + IDENTIFY_FORMAT_PATTERN_PATTERN);
 
-    private static final Pattern LABEL_PATTERN = Pattern.compile(".*?\\[.*? (.*?)\\]");
     private static final int MAX_BUTTONS = 4;
 
     private static final String DEFAULT_SORTING = "NONE";
+    protected static final String WIDGET_ORDER_KEY = "widgetOrder";
+    protected static final String SEMANTICS_KEY = "semantics";
+    protected static final String SEMANTICS_LOCATION = "Location";
+    protected static final String SEMANTICS_PARENT_LOCATION_CONFIG = "isPartOf";
+
+    private static final String DEFAULT_COMMAND_CONFIRM_MESSAGE_I18N_KEY = "system.config.sitemap.commandConfirmDialogMessage.default";
+    protected static final String DEFAULT_COMMAND_CONFIRM_MESSAGE = "Are you sure?";
 
     private final Logger logger = LoggerFactory.getLogger(ItemUIRegistryImpl.class);
 
     protected final Set<ItemUIProvider> itemUIProviders = new HashSet<>();
 
     private final ItemRegistry itemRegistry;
+    private final MetadataRegistry metadataRegistry;
+    private final SitemapFactory sitemapFactory;
+    private final SitemapRegistry sitemapRegistry;
+    private final TimeZoneProvider timeZoneProvider;
+    private final LocaleProvider localeProvider;
+    private final TranslationProvider i18nProvider;
 
     private final Map<Widget, Widget> defaultWidgets = Collections.synchronizedMap(new WeakHashMap<>());
+    private final Map<NestedSitemap, Map<String, Text>> nestedSitemapWidgetsCache = new ConcurrentHashMap<>();
+    private final Map<NestedSitemap, Text> defaultNestedSitemapWidgetsCache = new ConcurrentHashMap<>();
+    private final Map<Text, String> nestedSitemapOrigin = new ConcurrentHashMap<>();
 
     private String groupMembersSorting = DEFAULT_SORTING;
+    private @Nullable String commandConfirmMessageOverride = null;
+
+    private final Object cacheLock = new Object(); // Make sure nested sitemap cache updates and removals are
+                                                   // synchronized. This is a coarse lock. If it leads to performance
+                                                   // issues, we can consider more fine-grained locking mechanism.
+
+    private static class WidgetLabelWithSource {
+        public final String label;
+        public final WidgetLabelSource source;
+
+        public WidgetLabelWithSource(String l, WidgetLabelSource s) {
+            label = l;
+            source = s;
+        }
+    }
 
     @Activate
-    public ItemUIRegistryImpl(@Reference ItemRegistry itemRegistry) {
+    public ItemUIRegistryImpl(final @Reference ItemRegistry itemRegistry,
+            final @Reference MetadataRegistry metadataRegistry, final @Reference SitemapFactory sitemapFactory,
+            final @Reference SitemapRegistry sitemapRegistry, final @Reference TimeZoneProvider timeZoneProvider,
+            final @Reference LocaleProvider localeProvider, final @Reference TranslationProvider i18nProvider) {
         this.itemRegistry = itemRegistry;
+        this.metadataRegistry = metadataRegistry;
+        this.sitemapFactory = sitemapFactory;
+        this.sitemapRegistry = sitemapRegistry;
+        this.timeZoneProvider = timeZoneProvider;
+        this.localeProvider = localeProvider;
+        this.i18nProvider = i18nProvider;
+        sitemapRegistry.addRegistryChangeListener(this);
+    }
+
+    @Deactivate
+    protected void deactivate() {
+        itemUIProviders.clear();
+        defaultWidgets.clear();
+        nestedSitemapWidgetsCache.clear();
+        defaultNestedSitemapWidgetsCache.clear();
+        nestedSitemapOrigin.clear();
+        sitemapRegistry.removeRegistryChangeListener(this);
     }
 
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
@@ -165,6 +243,120 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         applyConfig(config);
     }
 
+    @Override
+    public void added(Sitemap element) {
+        // nothing to do
+    }
+
+    @Override
+    public void updated(Sitemap oldElement, Sitemap element) {
+        removed(oldElement);
+    }
+
+    @Override
+    public void removed(Sitemap element) {
+        synchronized (cacheLock) {
+            final String sitemapName = element.getName();
+
+            // Seed: Texts that are themselves the cached resolution of the removed/updated sitemap
+            Set<Text> removedTexts = new HashSet<>();
+            nestedSitemapWidgetsCache.values().forEach(innerMap -> {
+                Text t = innerMap.get(sitemapName);
+                if (t != null) {
+                    removedTexts.add(t);
+                }
+            });
+
+            boolean changed;
+            do {
+                changed = false;
+
+                // Downward: drop inner entries whose cached Text (sub)tree contains a removed Text
+                for (Map<String, Text> innerMap : nestedSitemapWidgetsCache.values()) {
+                    Iterator<Map.Entry<String, Text>> it = innerMap.entrySet().iterator();
+                    while (it.hasNext()) {
+                        Text t = it.next().getValue();
+                        if (removedTexts.contains(t) || containsAnyCachedTextRecursive(t, removedTexts)) {
+                            it.remove();
+                            if (removedTexts.add(t)) {
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+
+                // Upward: drop outer entries whose KEY's ancestry passes through a removed Text
+                // (or is rooted directly in the removed/updated sitemap)
+                Iterator<Map.Entry<NestedSitemap, Map<String, Text>>> outerIt = nestedSitemapWidgetsCache.entrySet()
+                        .iterator();
+                while (outerIt.hasNext()) {
+                    Map.Entry<NestedSitemap, Map<String, Text>> entry = outerIt.next();
+                    if (isStaleByAncestry(entry.getKey(), sitemapName, removedTexts)) {
+                        entry.getValue().values().forEach(removedTexts::add);
+                        outerIt.remove();
+                        changed = true;
+                    }
+                }
+
+                // Same two checks for the default cache
+                Iterator<Map.Entry<NestedSitemap, Text>> defIt = defaultNestedSitemapWidgetsCache.entrySet().iterator();
+                while (defIt.hasNext()) {
+                    Map.Entry<NestedSitemap, Text> entry = defIt.next();
+                    Text t = entry.getValue();
+                    boolean stale = removedTexts.contains(t) || containsAnyCachedTextRecursive(t, removedTexts)
+                            || isStaleByAncestry(entry.getKey(), sitemapName, removedTexts);
+                    if (stale) {
+                        defIt.remove();
+                        if (removedTexts.add(t)) {
+                            changed = true;
+                        }
+                    }
+                }
+            } while (changed);
+
+            nestedSitemapWidgetsCache.entrySet().removeIf(e -> e.getValue().isEmpty());
+            removedTexts.forEach(nestedSitemapOrigin::remove);
+        }
+    }
+
+    /**
+     * True if the key's ancestor chain passes through a Text already marked for removal,
+     * or terminates directly at the sitemap being removed/updated.
+     */
+    private boolean isStaleByAncestry(NestedSitemap nestedSitemap, String sitemapName, Set<Text> removedTexts) {
+        Parent parent = nestedSitemap.getParent();
+        while (parent instanceof LinkableWidget linkableWidget) {
+            if (parent instanceof Text text && removedTexts.contains(text)) {
+                return true;
+            }
+            parent = linkableWidget.getParent();
+        }
+        if (parent instanceof Sitemap sitemap && !sitemap.getName().equals(sitemapName)) {
+            return false;
+        }
+        return true; // orphaned, treat as stale
+    }
+
+    /**
+     * Recursively search the widget tree rooted at 'root' for any Text instances contained in 'targets'.
+     * Returns true as soon as any match is found.
+     */
+    private boolean containsAnyCachedTextRecursive(LinkableWidget root, Set<Text> targets) {
+        if (root instanceof Text rootText && targets.contains(rootText)) {
+            return true;
+        }
+        List<Widget> children = root.getWidgets();
+        if (children.isEmpty()) {
+            return false;
+        }
+        for (Widget child : children) {
+            if (child instanceof LinkableWidget childLw && containsAnyCachedTextRecursive(childLw, targets)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Handle the initial or a changed configuration.
      *
@@ -176,6 +368,8 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
             if (groupMembersSortingString != null) {
                 groupMembersSorting = groupMembersSortingString;
             }
+            Object msg = config.get("commandConfirmDialogMessage");
+            commandConfirmMessageOverride = (msg instanceof String s && !s.isBlank()) ? s : null;
         }
     }
 
@@ -225,7 +419,7 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
             if (item.getLabel() != null) {
                 return item.getLabel();
             }
-        } catch (ItemNotFoundException e) {
+        } catch (ItemNotFoundException ignored) {
         }
 
         return null;
@@ -262,58 +456,65 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         }
 
         if (GroupItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createGroup();
+            return sitemapFactory.createWidget("Group");
         } else if (CallItem.class.equals(itemType) //
                 || ContactItem.class.equals(itemType) //
                 || DateTimeItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createText();
+            return sitemapFactory.createWidget("Text");
         } else if (ColorItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createColorpicker();
+            return sitemapFactory.createWidget("Colorpicker");
         } else if (DimmerItem.class.equals(itemType)) {
-            Slider slider = SitemapFactory.eINSTANCE.createSlider();
+            Slider slider = (Slider) sitemapFactory.createWidget("Slider");
             slider.setSwitchEnabled(true);
+            slider.setReleaseOnly(true);
             return slider;
         } else if (ImageItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createImage();
+            return sitemapFactory.createWidget("Image");
         } else if (LocationItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createMapview();
+            return sitemapFactory.createWidget("Mapview");
         } else if (NumberItem.class.isAssignableFrom(itemType) //
                 || StringItem.class.equals(itemType)) {
             boolean isReadOnly = isReadOnly(itemName);
             int commandOptionsSize = getCommandOptionsSize(itemName);
             if (!isReadOnly && commandOptionsSize > 0) {
-                return commandOptionsSize <= MAX_BUTTONS ? SitemapFactory.eINSTANCE.createSwitch()
-                        : SitemapFactory.eINSTANCE.createSelection();
+                return commandOptionsSize <= MAX_BUTTONS ? sitemapFactory.createWidget("Switch")
+                        : sitemapFactory.createWidget("Selection");
             }
             if (!isReadOnly && hasStateOptions(itemName)) {
-                return SitemapFactory.eINSTANCE.createSelection();
+                return sitemapFactory.createWidget("Selection");
+            }
+            if (!isReadOnly && NumberItem.class.isAssignableFrom(itemType) && hasItemTag(itemName, "Setpoint")) {
+                return sitemapFactory.createWidget("Setpoint");
+            } else if (!isReadOnly && NumberItem.class.isAssignableFrom(itemType)
+                    && hasItemTag(itemName, "ColorTemperature")) {
+                return sitemapFactory.createWidget("Colortemperaturepicker");
             } else {
-                return SitemapFactory.eINSTANCE.createText();
+                return sitemapFactory.createWidget("Text");
             }
         } else if (PlayerItem.class.equals(itemType)) {
             return createPlayerButtons();
         } else if (RollershutterItem.class.equals(itemType) //
                 || SwitchItem.class.equals(itemType)) {
-            return SitemapFactory.eINSTANCE.createSwitch();
+            return sitemapFactory.createWidget("Switch");
         }
 
         return null;
     }
 
     private Switch createPlayerButtons() {
-        final Switch playerItemSwitch = SitemapFactory.eINSTANCE.createSwitch();
+        final Switch playerItemSwitch = (Switch) sitemapFactory.createWidget("Switch");
         final List<Mapping> mappings = playerItemSwitch.getMappings();
         Mapping commandMapping;
-        mappings.add(commandMapping = SitemapFactory.eINSTANCE.createMapping());
+        mappings.add(commandMapping = sitemapFactory.createMapping());
         commandMapping.setCmd(NextPreviousType.PREVIOUS.name());
         commandMapping.setLabel("<<");
-        mappings.add(commandMapping = SitemapFactory.eINSTANCE.createMapping());
+        mappings.add(commandMapping = sitemapFactory.createMapping());
         commandMapping.setCmd(PlayPauseType.PAUSE.name());
         commandMapping.setLabel("||");
-        mappings.add(commandMapping = SitemapFactory.eINSTANCE.createMapping());
+        mappings.add(commandMapping = sitemapFactory.createMapping());
         commandMapping.setCmd(PlayPauseType.PLAY.name());
         commandMapping.setLabel(">");
-        mappings.add(commandMapping = SitemapFactory.eINSTANCE.createMapping());
+        mappings.add(commandMapping = sitemapFactory.createMapping());
         commandMapping.setCmd(NextPreviousType.NEXT.name());
         commandMapping.setLabel(">>");
         return playerItemSwitch;
@@ -321,156 +522,162 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
 
     @Override
     public @Nullable String getLabel(Widget w) {
-        String label = getLabelFromWidget(w);
-
+        String label = getLabelFromWidget(w).label;
         String itemName = w.getItem();
+
+        // If no item is associated, just transform the label
         if (itemName == null || itemName.isBlank()) {
-            return transform(label, true, null);
+            return transform(label, null);
         }
 
-        String labelMappedOption = null;
-        State state = null;
-        StateDescription stateDescription = null;
-        String formatPattern = getFormatPattern(label);
+        // If no format pattern is defined, we don't want to display any value
+        String formatPattern = getFormatPattern(w);
+        if (formatPattern == null) {
+            return label;
+        }
 
-        // now insert the value, if the state is a string or decimal value and there is some formatting pattern defined
-        // in the label
-        // (i.e. it contains at least a %)
+        // If the pattern is empty, we don't want to display any value
+        if (formatPattern.isEmpty()) {
+            return stripPatternFromLabel(label);
+        }
+
+        // Fetch item and its state
+        @Nullable
+        Item item = null;
         try {
-            final Item item = getItem(itemName);
-
-            // There is a known issue in the implementation of the method getStateDescription() of class Item
-            // in the following case:
-            // - the item provider returns as expected a state description without pattern but with for
-            // example a min value because a min value is set in the item definition but no label with
-            // pattern is set.
-            // - the channel state description provider returns as expected a state description with a pattern
-            // In this case, the result is no display of value by UIs because no pattern is set in the
-            // returned StateDescription. What is expected is the display of a value using the pattern
-            // provided by the channel state description provider.
-            stateDescription = item.getStateDescription();
-            if (formatPattern == null && stateDescription != null && stateDescription.getPattern() != null) {
-                label = label + " [" + stateDescription.getPattern() + "]";
-            }
-
-            String updatedPattern = getFormatPattern(label);
-            if (updatedPattern != null) {
-                formatPattern = updatedPattern;
-                state = item.getState();
-
-                if (formatPattern.contains("%d")) {
-                    if (!(state instanceof Number)) {
-                        // States which do not provide a Number will be converted to DecimalType.
-                        // e.g.: GroupItem can provide a count of items matching the active state
-                        // for some group functions.
-                        state = item.getStateAs(DecimalType.class);
-                    }
-
-                    // for fraction digits in state we don't want to risk format exceptions,
-                    // so treat everything as floats:
-                    formatPattern = formatPattern.replaceAll("%d", "%.0f");
-                }
-            }
+            item = getItem(itemName);
         } catch (ItemNotFoundException e) {
-            logger.error("Cannot retrieve item '{}' for widget {}", itemName, w.eClass().getInstanceTypeName());
+            logger.warn("Cannot retrieve item '{}' for widget {}", itemName, w.getClass().getSimpleName());
         }
 
-        boolean considerTransform = false;
-        if (formatPattern != null) {
-            if (formatPattern.isEmpty()) {
-                label = label.substring(0, label.indexOf("[")).trim();
-            } else {
-                if (state == null || state instanceof UnDefType) {
-                    formatPattern = formatUndefined(formatPattern);
-                    considerTransform = true;
-                } else if (state instanceof Type) {
-                    // if the channel contains options, we build a label with the mapped option value
-                    if (stateDescription != null) {
-                        for (StateOption option : stateDescription.getOptions()) {
-                            if (option.getValue().equals(state.toString()) && option.getLabel() != null) {
-                                State stateOption = new StringType(option.getLabel());
-                                try {
-                                    String formatPatternOption = stateOption.format(formatPattern);
-                                    labelMappedOption = label.trim();
-                                    labelMappedOption = labelMappedOption.substring(0,
-                                            labelMappedOption.indexOf("[") + 1) + formatPatternOption + "]";
-                                } catch (IllegalArgumentException e) {
-                                    logger.debug(
-                                            "Mapping option value '{}' for item {} using format '{}' failed ({}); mapping is ignored",
-                                            stateOption, itemName, formatPattern, e.getMessage());
-                                    labelMappedOption = null;
-                                }
-                                break;
-                            }
-                        }
-                    }
+        State itemState = item != null ? item.getState() : null;
+        State state = itemState != null ? itemState : UnDefType.NULL;
+        @Nullable
+        StateDescription stateDescription = item != null ? item.getStateDescription() : null;
 
-                    if (state instanceof DecimalType) {
-                        // for DecimalTypes we don't want to risk format exceptions, if pattern contains unit
-                        // placeholder
-                        if (formatPattern.contains(UnitUtils.UNIT_PLACEHOLDER)) {
-                            formatPattern = formatPattern.replaceAll(UnitUtils.UNIT_PLACEHOLDER, "").stripTrailing();
-                        }
-                    } else if (state instanceof QuantityType) {
-                        QuantityType<?> quantityState = (QuantityType<?>) state;
-                        // sanity convert current state to the item state description unit in case it was updated in the
-                        // meantime. The item state is still in the "original" unit while the state description will
-                        // display the new unit:
-                        Unit<?> patternUnit = UnitUtils.parseUnit(formatPattern);
-                        if (patternUnit != null && !quantityState.getUnit().equals(patternUnit)) {
-                            quantityState = quantityState.toUnit(patternUnit);
-                        }
-
-                        // The widget may define its own unit in the widget label. Convert to this unit:
-                        if (quantityState != null) {
-                            quantityState = convertStateToWidgetUnit(quantityState, w);
-                        }
-                        state = quantityState;
-                    } else if (state instanceof DateTimeType) {
-                        // Translate a DateTimeType state to the local time zone
-                        try {
-                            state = ((DateTimeType) state).toLocaleZone();
-                        } catch (DateTimeException e) {
-                        }
-                    }
-
-                    // The following exception handling has been added to work around a Java bug with formatting
-                    // numbers. See http://bugs.sun.com/view_bug.do?bug_id=6476425
-                    // Without this catch, the whole sitemap, or page can not be displayed!
-                    // This also handles IllegalFormatConversionException, which is a subclass of IllegalArgument.
-                    try {
-                        Matcher matcher = EXTRACT_TRANSFORMFUNCTION_PATTERN.matcher(formatPattern);
-                        if (matcher.find()) {
-                            considerTransform = true;
-                            String type = matcher.group(1);
-                            String pattern = matcher.group(2);
-                            String value = matcher.group(3);
-                            formatPattern = type + "(" + pattern + "):" + state.format(value);
-                        } else {
-                            formatPattern = state.format(formatPattern);
-                        }
-                    } catch (IllegalArgumentException e) {
-                        logger.warn("Exception while formatting value '{}' of item {} with format '{}': {}", state,
-                                itemName, formatPattern, e.getMessage());
-                        formatPattern = new String("Err");
-                    }
+        // Handle specific pattern requirements
+        String effectivePattern = formatPattern;
+        if (effectivePattern.contains("%d")) {
+            if (!(state instanceof UnDefType) && !(state instanceof Number) && item != null) {
+                // States which do not provide a Number will be converted to DecimalType.
+                // e.g.: GroupItem can provide a count of items matching the active state
+                // for some group functions.
+                State state2 = item.getStateAs(DecimalType.class);
+                if (state2 != null) {
+                    state = state2;
                 }
-
-                label = label.trim();
-                label = label.substring(0, label.indexOf("[") + 1) + formatPattern + "]";
             }
+
+            // for fraction digits in state we don't want to risk format exceptions,
+            // so treat everything as floats:
+            effectivePattern = effectivePattern.replace("%d", "%.0f");
         }
 
-        return transform(label, considerTransform, labelMappedOption);
+        // Determine the display value
+        String value = getDisplayValue(itemName, label, effectivePattern, state,
+                stateDescription != null ? stateDescription.getOptions() : Collections.emptyList());
+
+        // Build the final label by combining the base label and the formatted value
+        return insertValueIntoLabel(label, value);
     }
 
-    private @Nullable QuantityType<?> convertStateToWidgetUnit(QuantityType<?> quantityState, Widget w) {
-        Unit<?> widgetUnit = UnitUtils.parseUnit(getFormatPattern(w.getLabel()));
+    private String stripPatternFromLabel(String label) {
+        int index = label.indexOf("[");
+        return index >= 0 ? label.substring(0, index).trim() : label.trim();
+    }
+
+    private String insertValueIntoLabel(String label, @Nullable String value) {
+        return stripPatternFromLabel(label) + " [" + (value != null ? value : "-") + "]";
+    }
+
+    private String getDisplayValue(String itemName, String label, String pattern, State state,
+            List<StateOption> options) {
+        if (state instanceof UnDefType) {
+            Matcher matcher = EXTRACT_TRANSFORM_FUNCTION_PATTERN.matcher(pattern);
+            if (matcher.find()) {
+                return transform(label, "-");
+            }
+            return formatUndefined(pattern);
+        }
+
+        String effectivePattern = pattern;
+        if (state instanceof DecimalType) {
+            // for DecimalTypes we don't want to risk format exceptions, if pattern contains unit
+            // placeholder
+            if (effectivePattern.contains(UnitUtils.UNIT_PLACEHOLDER)) {
+                effectivePattern = effectivePattern.replaceAll(UnitUtils.UNIT_PLACEHOLDER, "").stripTrailing();
+            }
+        }
+
+        String formatted = ItemDisplayStateUtil.formatState(itemName, effectivePattern, options, state,
+                timeZoneProvider.getTimeZone());
+
+        return formatted != null ? formatted : "-";
+    }
+
+    @Override
+    public WidgetLabelSource getLabelSource(Widget w) {
+        return getLabelFromWidget(w).source;
+    }
+
+    private QuantityType<?> convertStateToWidgetUnit(QuantityType<?> quantityState, Widget w) {
+        Unit<?> widgetUnit = UnitUtils.parseUnit(getFormatPattern(w));
         if (widgetUnit != null && !widgetUnit.equals(quantityState.getUnit())) {
-            return quantityState.toUnit(widgetUnit);
+            return Objects.requireNonNullElse(quantityState.toInvertibleUnit(widgetUnit), quantityState);
         }
 
         return quantityState;
+    }
+
+    @Override
+    public @Nullable String getFormatPattern(Widget w) {
+        String label = getLabelFromWidget(w).label;
+        String pattern = getFormatPattern(label);
+        String itemName = w.getItem();
+        try {
+            Item item = null;
+            if (itemName != null && !itemName.isBlank()) {
+                item = getItem(itemName);
+            }
+            if (item != null && pattern == null) {
+                StateDescription stateDescription = item.getStateDescription();
+                if (stateDescription != null) {
+                    pattern = stateDescription.getPattern();
+                }
+            }
+
+            if (pattern == null) {
+                return null;
+            }
+
+            // remove last part of pattern, after unit, if it exists, as this is not valid and creates problems with
+            // updates
+            if (item instanceof NumberItem numberItem && numberItem.getDimension() != null) {
+                Matcher m = FORMAT_PATTERN.matcher(pattern);
+                int matcherEnd = 0;
+                if (m.find() && m.group(1) == null) {
+                    matcherEnd = m.end();
+                }
+                String unit = pattern.substring(matcherEnd).trim();
+                String postfix = "";
+                int unitEnd = unit.indexOf(" ");
+                if (unitEnd > -1) {
+                    postfix = unit.substring(unitEnd + 1).trim();
+                    unit = unit.substring(0, unitEnd);
+                }
+                if (!postfix.isBlank()) {
+                    logger.warn(
+                            "Item '{}' with unit, nothing allowed after unit in label pattern '{}', dropping postfix",
+                            itemName, pattern);
+                }
+                pattern = unit.isBlank() ? pattern.substring(0, matcherEnd)
+                        : pattern.substring(0, pattern.indexOf(unit, matcherEnd) + unit.length());
+            }
+        } catch (ItemNotFoundException e) {
+            logger.warn("Cannot retrieve item '{}' for widget {}", itemName, w.getClass().getSimpleName());
+        }
+
+        return pattern;
     }
 
     private @Nullable String getFormatPattern(@Nullable String label) {
@@ -488,28 +695,34 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         }
     }
 
-    private String getLabelFromWidget(Widget w) {
+    private WidgetLabelWithSource getLabelFromWidget(Widget w) {
         String label = null;
+        WidgetLabelSource source = WidgetLabelSource.NONE;
+
         if (w.getLabel() != null) {
             // if there is a label defined for the widget, use this
             label = w.getLabel();
+            source = WidgetLabelSource.SITEMAP_WIDGET;
         } else {
             String itemName = w.getItem();
             if (itemName != null) {
                 // check if any item ui provider provides a label for this item
                 label = getLabel(itemName);
                 // if there is no item ui provider saying anything, simply use the name as a label
-                if (label == null) {
+                if (label != null) {
+                    source = WidgetLabelSource.ITEM_LABEL;
+                } else {
                     label = itemName;
+                    source = WidgetLabelSource.ITEM_NAME;
                 }
             }
         }
         // use an empty string, if no label could be found
-        return label != null ? label : "";
+        return new WidgetLabelWithSource(label != null ? label : "", source);
     }
 
     /**
-     * Takes the given <code>formatPattern</code> and replaces it with a analog
+     * Takes the given <code>formatPattern</code> and replaces it with an analog
      * String-based pattern to replace all value Occurrences with a dash ("-")
      *
      * @param formatPattern the original pattern which will be replaces by a
@@ -536,55 +749,47 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
      * If the value does not start with the call to a transformation service,
      * we return the label with the mapped option value if provided (not null).
      */
-    private String transform(String label, boolean matchTransform, @Nullable String labelMappedOption) {
-        String ret = label;
+    private String transform(String label, @Nullable String transformFailbackValue) {
         String formatPattern = getFormatPattern(label);
         if (formatPattern != null) {
-            Matcher matcher = EXTRACT_TRANSFORMFUNCTION_PATTERN.matcher(formatPattern);
-            if (matchTransform && matcher.find()) {
+            Matcher matcher = EXTRACT_TRANSFORM_FUNCTION_PATTERN.matcher(formatPattern);
+            if (matcher.find()) {
                 String type = matcher.group(1);
-                String pattern = matcher.group(2);
+                String function = matcher.group(2);
                 String value = matcher.group(3);
-                TransformationService transformation = TransformationHelper
-                        .getTransformationService(UIActivator.getContext(), type);
-                if (transformation != null) {
-                    try {
-                        String transformationResult = transformation.transform(pattern, value);
-                        if (transformationResult != null) {
-                            ret = label.substring(0, label.indexOf("[") + 1) + transformationResult + "]";
-                        } else {
-                            logger.warn("transformation of type {} did not return a valid result", type);
-                            ret = label.substring(0, label.indexOf("[") + 1) + UnDefType.NULL + "]";
-                        }
-                    } catch (TransformationException e) {
-                        logger.error("transformation throws exception [transformation={}, value={}]", transformation,
-                                value, e);
-                        ret = label.substring(0, label.indexOf("[") + 1) + value + "]";
+                String failbackValue = transformFailbackValue != null ? transformFailbackValue : value;
+                try {
+                    String transformationResult = ItemDisplayStateUtil.transform(type, function, value);
+                    if (transformationResult != null) {
+                        return transformationResult;
+                    } else {
+                        logger.warn("Transformation of type {} did not return a valid result", type);
+                        return failbackValue;
                     }
-                } else {
-                    logger.warn(
-                            "couldn't transform value in label because transformationService of type '{}' is unavailable",
-                            type);
-                    ret = label.substring(0, label.indexOf("[") + 1) + value + "]";
+                } catch (TransformationException e) {
+                    Throwable cause = e.getCause();
+                    logger.warn("Failed transforming the value '{}' with pattern '{}': {}", value, formatPattern,
+                            cause instanceof ScriptException ? cause.getMessage() : e.getMessage());
+                    return failbackValue;
                 }
-            } else if (labelMappedOption != null) {
-                ret = labelMappedOption;
             }
         }
-        return ret;
+        return label;
     }
 
     @Override
     public @Nullable String getCategory(Widget w) {
-        String widgetTypeName = w.eClass().getInstanceTypeName()
-                .substring(w.eClass().getInstanceTypeName().lastIndexOf(".") + 1);
+        String widgetTypeName = w.getWidgetType();
 
         // the default is the widget type name, e.g. "switch"
         String category = widgetTypeName.toLowerCase();
 
+        String conditionalIcon = getConditionalIcon(w);
         // if an icon is defined for the widget, use it
         if (w.getIcon() != null) {
             category = w.getIcon();
+        } else if (conditionalIcon != null) {
+            category = conditionalIcon;
         } else {
             // otherwise check if any item ui provider provides an icon for this item
             String itemName = w.getItem();
@@ -606,7 +811,7 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
                 Item item = getItem(itemName);
                 return convertState(w, item, item.getState());
             } catch (ItemNotFoundException e) {
-                logger.error("Cannot retrieve item '{}' for widget {}", itemName, w.eClass().getInstanceTypeName());
+                logger.warn("Cannot retrieve item '{}' for widget {}", itemName, w.getClass().getSimpleName());
             }
         }
         return UnDefType.UNDEF;
@@ -617,7 +822,7 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
      *
      * @param w Widget in sitemap that shows the state
      * @param i item
-     * @param state
+     * @param state the state
      * @return the converted state or the original if conversion was not possible
      */
     @Override
@@ -625,39 +830,37 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         State returnState = null;
 
         State itemState = i.getState();
-        if (itemState instanceof QuantityType) {
-            itemState = convertStateToWidgetUnit((QuantityType<?>) itemState, w);
+        if (itemState instanceof QuantityType<?> quantityTypeState) {
+            itemState = convertStateToWidgetUnit(quantityTypeState, w);
         }
 
-        if (itemState != null) {
-            if (w instanceof Switch && i instanceof RollershutterItem) {
-                // RollerShutter are represented as Switch in a Sitemap but need a PercentType state
+        if (w instanceof Switch && i instanceof RollershutterItem) {
+            // RollerShutter are represented as Switch in a Sitemap but need a PercentType state
+            returnState = itemState.as(PercentType.class);
+        } else if (w instanceof Slider) {
+            if (i.getAcceptedDataTypes().contains(PercentType.class)) {
                 returnState = itemState.as(PercentType.class);
-            } else if (w instanceof Slider) {
-                if (i.getAcceptedDataTypes().contains(PercentType.class)) {
-                    returnState = itemState.as(PercentType.class);
-                } else {
-                    returnState = itemState.as(DecimalType.class);
-                }
-            } else if (w instanceof Switch) {
-                Switch sw = (Switch) w;
-                if (sw.getMappings().isEmpty()) {
-                    returnState = itemState.as(OnOffType.class);
-                }
+            } else if (!(itemState instanceof QuantityType<?>)) {
+                returnState = itemState.as(DecimalType.class);
+            }
+        } else if (w instanceof Switch sw) {
+            StateDescription stateDescr = i.getStateDescription();
+            if (sw.getMappings().isEmpty() && (stateDescr == null || stateDescr.getOptions().isEmpty())) {
+                returnState = itemState.as(OnOffType.class);
             }
         }
-        // if returnState is null, a conversion was not possible
-        if (returnState == null) {
-            // we return the original state to not break anything
-            returnState = itemState;
-        }
-        return returnState;
+
+        // we return the original state to not break anything
+        return Objects.requireNonNullElse(returnState, itemState);
     }
 
     @Override
     public @Nullable Widget getWidget(Sitemap sitemap, String id) {
-        if (id.length() > 0) {
-            // see if the id is an itemName and try to get the a widget for it
+        if (!id.isEmpty()) {
+            // Cache to avoid resolving the same widget multiple times
+            Map<Widget, Optional<Widget>> resolveCache = new IdentityHashMap<>();
+
+            // see if the id is an itemName and try to get the widget for it
             Widget w = getWidget(id);
             if (w == null) {
                 // try to get the default widget instead
@@ -667,69 +870,100 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
                 w.setItem(id);
             } else {
                 try {
-                    int widgetID = Integer.valueOf(id.substring(0, 2));
-                    if (widgetID < sitemap.getChildren().size()) {
-                        w = sitemap.getChildren().get(widgetID);
-                        for (int i = 2; i < id.length(); i += 2) {
-                            int childWidgetID = Integer.valueOf(id.substring(i, i + 2));
-                            if (childWidgetID < ((LinkableWidget) w).getChildren().size()) {
-                                w = ((LinkableWidget) w).getChildren().get(childWidgetID);
+                    // Widget id is defined by concatenating the child index at each level from top
+                    // (main page) to bottom (sub-page) using same number of digits at each level.
+                    // Old id coding used 2 digits per level; this coding is still supported.
+                    // New id coding follows this format <n>_<value> where <n> defines how digits are used
+                    // per level in <value>.
+                    // Example: "0002" and "1_02" are both valid and reference the same widget in the
+                    // sitemap, the third sub-widget in the first sitemap widget.
+                    int codingSize = 2;
+                    String idValue = id;
+                    String splittedId[] = id.split("_", 2);
+                    if (splittedId.length == 2) {
+                        codingSize = Integer.parseInt(splittedId[0]);
+                        idValue = splittedId[1];
+                    }
+                    if (idValue.length() >= codingSize && (idValue.length() % codingSize) == 0) {
+                        int widgetID = Integer.parseInt(idValue.substring(0, codingSize));
+                        List<Widget> compacted = sitemap.getWidgets().stream()
+                                .filter(sibling -> resolveCached(sibling, resolveCache) != null).toList();
+                        if (widgetID < compacted.size()) {
+                            w = compacted.get(widgetID);
+                            for (int i = codingSize; i < idValue.length(); i += codingSize) {
+                                int childWidgetID = Integer.parseInt(idValue.substring(i, i + codingSize));
+                                Widget rw = resolveDefault(w);
+                                if (rw instanceof LinkableWidget lw) {
+                                    List<Widget> compactedChildren = lw.getWidgets().stream()
+                                            .filter(sibling -> resolveCached(sibling, resolveCache) != null).toList();
+                                    if (childWidgetID < compactedChildren.size()) {
+                                        w = compactedChildren.get(childWidgetID);
+                                    } else {
+                                        logger.warn(
+                                                "Widget id '{}' is invalid, index {} outside the number ({}) of widgets in the page",
+                                                id, childWidgetID, compactedChildren.size());
+                                        w = null;
+                                        break;
+                                    }
+                                } else {
+                                    logger.warn(
+                                            "Widget id '{}' is invalid, widget at sub-id {} cannot have child widgets",
+                                            id, idValue.substring(0, i + codingSize));
+                                    w = null;
+                                    break;
+                                }
                             }
+                        } else {
+                            logger.warn(
+                                    "Widget id '{}' is invalid, index {} outside the number ({}) of widgets in the sitemap",
+                                    id, widgetID, sitemap.getWidgets().size());
                         }
+                    } else {
+                        throw new NumberFormatException("Unexpected id length");
                     }
                 } catch (NumberFormatException e) {
                     // no valid number, so the requested page id does not exist
                 }
             }
-            return resolveDefault(w);
+            return resolveCached(w, resolveCache);
         }
         logger.warn("Cannot find page for id '{}'.", id);
         return null;
     }
 
     @Override
-    public EList<Widget> getChildren(Sitemap sitemap) {
-        EList<Widget> widgets = sitemap.getChildren();
-
-        EList<Widget> result = new BasicEList<>();
-        for (Widget widget : widgets) {
-            Widget resolvedWidget = resolveDefault(widget);
-            if (resolvedWidget != null) {
-                result.add(resolvedWidget);
-            }
-        }
-        return result;
+    public List<Widget> getChildren(Sitemap sitemap) {
+        return getChildren((Parent) sitemap);
     }
 
     @Override
-    public EList<Widget> getChildren(LinkableWidget w) {
-        EList<Widget> widgets = null;
-        if (w instanceof Group && w.getChildren().isEmpty()) {
-            widgets = getDynamicGroupChildren((Group) w);
+    public List<Widget> getChildren(LinkableWidget w) {
+        return getChildren((Parent) w);
+    }
+
+    public List<Widget> getChildren(Parent p) {
+        List<Widget> widgets;
+        if (p instanceof Group group && p.getWidgets().isEmpty()) {
+            widgets = getDynamicGroupChildren(group);
         } else {
-            widgets = w.getChildren();
+            widgets = p.getWidgets();
         }
 
-        EList<Widget> result = new BasicEList<>();
-        for (Widget widget : widgets) {
-            Widget resolvedWidget = resolveDefault(widget);
-            if (resolvedWidget != null) {
-                result.add(resolvedWidget);
-            }
-        }
+        List<Widget> result = new ArrayList<>();
+        widgets.stream().map(this::resolveDefault).filter(Objects::nonNull).map(Objects::requireNonNull)
+                .forEach(result::add);
+
         return result;
     }
 
     @Override
-    public @Nullable EObject getParent(Widget w) {
+    public @Nullable Parent getParent(Widget w) {
         Widget w2 = defaultWidgets.get(w);
-        return (w2 == null) ? w.eContainer() : w2.eContainer();
+        return (w2 == null) ? w.getParent() : w2.getParent();
     }
 
     private @Nullable Widget resolveDefault(@Nullable Widget widget) {
-        if (!(widget instanceof Default)) {
-            return widget;
-        } else {
+        if (widget instanceof Default) {
             String itemName = widget.getItem();
             if (itemName != null) {
                 Item item = get(itemName);
@@ -743,16 +977,231 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
                 }
             }
             return null;
+        } else if (widget instanceof NestedSitemap nestedSitemap) {
+            String itemName = nestedSitemap.getItem();
+            String sitemapName = nestedSitemap.getName();
+            if (itemName != null) {
+                Item item = get(itemName);
+                if (item != null) {
+                    State state = item.getState();
+                    if (state instanceof StringType stringState && !StringType.EMPTY.equals(stringState)) {
+                        sitemapName = stringState.toString();
+                    }
+                }
+            }
+            // Avoid linking back to a parent sitemap to prevent loops
+            synchronized (cacheLock) {
+                if (sitemapName != null) {
+                    List<String> visitedSitemapNames = new ArrayList<>();
+                    Parent parent = nestedSitemap.getParent();
+                    while (parent instanceof LinkableWidget linkableParent) {
+                        if (linkableParent instanceof Text text) {
+                            String origin = nestedSitemapOrigin.get(text);
+                            if (origin != null) {
+                                visitedSitemapNames.add(origin);
+                            }
+                        }
+                        parent = linkableParent.getParent();
+                    }
+                    if (parent instanceof Sitemap rootSitemap) {
+                        visitedSitemapNames.add(rootSitemap.getName());
+                    }
+                    if (visitedSitemapNames.contains(sitemapName)) {
+                        visitedSitemapNames.add(sitemapName);
+                        logger.warn(
+                                "Nested sitemap widget with sitemap name '{}' would create a cycle {}, which is not supported",
+                                sitemapName, visitedSitemapNames);
+                        sitemapName = null;
+                    }
+                }
+                Sitemap sitemap = sitemapName != null ? sitemapRegistry.get(sitemapName) : null;
+                if (sitemap != null && sitemapName != null) {
+                    Map<String, Text> sitemapWidgets = Objects.requireNonNull(
+                            nestedSitemapWidgetsCache.computeIfAbsent(nestedSitemap, ns -> new ConcurrentHashMap<>()));
+                    return sitemapWidgets.computeIfAbsent(sitemapName, sn -> {
+                        Text text = Objects.requireNonNull((Text) sitemapFactory.createWidget(SitemapFactory.TEXT));
+                        copyProperties(widget, text);
+                        if (text.getLabel() == null) {
+                            text.setLabel(sitemap.getLabel());
+                        }
+                        if (text.getIcon() == null) {
+                            text.setIcon(sitemap.getIcon());
+                        }
+                        Parent parent = nestedSitemap.getParent();
+                        if (parent != null) {
+                            text.setParent(parent);
+                        }
+                        text.setWidgets(copyWidgets(sitemap.getWidgets(), text));
+                        nestedSitemapOrigin.put(text, sn);
+                        return text;
+                    });
+                } else {
+                    String name = sitemapName;
+                    return defaultNestedSitemapWidgetsCache.computeIfAbsent(nestedSitemap, ns -> {
+                        if (name != null && sitemap == null) {
+                            logger.warn("Cannot find sitemap '{}' for nested sitemap widget", name);
+                        }
+                        Text text = Objects.requireNonNull((Text) sitemapFactory.createWidget(SitemapFactory.TEXT));
+                        copyProperties(widget, text);
+                        Parent parent = nestedSitemap.getParent();
+                        if (parent != null) {
+                            text.setParent(parent);
+                        }
+                        // we return an empty nested text widget, so the link to the sitemap is visible in the UI
+                        Text nestedText = Objects
+                                .requireNonNull((Text) sitemapFactory.createWidget(SitemapFactory.TEXT));
+                        text.setWidgets(new ArrayList<Widget>(List.of(nestedText)));
+                        nestedText.setParent(text);
+                        return text;
+                    });
+                }
+            }
+        } else {
+            return widget;
         }
     }
 
     private void copyProperties(Widget source, Widget target) {
         target.setItem(source.getItem());
         target.setIcon(source.getIcon());
+        target.setStaticIcon(source.isStaticIcon());
         target.setLabel(source.getLabel());
-        target.getVisibility().addAll(EcoreUtil.copyAll(source.getVisibility()));
-        target.getLabelColor().addAll(EcoreUtil.copyAll(source.getLabelColor()));
-        target.getValueColor().addAll(EcoreUtil.copyAll(source.getValueColor()));
+        target.getVisibility().addAll(copyAll(source.getVisibility()));
+        target.getLabelColor().addAll(copyAll(source.getLabelColor()));
+        target.getValueColor().addAll(copyAll(source.getValueColor()));
+        target.getIconColor().addAll(copyAll(source.getIconColor()));
+        target.getIconRules().addAll(copyAll(source.getIconRules()));
+    }
+
+    private Collection<? extends Rule> copyAll(List<Rule> rules) {
+        return rules.stream().map(rule -> {
+            Rule ruleCopy = sitemapFactory.createRule();
+            ruleCopy.getConditions().addAll(rule.getConditions().stream().map(condition -> {
+                org.openhab.core.sitemap.Condition conditionCopy = sitemapFactory.createCondition();
+                conditionCopy.setItem(condition.getItem());
+                conditionCopy.setCondition(condition.getCondition());
+                conditionCopy.setArgument(condition.getArgument());
+                return conditionCopy;
+            }).toList());
+            ruleCopy.setValue(rule.getValue());
+            return ruleCopy;
+        }).toList();
+    }
+
+    private List<Widget> copyWidgets(List<Widget> widgets, Parent parent) {
+        return widgets.stream().map(widget -> copyWidget(widget, parent)).toList();
+    }
+
+    /**
+     * Copies a widget and its properties, including children if it is a LinkableWidget. This is creating a shallow copy
+     * of the properties of the widget, except for the widget parent child relationships (parent and linkedWidgets).
+     *
+     * @param source
+     * @param parent
+     * @return copied widget
+     */
+    private Widget copyWidget(Widget source, Parent parent) {
+        Widget target = Objects.requireNonNull(sitemapFactory.createWidget(source.getWidgetType()));
+        target.setItem(source.getItem());
+        target.setIcon(source.getIcon());
+        target.setStaticIcon(source.isStaticIcon());
+        target.setLabel(source.getLabel());
+        target.setVisibility(source.getVisibility());
+        target.setLabelColor(source.getLabelColor());
+        target.setValueColor(source.getValueColor());
+        target.setIconColor(source.getIconColor());
+        target.setIconRules(source.getIconRules());
+
+        switch (source) {
+            case Image imageWidget:
+                Image imageCopy = (Image) target;
+                imageCopy.setUrl(imageWidget.getUrl());
+                imageCopy.setRefresh(imageWidget.getRefresh());
+                break;
+            case Video videoWidget:
+                Video videoCopy = (Video) target;
+                videoCopy.setUrl(videoWidget.getUrl());
+                videoCopy.setEncoding(videoWidget.getEncoding());
+                break;
+            case Chart chartWidget:
+                Chart chartCopy = (Chart) target;
+                chartCopy.setService(chartWidget.getService());
+                chartCopy.setRefresh(chartWidget.getRefresh());
+                chartCopy.setPeriod(chartWidget.getPeriod());
+                chartCopy.setLegend(chartWidget.hasLegend());
+                chartCopy.setForceAsItem(chartWidget.forceAsItem());
+                chartCopy.setYAxisDecimalPattern(chartWidget.getYAxisDecimalPattern());
+                chartCopy.setInterpolation(chartWidget.getInterpolation());
+                break;
+            case Webview webviewWidget:
+                Webview webviewCopy = (Webview) target;
+                webviewCopy.setHeight(webviewWidget.getHeight());
+                webviewCopy.setUrl(webviewWidget.getUrl());
+                break;
+            case Switch switchWidget:
+                Switch switchCopy = (Switch) target;
+                switchCopy.setMappings(switchWidget.getMappings());
+                break;
+            case Mapview mapviewWidget:
+                Mapview mapviewCopy = (Mapview) target;
+                mapviewCopy.setHeight(mapviewWidget.getHeight());
+                break;
+            case Slider sliderWidget:
+                Slider sliderCopy = (Slider) target;
+                sliderCopy.setMinValue(sliderWidget.getMinValue());
+                sliderCopy.setMaxValue(sliderWidget.getMaxValue());
+                sliderCopy.setStep(sliderWidget.getStep());
+                sliderCopy.setSwitchEnabled(sliderWidget.isSwitchEnabled());
+                sliderCopy.setReleaseOnly(sliderWidget.isReleaseOnly());
+                break;
+            case Selection selectionWidget:
+                Selection selectionCopy = (Selection) target;
+                selectionCopy.setMappings(selectionWidget.getMappings());
+                break;
+            case Input inputWidget:
+                Input inputCopy = (Input) target;
+                inputCopy.setInputHint(inputWidget.getInputHint());
+                break;
+            case Setpoint setpointWidget:
+                Setpoint setpointCopy = (Setpoint) target;
+                setpointCopy.setMinValue(setpointWidget.getMinValue());
+                setpointCopy.setMaxValue(setpointWidget.getMaxValue());
+                setpointCopy.setStep(setpointWidget.getStep());
+                break;
+            case Colortemperaturepicker colortemperaturepickerWidget:
+                Colortemperaturepicker colortemperaturepickerCopy = (Colortemperaturepicker) target;
+                colortemperaturepickerCopy.setMinValue(colortemperaturepickerWidget.getMinValue());
+                colortemperaturepickerCopy.setMaxValue(colortemperaturepickerWidget.getMaxValue());
+                break;
+            case Button buttonWidget:
+                Button buttonCopy = (Button) target;
+                buttonCopy.setRow(buttonWidget.getRow());
+                buttonCopy.setColumn(buttonWidget.getColumn());
+                buttonCopy.setStateless(buttonWidget.isStateless());
+                buttonCopy.setCmd(buttonWidget.getCmd());
+                buttonCopy.setReleaseCmd(buttonWidget.getReleaseCmd());
+                break;
+            case Default defaultWidget:
+                Default defaultCopy = (Default) target;
+                defaultCopy.setHeight(defaultWidget.getHeight());
+                break;
+            case NestedSitemap nestedSitemapWidget:
+                NestedSitemap nestedSitemapCopy = (NestedSitemap) target;
+                nestedSitemapCopy.setName(nestedSitemapWidget.getName());
+                break;
+            default:
+                break;
+        }
+
+        target.setParent(parent);
+
+        if (source instanceof LinkableWidget sourceLink) {
+            LinkableWidget targetLink = (LinkableWidget) target;
+            List<Widget> copiedChildren = copyWidgets(sourceLink.getWidgets(), targetLink);
+            targetLink.setWidgets(copiedChildren);
+        }
+
+        return target;
     }
 
     /**
@@ -763,37 +1212,23 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
      * @param group The group widget to get children for
      * @return a list of default widgets provided for the member items
      */
-    private EList<Widget> getDynamicGroupChildren(Group group) {
-        EList<Widget> children = new BasicEList<>();
+    private List<Widget> getDynamicGroupChildren(Group group) {
+        List<Widget> children = new ArrayList<>();
         String itemName = group.getItem();
         try {
             if (itemName != null) {
                 Item item = getItem(itemName);
-                if (item instanceof GroupItem) {
-                    GroupItem groupItem = (GroupItem) item;
+                if (item instanceof GroupItem groupItem) {
                     List<Item> members = new ArrayList<>(groupItem.getMembers());
                     switch (groupMembersSorting) {
                         case "LABEL":
-                            Collections.sort(members, new Comparator<Item>() {
-                                @Override
-                                public int compare(Item u1, Item u2) {
-                                    String u1Label = u1.getLabel();
-                                    String u2Label = u2.getLabel();
-                                    if (u1Label != null && u2Label != null) {
-                                        return u1Label.compareTo(u2Label);
-                                    } else {
-                                        return u1.getName().compareTo(u2.getName());
-                                    }
-                                }
-                            });
+                            members.sort(Comparator.comparing(this::getItemLabel));
                             break;
                         case "NAME":
-                            Collections.sort(members, new Comparator<Item>() {
-                                @Override
-                                public int compare(Item u1, Item u2) {
-                                    return u1.getName().compareTo(u2.getName());
-                                }
-                            });
+                            members.sort(Comparator.comparing(Item::getName));
+                            break;
+                        case "METADATA":
+                            sortByMetadata(members);
                             break;
                         default:
                             break;
@@ -819,11 +1254,106 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         return children;
     }
 
+    private void sortByMetadata(List<Item> members) {
+        // Location items are sorted among themselves (by hierarchy, then widgetOrder),
+        // and placed ahead of all other members.
+        Map<Boolean, List<Item>> byLocation = members.stream().collect(Collectors.partitioningBy(this::isLocationItem));
+        List<Item> sorted = new ArrayList<>(byLocation.getOrDefault(true, List.of()).stream()
+                .sorted(Comparator.comparing(Item::getName, this::compareLocationMembers)).toList());
+        sorted.addAll(byLocation.getOrDefault(false, List.of()).stream()
+                .sorted(Comparator.comparing(Item::getName, this::compareWidgetOrder)).toList());
+        members.clear();
+        members.addAll(sorted);
+    }
+
+    private boolean isLocationItem(Item item) {
+        MetadataKey semanticsKey = new MetadataKey(SEMANTICS_KEY, item.getName());
+        Metadata semantics = metadataRegistry.get(semanticsKey);
+        return semantics != null && semantics.getValue().startsWith(SEMANTICS_LOCATION);
+    }
+
+    private String getItemLabel(Item item) {
+        String label = item.getLabel();
+        return label != null ? label : item.getName();
+    }
+
+    private String getItemLabel(String itemName) {
+        Item item = get(itemName);
+        return item != null ? getItemLabel(item) : itemName;
+    }
+
+    private @Nullable String getParentLocationName(String locationItemName) {
+        MetadataKey semanticsKey = new MetadataKey(SEMANTICS_KEY, locationItemName);
+        Metadata semantics = metadataRegistry.get(semanticsKey);
+        Object isPartOf = semantics != null ? semantics.getConfiguration().get(SEMANTICS_PARENT_LOCATION_CONFIG) : null;
+        return isPartOf instanceof String ? (String) isPartOf : null;
+    }
+
+    private int compareLocationMembers(String u1Name, String u2Name) {
+        List<String> u1Ancestors = new ArrayList<>();
+        u1Ancestors.add(u1Name);
+        String u1ParentName = getParentLocationName(u1Name);
+        while (u1ParentName != null && !u1Ancestors.contains(u1ParentName)) {
+            u1Ancestors.add(u1ParentName);
+            u1ParentName = getParentLocationName(u1ParentName);
+        }
+        List<String> u2Ancestors = new ArrayList<>();
+        u2Ancestors.add(u2Name);
+        String u2ParentName = getParentLocationName(u2Name);
+        while (u2ParentName != null && !u2Ancestors.contains(u2ParentName)) {
+            u2Ancestors.add(u2ParentName);
+            u2ParentName = getParentLocationName(u2ParentName);
+        }
+
+        int u1Depth = u1Ancestors.size();
+        int u2Depth = u2Ancestors.size();
+        int minDepth = Math.min(u1Depth, u2Depth);
+        for (int d = 0; d < minDepth; d++) {
+            String ancestorName1 = u1Ancestors.get(u1Depth - 1 - d);
+            String ancestorName2 = u2Ancestors.get(u2Depth - 1 - d);
+            if (!ancestorName1.equals(ancestorName2)) {
+                return compareWidgetOrder(ancestorName1, ancestorName2);
+            }
+        }
+        // A parent comes before its children
+        return Integer.compare(u1Depth, u2Depth);
+    }
+
+    private int compareWidgetOrder(String u1Name, String u2Name) {
+        MetadataKey u1Key = new MetadataKey(WIDGET_ORDER_KEY, u1Name);
+        Metadata u1Order = metadataRegistry.get(u1Key);
+        MetadataKey u2Key = new MetadataKey(WIDGET_ORDER_KEY, u2Name);
+        Metadata u2Order = metadataRegistry.get(u2Key);
+        Float u1OrderValue = null;
+        try {
+            u1OrderValue = u1Order != null ? Float.parseFloat(u1Order.getValue()) : null;
+        } catch (NumberFormatException e) {
+            // ignore
+        }
+        Float u2OrderValue = null;
+        try {
+            u2OrderValue = u2Order != null ? Float.parseFloat(u2Order.getValue()) : null;
+        } catch (NumberFormatException e) {
+            // ignore
+        }
+
+        if ((u1OrderValue == null && u2OrderValue == null)
+                || (u1OrderValue != null && u1OrderValue.equals(u2OrderValue))) {
+            return getItemLabel(u1Name).compareTo(getItemLabel(u2Name));
+        } else if (u1OrderValue == null) {
+            return 1;
+        } else if (u2OrderValue == null) {
+            return -1;
+        } else {
+            return u1OrderValue.compareTo(u2OrderValue);
+        }
+    }
+
     private boolean isReadOnly(String itemName) {
         try {
             Item item = getItem(itemName);
             StateDescription stateDescription = item.getStateDescription();
-            return stateDescription != null ? stateDescription.isReadOnly() : false;
+            return stateDescription != null && stateDescription.isReadOnly();
         } catch (ItemNotFoundException e) {
             return false;
         }
@@ -874,6 +1404,15 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
             return item.getCategory();
         } catch (ItemNotFoundException e) {
             return null;
+        }
+    }
+
+    private boolean hasItemTag(String itemName, String tag) {
+        try {
+            Item item = getItem(itemName);
+            return item.hasTag(tag);
+        } catch (ItemNotFoundException e) {
+            return false;
         }
     }
 
@@ -929,39 +1468,63 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
             return getWidgetId(w2);
         }
 
-        String id = "";
+        // Build the id by concatenating the child index at each level from top (main page) to bottom (sub-page),
+        // using same number of digits at each level. The number of digits is automatically determined.
+        // That way, we can support any number of widgets in a page.
+        List<Integer> indexes = new ArrayList<>();
         Widget w = widget;
-        while (w.eContainer() instanceof Widget) {
-            Widget parent = (Widget) w.eContainer();
-            String index = String.valueOf(((LinkableWidget) parent).getChildren().indexOf(w));
-            if (index.length() == 1) {
-                index = "0" + index; // make it two digits
-            }
-            id = index + id;
+        Map<Widget, Optional<Widget>> resolvedCache = new IdentityHashMap<>();
+        while (w.getParent() instanceof LinkableWidget parent) {
+            indexes.add(compactedIndexOf(w, parent.getWidgets(), resolvedCache));
             w = parent;
         }
-        if (w.eContainer() instanceof Sitemap) {
-            Sitemap sitemap = (Sitemap) w.eContainer();
-            String index = String.valueOf(sitemap.getChildren().indexOf(w));
-            if (index.length() == 1) {
-                index = "0" + index; // make it two digits
+        if (w.getParent() instanceof Sitemap sitemap) {
+            indexes.add(compactedIndexOf(w, sitemap.getWidgets(), resolvedCache));
+        }
+        String id = "";
+        if (!indexes.isEmpty()) {
+            if (Collections.min(indexes) >= 0) {
+                int codingSize = "%d".formatted(Collections.max(indexes)).length();
+                String codingFormat = "%0" + codingSize + "d";
+                Collections.reverse(indexes);
+                id = indexes.stream().map(idx -> codingFormat.formatted(idx))
+                        .collect(Collectors.joining("", codingSize + "_", ""));
+            } else {
+                logger.debug("Could not compute a widget id for '{}': widget or an ancestor is no longer resolvable",
+                        widget);
             }
-            id = index + id;
         }
 
         // if the widget is dynamically created and not available in the sitemap,
         // use the item name as the id
-        if (w.eContainer() == null) {
-            String itemName = w.getItem();
-            id = itemName;
+        if (w.getParent() == null) {
+            String item = w.getItem();
+            id = item != null ? item : id;
         }
         return id;
     }
 
-    private boolean matchStateToValue(State state, String value, @Nullable String matchCondition) {
-        // Check if the value is equal to the supplied value
-        boolean matched = false;
+    private @Nullable Widget resolveCached(Widget raw, Map<Widget, Optional<Widget>> cache) {
+        return Objects.requireNonNull(cache.computeIfAbsent(raw, r -> Optional.ofNullable(resolveDefault(r))))
+                .orElse(null);
+    }
 
+    private int compactedIndexOf(Widget w, List<Widget> rawSiblings, Map<Widget, Optional<Widget>> cache) {
+        int index = -1;
+        for (Widget sibling : rawSiblings) {
+            Widget resolved = resolveCached(sibling, cache);
+            if (resolved == null) {
+                continue;
+            }
+            index++;
+            if (sibling.equals(w) || resolved.equals(w)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private boolean matchStateToValue(State state, String value, @Nullable String matchCondition) {
         // Remove quotes - this occurs in some instances where multiple types
         // are defined in the xtext definitions
         String unquotedValue = value;
@@ -975,9 +1538,12 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
             condition = Condition.fromString(matchCondition);
             if (condition == null) {
                 logger.warn("matchStateToValue: unknown match condition '{}'", matchCondition);
-                return matched;
+                return false;
             }
         }
+
+        // Check if the value is equal to the supplied value
+        boolean matched = false;
         if (UnDefType.NULL.toString().equals(unquotedValue) || UnDefType.UNDEF.toString().equals(unquotedValue)) {
             switch (condition) {
                 case EQUAL:
@@ -999,8 +1565,8 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
                 try {
                     double compareDoubleValue = Double.parseDouble(unquotedValue);
                     double stateDoubleValue;
-                    if (state instanceof DecimalType) {
-                        stateDoubleValue = ((DecimalType) state).doubleValue();
+                    if (state instanceof DecimalType type) {
+                        stateDoubleValue = type.doubleValue();
                     } else {
                         stateDoubleValue = ((QuantityType<?>) state).doubleValue();
                     }
@@ -1040,9 +1606,9 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
                 } catch (NumberFormatException e) {
                     logger.debug("matchStateToValue: Decimal format exception: ", e);
                 }
-            } else if (state instanceof DateTimeType) {
-                ZonedDateTime val = ((DateTimeType) state).getZonedDateTime();
-                ZonedDateTime now = ZonedDateTime.now();
+            } else if (state instanceof DateTimeType dateTimeState) {
+                Instant val = dateTimeState.getInstant();
+                Instant now = Instant.now();
                 long secsDif = ChronoUnit.SECONDS.between(val, now);
 
                 try {
@@ -1103,143 +1669,179 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         return matched;
     }
 
-    private @Nullable String processColorDefinition(@Nullable State state, @Nullable List<ColorArray> colorList) {
+    private @Nullable String processColorDefinition(Widget w, List<Rule> colorList, String colorType) {
         // Sanity check
-        if (colorList == null) {
-            return null;
-        }
         if (colorList.isEmpty()) {
             return null;
         }
 
+        logger.debug("Checking {} color for widget '{}'.", colorType, w.getLabel());
+
         String colorString = null;
 
-        // Check for the "arg". If it doesn't exist, assume there's just an
-        // static colour
-        if (colorList.size() == 1 && colorList.get(0).getState() == null) {
-            colorString = colorList.get(0).getArg();
-        } else {
-            // Loop through all elements looking for the definition associated
-            // with the supplied value
-            for (ColorArray color : colorList) {
-                // Use a local state variable in case it gets overridden below
-                State cmpState = state;
-
-                if (color.getState() == null) {
-                    logger.error("Error parsing color");
-                    continue;
-                }
-
-                // If there's an item defined here, get its state
-                String itemName = color.getItem();
-                if (itemName != null) {
-                    // Try and find the item to test.
-                    // If it's not found, return visible
-                    Item item;
-                    try {
-                        item = itemRegistry.getItem(itemName);
-
-                        // Get the item state
-                        cmpState = item.getState();
-                    } catch (ItemNotFoundException e) {
-                        logger.warn("Cannot retrieve color item {} for widget", color.getItem());
-                    }
-                }
-
-                // Handle the sign
-                String value;
-                if (color.getSign() != null) {
-                    value = color.getSign() + color.getState();
-                } else {
-                    value = color.getState();
-                }
-
-                if (matchStateToValue(cmpState, value, color.getCondition())) {
-                    // We have the color for this value - break!
-                    colorString = color.getArg();
-                    break;
-                }
+        // Loop through all elements looking for the definition associated
+        // with the supplied value
+        for (Rule rule : colorList) {
+            if (allConditionsOk(rule.getConditions(), w)) {
+                // We have the color for this value - break!
+                colorString = rule.getValue();
+                break;
             }
         }
 
-        // Remove quotes off the colour - if they exist
         if (colorString == null) {
+            logger.debug("No {} color found for widget '{}'.", colorType, w.getLabel());
             return null;
         }
 
+        // Remove quotes off the colour - if they exist
         if (colorString.startsWith("\"") && colorString.endsWith("\"")) {
             colorString = colorString.substring(1, colorString.length() - 1);
         }
+        logger.debug("{} color for widget '{}' is '{}'.", colorType, w.getLabel(), colorString);
 
         return colorString;
     }
 
     @Override
     public @Nullable String getLabelColor(Widget w) {
-        return processColorDefinition(getState(w), w.getLabelColor());
+        return processColorDefinition(w, w.getLabelColor(), "label");
     }
 
     @Override
     public @Nullable String getValueColor(Widget w) {
-        return processColorDefinition(getState(w), w.getValueColor());
+        return processColorDefinition(w, w.getValueColor(), "value");
+    }
+
+    @Override
+    public @Nullable String getIconColor(Widget w) {
+        return processColorDefinition(w, w.getIconColor(), "icon");
     }
 
     @Override
     public boolean getVisiblity(Widget w) {
         // Default to visible if parameters not set
-        List<VisibilityRule> ruleList = w.getVisibility();
-        if (ruleList == null) {
-            return true;
-        }
+        List<Rule> ruleList = w.getVisibility();
         if (ruleList.isEmpty()) {
             return true;
         }
 
         logger.debug("Checking visiblity for widget '{}'.", w.getLabel());
 
-        for (VisibilityRule rule : w.getVisibility()) {
-            String itemName = rule.getItem();
-            if (itemName == null) {
-                continue;
-            }
-            if (rule.getState() == null) {
-                continue;
-            }
-
-            // Try and find the item to test.
-            // If it's not found, return visible
-            Item item;
-            try {
-                item = itemRegistry.getItem(itemName);
-            } catch (ItemNotFoundException e) {
-                logger.error("Cannot retrieve visibility item {} for widget {}", rule.getItem(),
-                        w.eClass().getInstanceTypeName());
-
-                // Default to visible!
-                return true;
-            }
-
-            // Get the item state
-            State state = item.getState();
-
-            // Handle the sign
-            String value;
-            if (rule.getSign() != null) {
-                value = rule.getSign() + rule.getState();
-            } else {
-                value = rule.getState();
-            }
-
-            if (matchStateToValue(state, value, rule.getCondition())) {
-                // We have the name for this value!
+        for (Rule rule : ruleList) {
+            if (allConditionsOk(rule.getConditions(), w)) {
                 return true;
             }
         }
 
-        logger.debug("Widget {} is not visible.", w.getLabel());
+        logger.debug("Widget '{}' is not visible.", w.getLabel());
 
-        // The state wasn't in the list, so we don't display it
         return false;
+    }
+
+    @Override
+    public @Nullable String getCommandConfirmMessage(Widget w) {
+        List<Rule> ruleList = w.getConfirmCmdRules();
+
+        if (ruleList.isEmpty()) {
+            return w.getConfirmCmd() ? getDefaultConfirmCmdMessage() : null;
+        }
+
+        logger.debug("Checking confirm command rules for widget '{}'.", w.getLabel());
+
+        for (Rule rule : ruleList) {
+            if (allConditionsOk(rule.getConditions(), w)) {
+                String arg = rule.getValue();
+                return arg != null && !arg.isBlank() ? arg : getDefaultConfirmCmdMessage();
+            }
+        }
+
+        logger.debug("Widget '{}' commands don't require confirmation.", w.getLabel());
+        return null;
+    }
+
+    private String getDefaultConfirmCmdMessage() {
+        String override = commandConfirmMessageOverride;
+        if (override != null && !override.equals(DEFAULT_COMMAND_CONFIRM_MESSAGE)) {
+            return override;
+        }
+        Bundle bundle = FrameworkUtil.getBundle(this.getClass());
+        Locale locale = localeProvider.getLocale();
+        String message = i18nProvider.getText(bundle, DEFAULT_COMMAND_CONFIRM_MESSAGE_I18N_KEY,
+                DEFAULT_COMMAND_CONFIRM_MESSAGE, locale);
+        return message != null ? message : DEFAULT_COMMAND_CONFIRM_MESSAGE;
+    }
+
+    @Override
+    public @Nullable String getConditionalIcon(Widget w) {
+        List<Rule> ruleList = w.getIconRules();
+        // Sanity check
+        if (ruleList.isEmpty()) {
+            return null;
+        }
+
+        logger.debug("Checking icon for widget '{}'.", w.getLabel());
+
+        String icon = null;
+
+        // Loop through all elements looking for the definition associated
+        // with the supplied value
+        for (Rule rule : ruleList) {
+            if (allConditionsOk(rule.getConditions(), w)) {
+                // We have the icon for this value - break!
+                icon = rule.getValue();
+                break;
+            }
+        }
+
+        if (icon == null) {
+            logger.debug("No icon found for widget '{}'.", w.getLabel());
+            return null;
+        }
+
+        // Remove quotes off the icon - if they exist
+        if (icon.startsWith("\"") && icon.endsWith("\"")) {
+            icon = icon.substring(1, icon.length() - 1);
+        }
+        logger.debug("icon for widget '{}' is '{}'.", w.getLabel(), icon);
+
+        return icon;
+    }
+
+    private boolean allConditionsOk(List<org.openhab.core.sitemap.Condition> conditions, Widget w) {
+        boolean allConditionsOk = true;
+        if (!conditions.isEmpty()) {
+            State defaultState = getState(w);
+
+            // Go through all AND conditions
+            for (org.openhab.core.sitemap.Condition condition : conditions) {
+                // Use a local state variable in case it gets overridden below
+                State state = defaultState;
+
+                // If there's an item defined here, get its state
+                String itemName = condition.getItem();
+                if (itemName != null) {
+                    // Try and find the item to test.
+                    Item item;
+                    try {
+                        item = itemRegistry.getItem(itemName);
+
+                        // Get the item state
+                        state = item.getState();
+                    } catch (ItemNotFoundException e) {
+                        logger.warn("Cannot retrieve item '{}' for widget {}", itemName, w.getClass().getSimpleName());
+                    }
+                }
+
+                String argument = condition.getArgument();
+
+                if (state == null || !matchStateToValue(state, argument, condition.getCondition())) {
+                    allConditionsOk = false;
+                    break;
+                }
+            }
+        }
+        return allConditionsOk;
     }
 
     enum Condition {
@@ -1251,9 +1853,9 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         LESS("<"),
         NOT("!");
 
-        private String value;
+        private final String value;
 
-        private Condition(String value) {
+        Condition(String value) {
             this.value = value;
         }
 
@@ -1313,36 +1915,30 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
     }
 
     @Override
-    public void addRegistryHook(RegistryHook<Item> hook) {
-        itemRegistry.addRegistryHook(hook);
-    }
-
-    @Override
-    public void removeRegistryHook(RegistryHook<Item> hook) {
-        itemRegistry.removeRegistryHook(hook);
-    }
-
-    @Override
     public @Nullable String getUnitForWidget(Widget w) {
-        try {
-            Item item = getItem(w.getItem());
+        String itemName = w.getItem();
+        if (itemName != null) {
+            try {
+                Item item = getItem(itemName);
 
-            // we require the item to define a dimension, otherwise no unit will be reported to the UIs.
-            if (item instanceof NumberItem && ((NumberItem) item).getDimension() != null) {
-                if (w.getLabel() == null) {
-                    // if no Label was assigned to the Widget we fallback to the items unit
-                    return ((NumberItem) item).getUnitSymbol();
+                // we require the item to define a dimension, otherwise no unit will be reported to the UIs.
+                if (item instanceof NumberItem numberItem && numberItem.getDimension() != null) {
+                    String pattern = getFormatPattern(w);
+                    if (pattern == null || pattern.isBlank()) {
+                        // if no Label was assigned to the Widget we fallback to the items unit
+                        return numberItem.getUnitSymbol();
+                    }
+
+                    String unit = getUnitFromPattern(pattern);
+                    if (!UnitUtils.UNIT_PLACEHOLDER.equals(unit)) {
+                        return unit;
+                    }
+
+                    return numberItem.getUnitSymbol();
                 }
-
-                String unit = getUnitFromLabel(w.getLabel());
-                if (!UnitUtils.UNIT_PLACEHOLDER.equals(unit)) {
-                    return unit;
-                }
-
-                return ((NumberItem) item).getUnitSymbol();
+            } catch (ItemNotFoundException e) {
+                logger.warn("Failed to retrieve item during widget rendering, item does not exist: {}", e.getMessage());
             }
-        } catch (ItemNotFoundException e) {
-            logger.debug("Failed to retrieve item during widget rendering: {}", e.getMessage());
         }
 
         return "";
@@ -1353,19 +1949,38 @@ public class ItemUIRegistryImpl implements ItemUIRegistry {
         int index = label.lastIndexOf(" ");
         String labelUnit = index > 0 ? label.substring(index) : null;
         if (labelUnit != null && !state.getUnit().toString().equals(labelUnit)) {
-            return state.toUnit(labelUnit);
+            return state.toInvertibleUnit(labelUnit);
         }
         return state;
     }
 
-    private @Nullable String getUnitFromLabel(@Nullable String label) {
-        if (label == null || label.isBlank()) {
+    private @Nullable String getUnitFromPattern(@Nullable String format) {
+        if (format == null || format.isBlank()) {
             return null;
         }
-        Matcher m = LABEL_PATTERN.matcher(label);
-        if (m.matches()) {
-            return m.group(1);
-        }
-        return null;
+        int index = format.lastIndexOf(" ");
+        String unit = index > 0 ? format.substring(index + 1) : null;
+        unit = UnitUtils.UNIT_PERCENT_FORMAT_STRING.equals(unit) ? "%" : unit;
+        return unit;
+    }
+
+    /**
+     * This method is used to be able to test the nested sitemap widgets cache and is only there for testing purposes.
+     * It is not intended to be used by other classes.
+     *
+     * @return the nestedSitemapWidgetsCache
+     */
+    Map<NestedSitemap, Map<String, Text>> getNestedSitemapWidgetsCache() {
+        return nestedSitemapWidgetsCache;
+    }
+
+    /**
+     * This method is used to be able to test the nested sitemap widgets cache and is only there for testing purposes.
+     * It is not intended to be used by other classes.
+     *
+     * @return the defaultNestedSitemapWidgetsCache
+     */
+    Map<NestedSitemap, Text> getDefaultNestedSitemapWidgetsCache() {
+        return defaultNestedSitemapWidgetsCache;
     }
 }

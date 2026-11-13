@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -51,7 +51,7 @@ public enum BinaryPrefix implements SymbolSupplier, UnitConverterSupplier {
      * The <code>UnitConverter</code> of this prefix, as returned by {@link #getConverter}.
      *
      * @see #getConverter()
-     * @see {@link UnitConverter}
+     * @see UnitConverter
      */
     private final UnitConverter converter;
 

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -67,10 +67,10 @@ public class ScriptedAutomationManager {
         this.scriptedPrivateModuleHandlerFactory = scriptedPrivateModuleHandlerFactory;
     }
 
-    public void removeModuleType(String UID) {
-        if (modules.remove(UID)) {
-            scriptedCustomModuleTypeProvider.removeModuleType(UID);
-            removeHandler(UID);
+    public void removeModuleType(String uid) {
+        if (modules.remove(uid)) {
+            scriptedCustomModuleTypeProvider.removeModuleType(uid);
+            removeHandler(uid);
         }
     }
 
@@ -164,12 +164,10 @@ public class ScriptedAutomationManager {
             // triggers are optional
         }
 
-        List<Action> actions = new ArrayList<>();
-        actions.addAll(element.getActions());
+        List<Action> actions = new ArrayList<>(element.getActions());
 
-        if (element instanceof SimpleRuleActionHandler) {
-            String privId = addPrivateActionHandler(
-                    new SimpleRuleActionHandlerDelegate((SimpleRuleActionHandler) element));
+        if (element instanceof SimpleRuleActionHandler handler) {
+            String privId = addPrivateActionHandler(new SimpleRuleActionHandlerDelegate(handler));
 
             Action scriptedAction = ActionBuilder.create().withId(Integer.toString(moduleIndex++))
                     .withTypeUID("jsr223.ScriptedAction").withConfiguration(new Configuration()).build();
@@ -177,12 +175,11 @@ public class ScriptedAutomationManager {
             actions.add(scriptedAction);
         }
 
+        builder.withConfigurationDescriptions(element.getConfigurationDescriptions());
         builder.withConfiguration(element.getConfiguration());
         builder.withActions(actions);
 
-        Rule rule = builder.build();
-
-        return rule;
+        return builder.build();
     }
 
     public void addConditionType(ConditionType conditionType) {

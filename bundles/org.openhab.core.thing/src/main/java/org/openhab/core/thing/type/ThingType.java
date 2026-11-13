@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -19,12 +19,11 @@ import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.core.config.core.ConfigDescription;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingTypeUID;
 
 /**
- * The {@link ThingType} describes a concrete type of a {@link Thing}.
+ * The {@link ThingType} describes a concrete type of {@link Thing}.
  * <p>
  * This description is used as template definition for the creation of the according concrete {@link Thing} object.
  * <p>
@@ -36,6 +35,7 @@ import org.openhab.core.thing.ThingTypeUID;
  * @author Simon Kaufmann - Added listed field
  * @author Andre Fuechsel - Added representationProperty field
  * @author Stefan Triller - Added category field
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingType extends AbstractDescriptionType {
@@ -46,9 +46,9 @@ public class ThingType extends AbstractDescriptionType {
     private final List<String> supportedBridgeTypeUIDs;
     private final Map<String, String> properties;
     private final @Nullable String representationProperty;
-    private final @Nullable URI configDescriptionURI;
     private final boolean listed;
     private final @Nullable String category;
+    private final @Nullable String semanticEquipmentTag;
 
     /**
      * Creates a new instance of this class with the specified parameters.
@@ -57,10 +57,11 @@ public class ThingType extends AbstractDescriptionType {
      *            (must neither be null, nor empty)
      * @param supportedBridgeTypeUIDs the unique identifiers of the bridges this Thing type supports
      *            (could be null or empty)
-     * @param label the human readable label for the according type
+     * @param label the human-readable label for the according type
      *            (must neither be null nor empty)
-     * @param description the human readable description for the according type
+     * @param description the human-readable description for the according type
      *            (could be null or empty)
+     * @param category the category of the thing (could be null)
      * @param listed determines whether it should be listed for manually pairing or not
      * @param representationProperty name of the property that uniquely identifies this Thing
      * @param channelDefinitions the channels this Thing type provides (could be null or empty)
@@ -69,29 +70,30 @@ public class ThingType extends AbstractDescriptionType {
      * @param properties the properties this Thing type provides (could be null)
      * @param configDescriptionURI the link to the concrete ConfigDescription (could be null)
      * @param extensibleChannelTypeIds the channel-type ids this thing-type is extensible with (could be null or empty).
-     * @throws IllegalArgumentException if the UID is null or empty, or the the meta information is null
+     * @param semanticEquipmentTag the semantic (equipment) tag of the thing (could be null)
+     * @throws IllegalArgumentException if the UID is null or empty, or the meta information is null
      */
     ThingType(ThingTypeUID uid, @Nullable List<String> supportedBridgeTypeUIDs, String label,
             @Nullable String description, @Nullable String category, boolean listed,
             @Nullable String representationProperty, @Nullable List<ChannelDefinition> channelDefinitions,
             @Nullable List<ChannelGroupDefinition> channelGroupDefinitions, @Nullable Map<String, String> properties,
-            @Nullable URI configDescriptionURI, @Nullable List<String> extensibleChannelTypeIds)
-            throws IllegalArgumentException {
-        super(uid, label, description);
+            @Nullable URI configDescriptionURI, @Nullable List<String> extensibleChannelTypeIds,
+            @Nullable String semanticEquipmentTag) throws IllegalArgumentException {
+        super(uid, label, description, configDescriptionURI);
 
         this.category = category;
         this.listed = listed;
         this.representationProperty = representationProperty;
-        this.supportedBridgeTypeUIDs = supportedBridgeTypeUIDs == null ? Collections.emptyList()
+        this.supportedBridgeTypeUIDs = supportedBridgeTypeUIDs == null ? List.of()
                 : Collections.unmodifiableList(supportedBridgeTypeUIDs);
-        this.channelDefinitions = channelDefinitions == null ? Collections.emptyList()
+        this.channelDefinitions = channelDefinitions == null ? List.of()
                 : Collections.unmodifiableList(channelDefinitions);
-        this.channelGroupDefinitions = channelGroupDefinitions == null ? Collections.emptyList()
+        this.channelGroupDefinitions = channelGroupDefinitions == null ? List.of()
                 : Collections.unmodifiableList(channelGroupDefinitions);
-        this.extensibleChannelTypeIds = extensibleChannelTypeIds == null ? Collections.emptyList()
+        this.extensibleChannelTypeIds = extensibleChannelTypeIds == null ? List.of()
                 : Collections.unmodifiableList(extensibleChannelTypeIds);
-        this.properties = properties == null ? Collections.emptyMap() : Collections.unmodifiableMap(properties);
-        this.configDescriptionURI = configDescriptionURI;
+        this.properties = properties == null ? Map.of() : Collections.unmodifiableMap(properties);
+        this.semanticEquipmentTag = semanticEquipmentTag;
     }
 
     /**
@@ -146,15 +148,6 @@ public class ThingType extends AbstractDescriptionType {
      */
     public List<ChannelGroupDefinition> getChannelGroupDefinitions() {
         return this.channelGroupDefinitions;
-    }
-
-    /**
-     * Returns the link to a concrete {@link ConfigDescription}.
-     *
-     * @return the link to a concrete ConfigDescription (could be null)
-     */
-    public @Nullable URI getConfigDescriptionURI() {
-        return this.configDescriptionURI;
     }
 
     /**
@@ -217,5 +210,14 @@ public class ThingType extends AbstractDescriptionType {
 
     public List<String> getExtensibleChannelTypeIds() {
         return extensibleChannelTypeIds;
+    }
+
+    /**
+     * Get the semantic (equipment) tag of this thing type. May be {code null}.
+     *
+     * @return the semantic (equipment) tag or {@code null} if no tag has been configured.
+     */
+    public @Nullable String getSemanticEquipmentTag() {
+        return semanticEquipmentTag;
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -175,11 +175,7 @@ public class ExpiringCacheMap<K, V> {
      * @return the set of all keys
      */
     public synchronized Set<K> keys() {
-        final Set<K> keys = new LinkedHashSet<>();
-        for (final K key : items.keySet()) {
-            keys.add(key);
-        }
-        return keys;
+        return new LinkedHashSet<>(items.keySet());
     }
 
     /**
@@ -231,7 +227,7 @@ public class ExpiringCacheMap<K, V> {
      * Invalidates all values in the cache.
      */
     public synchronized void invalidateAll() {
-        items.values().forEach(item -> item.invalidateValue());
+        items.values().forEach(ExpiringCache::invalidateValue);
     }
 
     /**

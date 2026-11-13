@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,6 +26,7 @@ import org.openhab.core.library.types.PercentType;
  * @author Kai Kreuzer - removed unwanted dependencies
  * @author Christoph Weitkamp - Added parameter to adjust the volume
  * @author Wouter Born - Added methods for getting all sinks and sources
+ * @author Miguel Álvarez - Add record method
  */
 @NonNullByDefault
 public interface AudioManager {
@@ -33,7 +34,7 @@ public interface AudioManager {
     /**
      * Name of the sub-directory of the config folder, holding sound files.
      */
-    static final String SOUND_DIR = "sounds";
+    String SOUND_DIR = "sounds";
 
     /**
      * Plays the passed audio stream using the default audio sink.
@@ -58,6 +59,25 @@ public interface AudioManager {
      * @param volume The volume to be used or null if the default notification volume should be used
      */
     void play(@Nullable AudioStream audioStream, @Nullable String sinkId, @Nullable PercentType volume);
+
+    /**
+     * Plays the passed audio stream on the given sink.
+     *
+     * @param audioStream The audio stream to play or null if streaming should be stopped
+     * @param sink The audio sink to use
+     */
+    default void play(@Nullable AudioStream audioStream, AudioSink sink) {
+        play(audioStream, sink, null);
+    }
+
+    /**
+     * Plays the passed audio stream on the given sink.
+     *
+     * @param audioStream The audio stream to play or null if streaming should be stopped
+     * @param sink The audio sink to use
+     * @param volume The volume to be used or null if the default notification volume should be used
+     */
+    void play(@Nullable AudioStream audioStream, AudioSink sink, @Nullable PercentType volume);
 
     /**
      * Plays an audio file from the "sounds" folder using the default audio sink.
@@ -113,6 +133,54 @@ public interface AudioManager {
     void stream(@Nullable String url, @Nullable String sinkId) throws AudioException;
 
     /**
+     * Parse and synthesize a melody and play it into the default sink.
+     *
+     * The melody should be a spaced separated list of note names or silences (character 0 or O).
+     * You can optionally add the character "'" to increase the note one octave.
+     * You can optionally add ":ms" where ms is an int value to customize the note/silence milliseconds duration
+     * (defaults to 200ms).
+     *
+     * @param melody The url to stream from or null if streaming should be stopped.
+     */
+    void playMelody(String melody);
+
+    /**
+     * Parse and synthesize a melody and play it into the given sink.
+     *
+     * The melody should be a spaced separated list of note names or silences (character 0 or O).
+     * You can optionally add the character "'" to increase the note one octave.
+     * You can optionally add ":ms" where ms is an int value to customize the note/silence milliseconds duration
+     * (defaults to 200ms).
+     *
+     * @param melody The url to stream from or null if streaming should be stopped.
+     * @param sinkId The id of the audio sink to use or null for the default.
+     */
+    void playMelody(String melody, @Nullable String sinkId);
+
+    /**
+     * Parse and synthesize a melody and play it into the given sink at the desired volume.
+     *
+     * The melody should be a spaced separated list of note names or silences (character 0 or O).
+     * You can optionally add the character "'" to increase the note one octave.
+     * You can optionally add ":ms" where ms is an int value to customize the note/silence milliseconds duration
+     * (defaults to 200ms).
+     *
+     * @param melody The url to stream from or null if streaming should be stopped.
+     * @param sinkId The id of the audio sink to use or null for the default.
+     * @param volume The volume to be used or null if the default notification volume should be used
+     */
+    void playMelody(String melody, @Nullable String sinkId, @Nullable PercentType volume);
+
+    /**
+     * Record audio as a WAV file of the specified length to the sounds folder.
+     *
+     * @param seconds seconds to record.
+     * @param filename record filename.
+     * @param sourceId The id of the audio source to use or null for the default.
+     */
+    void record(int seconds, String filename, @Nullable String sourceId) throws AudioException;
+
+    /**
      * Retrieves the current volume of a sink
      *
      * @param sinkId the sink to get the volume for or null for the default
@@ -129,6 +197,12 @@ public interface AudioManager {
      * @throws IOException if the sink is not able to set the volume
      */
     void setVolume(PercentType volume, @Nullable String sinkId) throws IOException;
+
+    /**
+     * Retrieves the default AudioSource id if any.
+     */
+    @Nullable
+    String getSourceId();
 
     /**
      * Retrieves an AudioSource.
@@ -161,10 +235,16 @@ public interface AudioManager {
     /**
      * Get a list of source ids that match a given pattern
      *
-     * @param pattern pattern to search, can include `*` and `?` placeholders
+     * @param pattern pattern to search, can include {@code *} and {@code ?} placeholders
      * @return ids of matching sources
      */
     Set<String> getSourceIds(String pattern);
+
+    /**
+     * Retrieves the default AudioSink id if any.
+     */
+    @Nullable
+    String getSinkId();
 
     /**
      * Retrieves an AudioSink.
@@ -197,8 +277,19 @@ public interface AudioManager {
     /**
      * Get a list of sink ids that match a given pattern
      *
-     * @param pattern pattern to search, can include `*` and `?` placeholders
+     * @param pattern pattern to search, can include {@code *} and {@code ?} placeholders
      * @return ids of matching sinks
      */
     Set<String> getSinkIds(String pattern);
+
+    /**
+     * Handles a volume command change and returns a Runnable to restore it.
+     * Returning a Runnable allows us to have a no-op Runnable if changing volume back is not needed, and conveniently
+     * keeping it as one liner usable in a chain for the caller.
+     *
+     * @param volume The volume to set
+     * @param sink The sink to set the volume to
+     * @return A runnable to restore the volume to its previous value, or no-operation if no change is required.
+     */
+    Runnable handleVolumeCommand(@Nullable PercentType volume, AudioSink sink);
 }

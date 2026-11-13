@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,8 +15,9 @@ package org.openhab.core.automation.module.timer.internal;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -38,6 +39,7 @@ import org.openhab.core.automation.RuleStatus;
 import org.openhab.core.automation.RuleStatusInfo;
 import org.openhab.core.automation.Trigger;
 import org.openhab.core.automation.internal.RuleEngineImpl;
+import org.openhab.core.automation.internal.module.factory.CoreModuleHandlerFactory;
 import org.openhab.core.automation.internal.module.handler.ItemCommandActionHandler;
 import org.openhab.core.automation.internal.module.handler.ItemStateTriggerHandler;
 import org.openhab.core.automation.util.ModuleBuilder;
@@ -45,19 +47,22 @@ import org.openhab.core.automation.util.RuleBuilder;
 import org.openhab.core.common.registry.ProviderChangeListener;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemProvider;
+import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.events.ItemCommandEvent;
 import org.openhab.core.items.events.ItemEventFactory;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.service.ReadyMarker;
+import org.openhab.core.service.StartLevelService;
 import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.test.storage.VolatileStorageService;
+import org.openhab.core.thing.ThingRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,9 +76,10 @@ import org.slf4j.LoggerFactory;
 public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
     private final Logger logger = LoggerFactory.getLogger(BasicConditionHandlerTest.class);
     private VolatileStorageService volatileStorageService = new VolatileStorageService();
-    private @NonNullByDefault({}) RuleRegistry ruleRegistry;
-    private @NonNullByDefault({}) RuleManager ruleEngine;
-    private @Nullable Event itemEvent;
+    protected @NonNullByDefault({}) RuleRegistry ruleRegistry;
+    protected @NonNullByDefault({}) RuleManager ruleEngine;
+    protected @Nullable Event itemEvent;
+    private @NonNullByDefault({}) StartLevelService startLevelService;
 
     /**
      * This executes before every test and before the
@@ -82,6 +88,18 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
      */
     @BeforeEach
     public void beforeBase() {
+        startLevelService = mock(StartLevelService.class);
+        when(startLevelService.getStartLevel()).thenReturn(100);
+        registerService(startLevelService, StartLevelService.class.getName());
+        EventPublisher eventPublisher = Objects.requireNonNull(getService(EventPublisher.class));
+        ThingRegistry thingRegistry = Objects.requireNonNull(getService(ThingRegistry.class));
+        ItemRegistry itemRegistry = Objects.requireNonNull(getService(ItemRegistry.class));
+        CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
+                eventPublisher, thingRegistry, itemRegistry, mock(TimeZoneProvider.class),
+                mock(StartLevelService.class));
+        mock(CoreModuleHandlerFactory.class);
+        registerService(coreModuleHandlerFactory);
+
         ItemProvider itemProvider = new ItemProvider() {
             @Override
             public void addProviderChangeListener(ProviderChangeListener<Item> listener) {
@@ -89,10 +107,7 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
 
             @Override
             public Collection<Item> getAll() {
-                List<Item> items = new ArrayList<>();
-                items.add(new SwitchItem("TriggeredItem"));
-                items.add(new SwitchItem("SwitchedItem"));
-                return items;
+                return List.of(new SwitchItem("TriggeredItem"), new SwitchItem("SwitchedItem"));
             }
 
             @Override
@@ -117,7 +132,7 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
     }
 
     @Test
-    public void assertThatConditionWorksInRule() throws ItemNotFoundException {
+    public void assertThatConditionWorksInRule() throws ItemNotFoundException, InterruptedException {
         String testItemName1 = "TriggeredItem";
         String testItemName2 = "SwitchedItem";
 
@@ -154,11 +169,6 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
             }
 
             @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
-
-            @Override
             public void receive(Event event) {
                 logger.info("Event: {}", event.getTopic());
                 if (event.getTopic().contains(testItemName2)) {
@@ -185,7 +195,7 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
         logger.info("Rule is enabled and idle");
 
         logger.info("Send and wait for item state is ON");
-        eventPublisher.post(ItemEventFactory.createStateEvent(testItemName1, OnOffType.ON));
+        eventPublisher.post(ItemEventFactory.createStateUpdatedEvent(testItemName1, OnOffType.ON, null));
 
         waitForAssert(() -> {
             assertThat(itemEvent, is(notNullValue()));
@@ -194,16 +204,16 @@ public abstract class BasicConditionHandlerTest extends JavaOSGiTest {
         logger.info("item state is ON");
 
         // now make the condition fail
-        Rule rule2 = RuleBuilder.create(rule).withConditions(ModuleBuilder.createCondition(rule.getConditions().get(0))
-                .withConfiguration(getFailingConfiguration()).build()).build();
+        Rule rule2 = RuleBuilder.create(rule).withConditions(ModuleBuilder
+                .createCondition(rule.getConditions().getFirst()).withConfiguration(getFailingConfiguration()).build())
+                .build();
         ruleRegistry.update(rule2);
 
         // prepare the execution
         itemEvent = null;
-        eventPublisher.post(ItemEventFactory.createStateEvent(testItemName1, OnOffType.ON));
-        waitForAssert(() -> {
-            assertThat(itemEvent, is(nullValue()));
-        });
+        eventPublisher.post(ItemEventFactory.createStateUpdatedEvent(testItemName1, OnOffType.ON, null));
+        Thread.sleep(200); // without this, the assertion will be immediately fulfilled regardless of event processing
+        assertThat(itemEvent, is(nullValue()));
     }
 
     /**

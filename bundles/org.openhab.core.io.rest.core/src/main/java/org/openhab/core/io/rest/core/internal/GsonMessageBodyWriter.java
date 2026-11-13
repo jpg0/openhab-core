@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -23,6 +23,7 @@ import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response.ResponseBuilder;
+import javax.ws.rs.core.StreamingOutput;
 import javax.ws.rs.ext.MessageBodyWriter;
 
 import org.openhab.core.io.rest.JSONInputStream;
@@ -79,16 +80,13 @@ public class GsonMessageBodyWriter<T> implements MessageBodyWriter<T> {
         }
 
         try {
-            if (object instanceof InputStream && object instanceof JSONInputStream) {
-                ((InputStream) object).transferTo(entityStream);
+            if (object instanceof InputStream stream && object instanceof JSONInputStream) {
+                stream.transferTo(entityStream);
+            } else if (object instanceof StreamingOutput streaming) {
+                streaming.write(entityStream);
             } else {
                 entityStream.write(gson.toJson(object).getBytes(StandardCharsets.UTF_8));
             }
-
-            // Flush the stream.
-            // Keep this code as it has been present before,
-            // but I don't think this needs to be done in the message body writer itself.
-            entityStream.flush();
         } catch (IOException e) {
             // we catch this exception to avoid confusion errors in the log file, since this is not any error situation
             // see https://github.com/openhab/openhab-distro/issues/1188

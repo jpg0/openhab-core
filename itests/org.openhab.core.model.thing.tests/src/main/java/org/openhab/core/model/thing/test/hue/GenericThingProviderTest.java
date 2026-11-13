@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,6 @@
  */
 package org.openhab.core.model.thing.test.hue;
 
-import static java.util.stream.Collectors.toSet;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsIterableContaining.hasItems;
@@ -23,15 +22,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.library.CoreItemFactory;
 import org.openhab.core.model.core.ModelRepository;
@@ -223,7 +219,7 @@ public class GenericThingProviderTest extends JavaOSGiTest {
         assertThat(bulb2, isA(Thing.class));
         // channels should be Color as defined in dsl and color_temperature from thingType
         assertThat(bulb2.getChannels().size(), is(2));
-        Channel firstChannel = bulb2.getChannels().get(0);
+        Channel firstChannel = bulb2.getChannels().getFirst();
         assertThat(firstChannel.getUID().toString(), is("hue:LCT001:bulb2:color"));
         assertThat(firstChannel.getAcceptedItemType(), is(CoreItemFactory.COLOR));
         assertThat(bulb2.getBridgeUID(), is(nullValue()));
@@ -273,7 +269,7 @@ public class GenericThingProviderTest extends JavaOSGiTest {
         assertThat(actualThings.size(), is(2));
 
         Thing thing = actualThings.stream().filter(t -> !(t instanceof Bridge)).findFirst().get();
-        Bridge bridge = (Bridge) actualThings.stream().filter(t -> t instanceof Bridge).findFirst().get();
+        Bridge bridge = (Bridge) actualThings.stream().filter(Bridge.class::isInstance).findFirst().get();
 
         assertThat(thing.getBridgeUID().toString(), is("hue:bridge:bridge1"));
         assertThat(bridge.getThings().contains(thing), is(true));
@@ -304,22 +300,22 @@ public class GenericThingProviderTest extends JavaOSGiTest {
 
         assertThat(actualThings.size(), is(4));
 
-        actualThings.stream().filter(t -> "bulb_default".equals(t.getUID().getId().toString())).findFirst().get();
+        actualThings.stream().filter(t -> "bulb_default".equals(t.getUID().getId())).findFirst().get();
 
-        Thing thingDefault = actualThings.stream().filter(t -> "bulb_default".equals(t.getUID().getId().toString()))
-                .findFirst().get();
+        Thing thingDefault = actualThings.stream().filter(t -> "bulb_default".equals(t.getUID().getId())).findFirst()
+                .get();
         assertThat(thingDefault.getChannels().size(), is(2));
 
-        Thing thingCustom = actualThings.stream().filter(t -> "bulb_custom".equals(t.getUID().getId().toString()))
-                .findFirst().get();
+        Thing thingCustom = actualThings.stream().filter(t -> "bulb_custom".equals(t.getUID().getId())).findFirst()
+                .get();
         assertThat(thingCustom.getChannels().size(), is(4));
         assertThat(thingCustom.getChannel("manual").getChannelTypeUID(),
                 is(equalTo(new ChannelTypeUID("hue", "color"))));
         assertThat(thingCustom.getChannel("manual").getLabel(), is("colorLabel")); // default from thing type
         assertThat(thingCustom.getChannel("manualWithLabel").getLabel(), is("With Label")); // manual overrides default
 
-        Thing thingBroken = actualThings.stream().filter(t -> "bulb_broken".equals(t.getUID().getId().toString()))
-                .findFirst().get();
+        Thing thingBroken = actualThings.stream().filter(t -> "bulb_broken".equals(t.getUID().getId())).findFirst()
+                .get();
         assertThat(thingBroken.getChannels().size(), is(4));
         assertThat(thingBroken.getChannel("manual").getChannelTypeUID(),
                 is(equalTo(new ChannelTypeUID("hue", "broken"))));
@@ -345,8 +341,8 @@ public class GenericThingProviderTest extends JavaOSGiTest {
 
         assertThat(actualThings.size(), is(1));
 
-        Thing thingDefault = actualThings.stream().filter(t -> "sensor_custom".equals(t.getUID().getId().toString()))
-                .findFirst().get();
+        Thing thingDefault = actualThings.stream().filter(t -> "sensor_custom".equals(t.getUID().getId())).findFirst()
+                .get();
         assertThat(thingDefault.getChannels().size(), is(2));
 
         assertThat(thingDefault.getChannel("sensor1").getAcceptedItemType(), is("Number:Temperature"));
@@ -365,8 +361,8 @@ public class GenericThingProviderTest extends JavaOSGiTest {
 
         assertThat(actualThings.size(), is(1));
 
-        Thing thingDefault = actualThings.stream().filter(t -> "sensor_custom".equals(t.getUID().getId().toString()))
-                .findFirst().get();
+        Thing thingDefault = actualThings.stream().filter(t -> "sensor_custom".equals(t.getUID().getId())).findFirst()
+                .get();
 
         @SuppressWarnings("unchecked")
         Collection<String> valueCollection = (Collection<String>) thingDefault.getConfiguration().get("config");
@@ -423,8 +419,10 @@ public class GenericThingProviderTest extends JavaOSGiTest {
     public void assertThatStandaloneThingsCanHaveBridgesInLongNotation() {
         assertThat(thingRegistry.getAll().size(), is(0));
 
-        String model = "Bridge hue:bridge:myBridge @ \"basement\" [ ip = \"1.2.3.4\", username = \"123\" ]\n"
-                + "hue:LCT001:bulb1 (hue:bridge:myBridge) [ lightId = \"1\" ] { Switch : notification }\n";
+        String model = """
+                Bridge hue:bridge:myBridge @ "basement" [ ip = "1.2.3.4", username = "123" ]
+                hue:LCT001:bulb1 (hue:bridge:myBridge) [ lightId = "1" ] { Switch : notification }
+                """;
 
         modelRepository.addOrRefreshModel(TESTMODEL_NAME, new ByteArrayInputStream(model.getBytes()));
         Collection<Thing> actualThings = thingRegistry.getAll();
@@ -466,8 +464,10 @@ public class GenericThingProviderTest extends JavaOSGiTest {
     public void assertThatStandaloneThingWithoutAbridgeDoesNotWorkInShortNotation() {
         assertThat(thingRegistry.getAll().size(), is(0));
 
-        String model = "LCT001 bulb1 [ lightId = \"1\" ] { Switch : notification }\n"
-                + "hue:LCT001:bulb2 (hue:bridge:myBridge) [ lightId = \"2\" ] { Switch : notification }\n";
+        String model = """
+                LCT001 bulb1 [ lightId = "1" ] { Switch : notification }
+                hue:LCT001:bulb2 (hue:bridge:myBridge) [ lightId = "2" ] { Switch : notification }
+                """;
 
         modelRepository.addOrRefreshModel(TESTMODEL_NAME, new ByteArrayInputStream(model.getBytes()));
         Collection<Thing> actualThings = thingRegistry.getAll();
@@ -485,12 +485,7 @@ public class GenericThingProviderTest extends JavaOSGiTest {
         EventSubscriber thingEventSubscriber = new EventSubscriber() {
             @Override
             public Set<String> getSubscribedEventTypes() {
-                return Stream.of(ThingUpdatedEvent.TYPE, ThingRemovedEvent.TYPE, ThingAddedEvent.TYPE).collect(toSet());
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
+                return Set.of(ThingUpdatedEvent.TYPE, ThingRemovedEvent.TYPE, ThingAddedEvent.TYPE);
             }
 
             @Override
@@ -528,7 +523,7 @@ public class GenericThingProviderTest extends JavaOSGiTest {
 
         waitForAssert(() -> {
             assertEquals(1, receivedEvents.size());
-            Event event = receivedEvents.get(0);
+            Event event = receivedEvents.getFirst();
             assertEquals(ThingUpdatedEvent.class, event.getClass());
             ThingUpdatedEvent thingUpdatedEvent = (ThingUpdatedEvent) event;
             assertEquals("hue:LCT001:my1234Bridge:myKitchenBulb1", thingUpdatedEvent.getThing().UID);

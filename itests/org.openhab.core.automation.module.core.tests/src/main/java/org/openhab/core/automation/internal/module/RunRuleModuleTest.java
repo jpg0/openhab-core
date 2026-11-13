@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,8 +14,9 @@ package org.openhab.core.automation.internal.module;
 
 import static java.util.Map.entry;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
@@ -25,7 +26,6 @@ import java.util.Queue;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.automation.Rule;
@@ -33,14 +33,15 @@ import org.openhab.core.automation.RuleManager;
 import org.openhab.core.automation.RuleRegistry;
 import org.openhab.core.automation.RuleStatus;
 import org.openhab.core.automation.internal.RuleEngineImpl;
+import org.openhab.core.automation.internal.module.factory.CoreModuleHandlerFactory;
 import org.openhab.core.automation.util.ModuleBuilder;
 import org.openhab.core.automation.util.RuleBuilder;
 import org.openhab.core.common.registry.ProviderChangeListener;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemProvider;
@@ -50,8 +51,10 @@ import org.openhab.core.items.events.ItemEventFactory;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.service.ReadyMarker;
+import org.openhab.core.service.StartLevelService;
 import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.test.storage.VolatileStorageService;
+import org.openhab.core.thing.ThingRegistry;
 import org.osgi.framework.ServiceReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,9 +70,22 @@ public class RunRuleModuleTest extends JavaOSGiTest {
 
     private final Logger logger = LoggerFactory.getLogger(RunRuleModuleTest.class);
     private final VolatileStorageService volatileStorageService = new VolatileStorageService();
+    private @NonNullByDefault({}) StartLevelService startLevelService;
 
     @BeforeEach
     public void before() {
+        startLevelService = mock(StartLevelService.class);
+        when(startLevelService.getStartLevel()).thenReturn(100);
+        registerService(startLevelService, StartLevelService.class.getName());
+        EventPublisher eventPublisher = Objects.requireNonNull(getService(EventPublisher.class));
+        ThingRegistry thingRegistry = Objects.requireNonNull(getService(ThingRegistry.class));
+        ItemRegistry itemRegistry = Objects.requireNonNull(getService(ItemRegistry.class));
+        CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
+                eventPublisher, thingRegistry, itemRegistry, mock(TimeZoneProvider.class),
+                mock(StartLevelService.class));
+        mock(CoreModuleHandlerFactory.class);
+        registerService(coreModuleHandlerFactory);
+
         registerService(new ItemProvider() {
             @Override
             public void addProviderChangeListener(final ProviderChangeListener<Item> listener) {
@@ -101,7 +117,7 @@ public class RunRuleModuleTest extends JavaOSGiTest {
         final Configuration sceneRuleAction3Config = new Configuration(
                 Map.ofEntries(entry("itemName", "switch3"), entry("command", "ON")));
 
-        final Rule sceneRule = RuleBuilder.create("exampleSceneRule").withActions(
+        return RuleBuilder.create("exampleSceneRule").withActions(
                 ModuleBuilder.createAction().withId("sceneItemPostCommandAction1").withTypeUID("core.ItemCommandAction")
                         .withConfiguration(sceneRuleAction1Config).build(),
                 ModuleBuilder.createAction().withId("sceneItemPostCommandAction2").withTypeUID("core.ItemCommandAction")
@@ -109,28 +125,22 @@ public class RunRuleModuleTest extends JavaOSGiTest {
                 ModuleBuilder.createAction().withId("sceneItemPostCommandAction3").withTypeUID("core.ItemCommandAction")
                         .withConfiguration(sceneRuleAction3Config).build())
                 .withName("Example Scene").build();
-
-        return sceneRule;
     }
 
     private Rule createOuterRule() {
         final Configuration outerRuleTriggerConfig = new Configuration(
-                Map.ofEntries(entry("eventSource", "ruleTrigger"), entry("eventTopic", "openhab/*"),
-                        entry("eventTypes", "ItemStateEvent")));
+                Map.ofEntries(entry("topic", "openhab/items/ruleTrigger/*"), entry("types", "ItemStateEvent")));
 
-        final List<String> ruleUIDs = new ArrayList<>();
-        ruleUIDs.add("exampleSceneRule");
+        final List<String> ruleUIDs = List.of("exampleSceneRule");
 
         final Configuration outerRuleActionConfig = new Configuration(Map.of("ruleUIDs", ruleUIDs));
 
-        final Rule outerRule = RuleBuilder.create("sceneActivationRule")
+        return RuleBuilder.create("sceneActivationRule")
                 .withTriggers(ModuleBuilder.createTrigger().withId("ItemStateChangeTrigger2")
                         .withTypeUID("core.GenericEventTrigger").withConfiguration(outerRuleTriggerConfig).build())
                 .withActions(ModuleBuilder.createAction().withId("RunRuleAction1").withTypeUID("core.RunRuleAction")
                         .withConfiguration(outerRuleActionConfig).build())
                 .withName("scene activator").build();
-
-        return outerRule;
     }
 
     @Test
@@ -194,14 +204,9 @@ public class RunRuleModuleTest extends JavaOSGiTest {
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(eventType);
             }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
         };
 
         ServiceReference<?> subscriberReference = registerService(eventSubscriber).getReference();
-        assertNotNull(getServices(EventSubscriber.class, (reference) -> reference.equals(subscriberReference)));
+        assertNotNull(getServices(EventSubscriber.class, reference -> reference.equals(subscriberReference)));
     }
 }

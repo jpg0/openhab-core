@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,7 +13,8 @@
 package org.openhab.core.thing.internal.profiles;
 
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.thing.profiles.ProfileCallback;
+import org.openhab.core.types.TimeSeries;
 
 /**
  *
@@ -58,6 +60,17 @@ public class SystemDefaultProfileTest {
         profile.onCommandFromHandler(OnOffType.ON);
 
         verify(callbackMock).sendCommand(eq(OnOffType.ON));
+        verifyNoMoreInteractions(callbackMock);
+    }
+
+    @Test
+    public void testSendTimeSeries() {
+        TimeSeries timeSeries = new TimeSeries(TimeSeries.Policy.ADD);
+
+        SystemDefaultProfile profile = new SystemDefaultProfile(callbackMock);
+        profile.onTimeSeriesFromHandler(timeSeries);
+
+        verify(callbackMock).sendTimeSeries(timeSeries);
         verifyNoMoreInteractions(callbackMock);
     }
 }

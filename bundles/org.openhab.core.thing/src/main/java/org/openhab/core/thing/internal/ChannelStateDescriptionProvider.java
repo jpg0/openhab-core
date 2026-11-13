@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.items.Item;
-import org.openhab.core.library.CoreItemFactory;
 import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.ThingRegistry;
@@ -71,8 +70,8 @@ public class ChannelStateDescriptionProvider implements StateDescriptionFragment
     @Activate
     protected void activate(Map<String, Object> properties) {
         Object serviceRanking = properties.get(Constants.SERVICE_RANKING);
-        if (serviceRanking instanceof Integer) {
-            rank = (Integer) serviceRanking;
+        if (serviceRanking instanceof Integer integerValue) {
+            rank = integerValue;
         }
     }
 
@@ -92,40 +91,33 @@ public class ChannelStateDescriptionProvider implements StateDescriptionFragment
 
     private @Nullable StateDescription getStateDescription(String itemName, @Nullable Locale locale) {
         Set<ChannelUID> boundChannels = itemChannelLinkRegistry.getBoundChannels(itemName);
-        if (!boundChannels.isEmpty()) {
-            ChannelUID channelUID = boundChannels.iterator().next();
+        StateDescription stateDescription = null;
+        for (ChannelUID channelUID : boundChannels) {
             Channel channel = thingRegistry.getChannel(channelUID);
             if (channel != null) {
-                StateDescription stateDescription = null;
                 ChannelType channelType = thingTypeRegistry.getChannelType(channel, locale);
+                StateDescription nextStateDescription = null;
                 if (channelType != null) {
-                    stateDescription = channelType.getState();
-                    String itemType = channelType.getItemType();
-                    if (itemType != null && (stateDescription == null || stateDescription.getPattern() == null)) {
-                        String pattern = null;
-                        if (CoreItemFactory.STRING.equalsIgnoreCase(itemType)) {
-                            pattern = "%s";
-                        } else if (itemType.startsWith(CoreItemFactory.NUMBER)) {
-                            pattern = "%.0f";
-                        }
-                        if (pattern != null) {
-                            logger.trace("Provide a default pattern {} for item {}", pattern, itemName);
-                            StateDescriptionFragmentBuilder builder = (stateDescription == null)
-                                    ? StateDescriptionFragmentBuilder.create()
-                                    : StateDescriptionFragmentBuilder.create(stateDescription);
-                            stateDescription = builder.withPattern(pattern).build().toStateDescription();
+                    nextStateDescription = channelType.getState();
+                }
+                StateDescription dynamicStateDescription = getDynamicStateDescription(channel, nextStateDescription,
+                        locale);
+                if (dynamicStateDescription != null) {
+                    nextStateDescription = dynamicStateDescription;
+                }
+                if (nextStateDescription != null) {
+                    if (stateDescription == null) {
+                        stateDescription = nextStateDescription;
+                    } else {
+                        if (stateDescription.isReadOnly() && !nextStateDescription.isReadOnly()) {
+                            stateDescription = nextStateDescription;
+                            break;
                         }
                     }
                 }
-                StateDescription dynamicStateDescription = getDynamicStateDescription(channel, stateDescription,
-                        locale);
-                if (dynamicStateDescription != null) {
-                    return dynamicStateDescription;
-                }
-                return stateDescription;
             }
         }
-        return null;
+        return stateDescription;
     }
 
     @SuppressWarnings("PMD.CompareObjectsWithEquals")

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -47,6 +47,7 @@ import org.openhab.core.test.java.JavaOSGiTest;
 public class EphemerisManagerImplOSGiTest extends JavaOSGiTest {
     private static final String INTERNAL_DAYSET = "internal";
     private static final URI CONFIG_URI = URI.create("system:ephemeris");
+    private static final String COUNTRY_DENMARK_KEY = "dk";
     private static final String COUNTRY_AUSTRALIA_KEY = "au";
     private static final String COUNTRY_AUSTRALIA_NAME = "Australia";
     private static final String REGION_BAVARIA_KEY = "by";
@@ -68,6 +69,21 @@ public class EphemerisManagerImplOSGiTest extends JavaOSGiTest {
     }
 
     @Test
+    public void testEphemerisManagerFixesIllegalCharacters() {
+        ephemerisManager.modified(Map.ofEntries(entry(CONFIG_DAYSET_PREFIX + CONFIG_DAYSET_WEEKEND, "\"( \"MONDAY\"")));
+
+        assertTrue(ephemerisManager.daysets.containsKey(CONFIG_DAYSET_WEEKEND));
+    }
+
+    @Test
+    public void testEphemerisManagerDoesNotCrashOnIllegalName() {
+        ephemerisManager.modified(Map.ofEntries(entry(CONFIG_DAYSET_PREFIX + CONFIG_DAYSET_WEEKEND, "Mondax")));
+
+        // assertion only to check if no exception occurs
+        assertFalse(ephemerisManager.daysets.isEmpty());
+    }
+
+    @Test
     public void testEphemerisManagerLoadedProperly() {
         assertTrue(ephemerisManager.daysets.containsKey(CONFIG_DAYSET_WEEKEND));
         assertEquals(Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), ephemerisManager.daysets.get(CONFIG_DAYSET_WEEKEND));
@@ -77,20 +93,14 @@ public class EphemerisManagerImplOSGiTest extends JavaOSGiTest {
     }
 
     @Test
-    public void testConfigurtationDaysetWeekendFailed() {
-        assertThrows(IllegalArgumentException.class,
-                () -> ephemerisManager.modified(Map.of(CONFIG_DAYSET_PREFIX + CONFIG_DAYSET_WEEKEND, "Foo,Bar")));
-    }
-
-    @Test
-    public void testConfigurtationDaysetWeekendIterable() {
+    public void testConfigurationDaysetWeekendIterable() {
         ephemerisManager.modified(Map.of(CONFIG_DAYSET_PREFIX + CONFIG_DAYSET_WEEKEND, List.of("Saturday", "Sunday")));
         assertTrue(ephemerisManager.daysets.containsKey(CONFIG_DAYSET_WEEKEND));
         assertEquals(Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), ephemerisManager.daysets.get(CONFIG_DAYSET_WEEKEND));
     }
 
     @Test
-    public void testConfigurtationDaysetWeekendListAsString() {
+    public void testConfigurationDaysetWeekendListAsString() {
         ephemerisManager.modified(Map.of(CONFIG_DAYSET_PREFIX + CONFIG_DAYSET_WEEKEND, List.of("Saturday", "Sunday")));
         assertTrue(ephemerisManager.daysets.containsKey(CONFIG_DAYSET_WEEKEND));
         assertEquals(Set.of(DayOfWeek.SATURDAY, DayOfWeek.SUNDAY), ephemerisManager.daysets.get(CONFIG_DAYSET_WEEKEND));
@@ -252,6 +262,20 @@ public class EphemerisManagerImplOSGiTest extends JavaOSGiTest {
 
         vacation = ephemerisManager.isBankHoliday(secondday);
         assertFalse(vacation);
+    }
+
+    @Test
+    public void testIsBankHolidayWhenGeneralPrayerDay2023() {
+        ZonedDateTime generalPrayerDay = ZonedDateTime.of(2023, 05, 05, 0, 0, 0, 0, ZoneId.of("Europe/Paris"));
+        ephemerisManager.modified(Map.of(CONFIG_COUNTRY, COUNTRY_DENMARK_KEY));
+        assertTrue(ephemerisManager.isBankHoliday(generalPrayerDay));
+    }
+
+    @Test
+    public void testIsBankHolidayWhenGeneralPrayerDay2024() {
+        ZonedDateTime generalPrayerDay = ZonedDateTime.of(2024, 04, 26, 0, 0, 0, 0, ZoneId.of("Europe/Paris"));
+        ephemerisManager.modified(Map.of(CONFIG_COUNTRY, COUNTRY_DENMARK_KEY));
+        assertFalse(ephemerisManager.isBankHoliday(generalPrayerDay));
     }
 
     @Test

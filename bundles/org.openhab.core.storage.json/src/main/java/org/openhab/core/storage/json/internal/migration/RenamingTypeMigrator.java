@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,7 +15,7 @@ package org.openhab.core.storage.json.internal.migration;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * The {@link RenamingTypeMigrator} is an {@link TypeMigrator} for renaming types
+ * The {@link RenamingTypeMigrator} is a {@link TypeMigrator} for renaming types
  *
  * @author Jan N. Klug - Initial contribution
  */

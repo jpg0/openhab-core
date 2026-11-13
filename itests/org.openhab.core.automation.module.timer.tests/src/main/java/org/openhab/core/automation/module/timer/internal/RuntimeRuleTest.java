@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,6 +15,8 @@ package org.openhab.core.automation.module.timer.internal;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -26,7 +28,6 @@ import java.util.Random;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.automation.Action;
@@ -38,6 +39,7 @@ import org.openhab.core.automation.RuleStatusDetail;
 import org.openhab.core.automation.RuleStatusInfo;
 import org.openhab.core.automation.Trigger;
 import org.openhab.core.automation.internal.RuleEngineImpl;
+import org.openhab.core.automation.internal.module.factory.CoreModuleHandlerFactory;
 import org.openhab.core.automation.internal.module.handler.GenericCronTriggerHandler;
 import org.openhab.core.automation.type.ModuleTypeRegistry;
 import org.openhab.core.automation.util.ModuleBuilder;
@@ -45,15 +47,19 @@ import org.openhab.core.automation.util.RuleBuilder;
 import org.openhab.core.common.registry.ProviderChangeListener;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
+import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemProvider;
+import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.events.ItemCommandEvent;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.service.ReadyMarker;
+import org.openhab.core.service.StartLevelService;
 import org.openhab.core.test.java.JavaOSGiTest;
 import org.openhab.core.test.storage.VolatileStorageService;
+import org.openhab.core.thing.ThingRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,9 +77,22 @@ public class RuntimeRuleTest extends JavaOSGiTest {
     private VolatileStorageService volatileStorageService = new VolatileStorageService();
     private @NonNullByDefault({}) RuleRegistry ruleRegistry;
     private @NonNullByDefault({}) RuleManager ruleEngine;
+    private @NonNullByDefault({}) StartLevelService startLevelService;
 
     @BeforeEach
     public void before() {
+        startLevelService = mock(StartLevelService.class);
+        when(startLevelService.getStartLevel()).thenReturn(100);
+        registerService(startLevelService, StartLevelService.class.getName());
+        EventPublisher eventPublisher = Objects.requireNonNull(getService(EventPublisher.class));
+        ThingRegistry thingRegistry = Objects.requireNonNull(getService(ThingRegistry.class));
+        ItemRegistry itemRegistry = Objects.requireNonNull(getService(ItemRegistry.class));
+        CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
+                eventPublisher, thingRegistry, itemRegistry, mock(TimeZoneProvider.class),
+                mock(StartLevelService.class));
+        mock(CoreModuleHandlerFactory.class);
+        registerService(coreModuleHandlerFactory);
+
         ItemProvider itemProvider = new TestItemProvider(Set.of(new SwitchItem("myLampItem")));
         registerService(itemProvider);
         registerService(volatileStorageService);
@@ -107,8 +126,6 @@ public class RuntimeRuleTest extends JavaOSGiTest {
          */
         logger.info("Create rule");
         String testExpression = "* * * * * ?";
-
-        ;
         Configuration triggerConfig = new Configuration(Map.of("cronExpression", testExpression));
         List<Trigger> triggers = List.of(ModuleBuilder.createTrigger().withId("MyTimerTrigger")
                 .withTypeUID(GenericCronTriggerHandler.MODULE_TYPE_ID).withConfiguration(triggerConfig).build());
@@ -138,8 +155,7 @@ public class RuntimeRuleTest extends JavaOSGiTest {
                 final RuleStatusInfo ruleStatus = ruleEngine.getStatusInfo(rule.getUID());
                 logger.info("Rule status (should be IDLE or RUNNING): {}", ruleStatus);
                 boolean allFine;
-                if (RuleStatus.IDLE.equals(ruleStatus.getStatus())
-                        || RuleStatus.RUNNING.equals(ruleStatus.getStatus())) {
+                if (RuleStatus.IDLE == ruleStatus.getStatus() || RuleStatus.RUNNING == ruleStatus.getStatus()) {
                     allFine = true;
                 } else {
                     allFine = false;
@@ -161,17 +177,12 @@ public class RuntimeRuleTest extends JavaOSGiTest {
                 if (event.getTopic().contains(testItemName)) {
                     itemEvents.add(event);
                 }
-            };
+            }
 
             @Override
             public java.util.Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
             }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            };
         };
         registerService(itemEventHandler);
 
@@ -213,7 +224,7 @@ public class RuntimeRuleTest extends JavaOSGiTest {
         });
     }
 
-    class TestItemProvider implements ItemProvider {
+    static class TestItemProvider implements ItemProvider {
         private final Collection<Item> items;
 
         TestItemProvider(Collection<Item> items) {

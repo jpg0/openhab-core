@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,12 +17,14 @@ import java.util.function.Function;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.SafeCaller;
+import org.openhab.core.events.AbstractEvent;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemStateConverter;
 import org.openhab.core.items.events.ItemEventFactory;
 import org.openhab.core.library.items.StringItem;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.binding.ThingHandler;
@@ -32,6 +34,7 @@ import org.openhab.core.thing.profiles.ProfileCallback;
 import org.openhab.core.thing.util.ThingHandlerHelper;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
+import org.openhab.core.types.TimeSeries;
 import org.openhab.core.types.TypeParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +46,7 @@ import org.slf4j.LoggerFactory;
  */
 @NonNullByDefault
 public class ProfileCallbackImpl implements ProfileCallback {
+    private static final String THING_SOURCE = "org.openhab.core.thing";
 
     private final Logger logger = LoggerFactory.getLogger(ProfileCallbackImpl.class);
 
@@ -52,16 +56,24 @@ public class ProfileCallbackImpl implements ProfileCallback {
     private final Function<String, @Nullable Item> itemProvider;
     private final SafeCaller safeCaller;
     private final ItemStateConverter itemStateConverter;
+    private final AcceptedTypeConverter acceptedTypeConverter;
 
     public ProfileCallbackImpl(EventPublisher eventPublisher, SafeCaller safeCaller,
             ItemStateConverter itemStateConverter, ItemChannelLink link,
-            Function<ThingUID, @Nullable Thing> thingProvider, Function<String, @Nullable Item> itemProvider) {
+            Function<ThingUID, @Nullable Thing> thingProvider, Function<String, @Nullable Item> itemProvider,
+            AcceptedTypeConverter acceptedTypeConverter) {
         this.eventPublisher = eventPublisher;
         this.safeCaller = safeCaller;
         this.itemStateConverter = itemStateConverter;
         this.link = link;
         this.thingProvider = thingProvider;
         this.itemProvider = itemProvider;
+        this.acceptedTypeConverter = acceptedTypeConverter;
+    }
+
+    @Override
+    public ItemChannelLink getItemChannelLink() {
+        return link;
     }
 
     @Override
@@ -73,11 +85,22 @@ public class ProfileCallbackImpl implements ProfileCallback {
                 if (ThingHandlerHelper.isHandlerInitialized(thing)) {
                     logger.debug("Delegating command '{}' for item '{}' to handler for channel '{}'", command,
                             link.getItemName(), link.getLinkedUID());
-                    safeCaller.create(handler, ThingHandler.class)
-                            .withTimeout(CommunicationManager.THINGHANDLER_EVENT_TIMEOUT).onTimeout(() -> {
-                                logger.warn("Handler for thing '{}' takes more than {}ms for handling a command",
-                                        handler.getThing().getUID(), CommunicationManager.THINGHANDLER_EVENT_TIMEOUT);
-                            }).build().handleCommand(link.getLinkedUID(), command);
+                    Channel channel = thing.getChannel(link.getLinkedUID());
+                    Command convertedCommand = acceptedTypeConverter.toAcceptedCommand(command, channel,
+                            itemProvider.apply(link.getItemName()));
+                    if (convertedCommand != null) {
+                        safeCaller.create(handler, ThingHandler.class)
+                                .withTimeout(CommunicationManager.THINGHANDLER_EVENT_TIMEOUT).onTimeout(() -> {
+                                    logger.warn("Handler for thing '{}' takes more than {}ms for handling a command",
+                                            handler.getThing().getUID(),
+                                            CommunicationManager.THINGHANDLER_EVENT_TIMEOUT);
+                                }).build().handleCommand(link.getLinkedUID(), command);
+                    } else {
+                        logger.debug(
+                                "Not delegating command '{}' for item '{}' to handler for channel '{}', "
+                                        + "because it was not possible to convert it to an accepted type).",
+                                command, link.getItemName(), link.getLinkedUID());
+                    }
                 } else {
                     logger.debug("Not delegating command '{}' for item '{}' to handler for channel '{}', "
                             + "because handler is not initialized (thing must be in status UNKNOWN, ONLINE or OFFLINE but was {}).",
@@ -86,7 +109,7 @@ public class ProfileCallbackImpl implements ProfileCallback {
             } else {
                 logger.warn("Cannot delegate command '{}' for item '{}' to handler for channel '{}', "
                         + "because no handler is assigned. Maybe the binding is not installed or not "
-                        + "propertly initialized.", command, link.getItemName(), link.getLinkedUID());
+                        + "properly initialized.", command, link.getItemName(), link.getLinkedUID());
             }
         } else {
             logger.warn(
@@ -97,13 +120,12 @@ public class ProfileCallbackImpl implements ProfileCallback {
     }
 
     @Override
-    public void sendCommand(Command command) {
-        eventPublisher
-                .post(ItemEventFactory.createCommandEvent(link.getItemName(), command, link.getLinkedUID().toString()));
+    public void sendCommand(Command command, @Nullable String source) {
+        eventPublisher.post(ItemEventFactory.createCommandEvent(link.getItemName(), command, buildSource(source)));
     }
 
     @Override
-    public void sendUpdate(State state) {
+    public void sendUpdate(State state, @Nullable String source) {
         Item item = itemProvider.apply(link.getItemName());
         if (item == null) {
             logger.warn("Cannot post update event '{}' for item '{}', because no item could be found.", state,
@@ -121,7 +143,29 @@ public class ProfileCallbackImpl implements ProfileCallback {
             acceptedState = itemStateConverter.convertToAcceptedState(state, item);
         }
 
-        eventPublisher.post(
-                ItemEventFactory.createStateEvent(link.getItemName(), acceptedState, link.getLinkedUID().toString()));
+        eventPublisher.post(ItemEventFactory.createStateEvent(link.getItemName(), acceptedState, buildSource(source)));
+    }
+
+    @Override
+    public void sendTimeSeries(TimeSeries timeSeries, @Nullable String source) {
+        Item item = itemProvider.apply(link.getItemName());
+        if (item == null) {
+            logger.warn("Cannot send time series event '{}' for item '{}', because no item could be found.", timeSeries,
+                    link.getItemName());
+            return;
+        }
+
+        eventPublisher
+                .post(ItemEventFactory.createTimeSeriesEvent(link.getItemName(), timeSeries, buildSource(source)));
+    }
+
+    @FunctionalInterface
+    public interface AcceptedTypeConverter {
+        @Nullable
+        Command toAcceptedCommand(Command originalType, @Nullable Channel channel, @Nullable Item item);
+    }
+
+    private String buildSource(@Nullable String source) {
+        return AbstractEvent.buildDelegatedSource(source, THING_SOURCE, link.getLinkedUID().toString());
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,6 +12,7 @@
  */
 package org.openhab.core.audio;
 
+import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -23,47 +24,75 @@ import org.eclipse.jdt.annotation.Nullable;
  * @author Harald Kuhn - Initial contribution
  * @author Kelly Davis - Modified to match discussion in #584
  * @author Kai Kreuzer - Moved class, included constants, added toString
+ * @author Miguel Álvarez Díez - Add pcm signed format
  */
 @NonNullByDefault
 public class AudioFormat {
+    /** Generic PCM signed format (no container) without any further constraints */
+    public static final AudioFormat PCM_SIGNED = new AudioFormat(AudioFormat.CONTAINER_NONE,
+            AudioFormat.CODEC_PCM_SIGNED, null, null, null, null, null);
+    /** Generic PCM unsigned format (no container) without any further constraints */
+    public static final AudioFormat PCM_UNSIGNED = new AudioFormat(AudioFormat.CONTAINER_NONE,
+            AudioFormat.CODEC_PCM_UNSIGNED, null, null, null, null, null);
+    /** Generic PCM A-law format (no container) without any further constraints */
+    public static final AudioFormat PCM_ALAW = new AudioFormat(AudioFormat.CONTAINER_NONE, AudioFormat.CODEC_PCM_ALAW,
+            null, null, null, null, null);
+    /** Generic PCM μ-law format (no container) without any further constraints */
+    public static final AudioFormat PCM_ULAW = new AudioFormat(AudioFormat.CONTAINER_NONE, AudioFormat.CODEC_PCM_ULAW,
+            null, null, null, null, null);
 
-    // generic mp3 format without any further constraints
+    /** Generic MP3 format without any further constraints */
     public static final AudioFormat MP3 = new AudioFormat(AudioFormat.CONTAINER_NONE, AudioFormat.CODEC_MP3, null, null,
-            null, null);
-
-    // generic wav format without any further constraints
-    public static final AudioFormat WAV = new AudioFormat(AudioFormat.CONTAINER_WAVE, AudioFormat.CODEC_PCM_SIGNED,
-            null, null, null, null);
-
-    // generic OGG format without any further constraints
-    public static final AudioFormat OGG = new AudioFormat(AudioFormat.CONTAINER_OGG, AudioFormat.CODEC_VORBIS, null,
             null, null, null);
 
-    // generic AAC format without any further constraints
+    /** Generic WAV format without any further constraints */
+    public static final AudioFormat WAV = new AudioFormat(AudioFormat.CONTAINER_WAVE, AudioFormat.CODEC_PCM_SIGNED,
+            null, null, null, null, null);
+
+    /** Generic OGG format without any further constraints */
+    public static final AudioFormat OGG = new AudioFormat(AudioFormat.CONTAINER_OGG, AudioFormat.CODEC_VORBIS, null,
+            null, null, null, null);
+
+    /** Generic AAC format without any further constraints */
     public static final AudioFormat AAC = new AudioFormat(AudioFormat.CONTAINER_NONE, AudioFormat.CODEC_AAC, null, null,
-            null, null);
+            null, null, null);
+
+    /** Generic FLAC format without any further constraints */
+    public static final AudioFormat FLAC = new AudioFormat(AudioFormat.CONTAINER_FLAC, AudioFormat.CODEC_FLAC, null,
+            null, null, null, null);
 
     /**
-     * {@link AudioCodec} encoded data without any container header or footer,
+     * {@code AudioCodec} encoded data without any container header or footer,
      * e.g. MP3 is a non-container format
      */
     public static final String CONTAINER_NONE = "NONE";
 
     /**
-     * Microsofts wave container format
+     * Microsoft's WAVE container format
      *
-     * @see <a href="http://bit.ly/1TUW93t">WAV Format</a>
-     * @see <a href="http://bit.ly/1oRMKOt">Supported codecs</a>
-     * @see <a href="http://bit.ly/1TUWSlk">RIFF container format</a>
+     * @see <a href="https://www.zytrax.com/tech/audio/formats.html#wav-format">WAV Format</a>
+     * @see <a href="https://www.zytrax.com/tech/audio/formats.html#wav-format">Supported codecs</a>
+     * @see <a href="https://en.wikipedia.org/wiki/Resource_Interchange_File_Format">RIFF container format</a>
      */
     public static final String CONTAINER_WAVE = "WAVE";
 
     /**
      * OGG container format
      *
-     * @see <a href="http://bit.ly/1oRMWNE">OGG</a>
+     * @see <a href="https://www.xiph.org/ogg/">OGG</a>
      */
     public static final String CONTAINER_OGG = "OGG";
+
+    /**
+     * FLAC native container format
+     *
+     * @see <a href="https://xiph.org/flac/">FLAC</a>
+     * @see <a href="https://www.rfc-editor.org/rfc/rfc9639.html#name-format-principles">RFC 9639: 5. Format
+     *      Principles</a>
+     * @see <a href="https://www.rfc-editor.org/rfc/rfc9639.html#name-file-level-metadata">RFC 9639: 8. File-Level
+     *      Metadata</a>
+     */
+    public static final String CONTAINER_FLAC = "FLAC";
 
     /**
      * PCM Signed
@@ -113,6 +142,16 @@ public class AudioFormat {
     public static final String CODEC_AAC = "AAC";
 
     /**
+     * FLAC Codec
+     *
+     * @see <a href="https://xiph.org/flac/">FLAC</a>
+     * @see <a href="https://www.rfc-editor.org/rfc/rfc9639.html#name-conceptual-overview">RFC 9639: 4. Conceptual
+     *      Overview</a>
+     * @see <a href="https://www.rfc-editor.org/rfc/rfc9639.html#name-frame-structure">RFC 9639: 9. Frame Structure</a>
+     */
+    public static final String CODEC_FLAC = "FLAC";
+
+    /**
      * Codec
      */
     private final @Nullable String codec;
@@ -130,14 +169,14 @@ public class AudioFormat {
     /**
      * Bit depth
      *
-     * @see <a href="http://bit.ly/1OTydad">Bit Depth</a>
+     * @see <a href="https://en.wikipedia.org/wiki/Audio_bit_depth">Bit Depth</a>
      */
     private final @Nullable Integer bitDepth;
 
     /**
      * Bit rate
      *
-     * @see <a href="http://bit.ly/1OTy5rk">Bit Rate</a>
+     * @see <a href="https://en.wikipedia.org/wiki/Bit_rate">Bit Rate</a>
      */
     private final @Nullable Integer bitRate;
 
@@ -154,10 +193,12 @@ public class AudioFormat {
     /**
      * Constructs an instance with the specified properties.
      *
+     * <p>
      * Note that any properties that are null indicate that
      * the corresponding AudioFormat allows any value for
      * the property.
      *
+     * <p>
      * Concretely this implies that if, for example, one
      * passed null for the value of frequency, this would
      * mean the created AudioFormat allowed for any valid
@@ -165,23 +206,27 @@ public class AudioFormat {
      *
      * @param container The container for the audio
      * @param codec The audio codec
-     * @param bigEndian If the audo data is big endian
-     * @param bitDepth The bit depth of the audo data
+     * @param bigEndian If the audio data is big endian
+     * @param bitDepth The bit depth of the audio data
      * @param bitRate The bit rate of the audio
      * @param frequency The frequency at which the audio was sampled
+     * @deprecated Use {@link #AudioFormat(String, String, Boolean, Integer, Integer, Long, Integer)} instead.
      */
+    @Deprecated
     public AudioFormat(@Nullable String container, @Nullable String codec, @Nullable Boolean bigEndian,
             @Nullable Integer bitDepth, @Nullable Integer bitRate, @Nullable Long frequency) {
-        this(container, codec, bigEndian, bitDepth, bitRate, frequency, 1);
+        this(container, codec, bigEndian, bitDepth, bitRate, frequency, null);
     }
 
     /**
      * Constructs an instance with the specified properties.
      *
+     * <p>
      * Note that any properties that are null indicate that
      * the corresponding AudioFormat allows any value for
      * the property.
      *
+     * <p>
      * Concretely this implies that if, for example, one
      * passed null for the value of frequency, this would
      * mean the created AudioFormat allowed for any valid
@@ -189,8 +234,8 @@ public class AudioFormat {
      *
      * @param container The container for the audio
      * @param codec The audio codec
-     * @param bigEndian If the audo data is big endian
-     * @param bitDepth The bit depth of the audo data
+     * @param bigEndian If the audio data is big endian
+     * @param bitDepth The bit depth of the audio data
      * @param bitRate The bit rate of the audio
      * @param frequency The frequency at which the audio was sampled
      * @param channels The number of channels
@@ -275,6 +320,7 @@ public class AudioFormat {
     /**
      * Determines if the passed AudioFormat is compatible with this AudioFormat.
      *
+     * <p>
      * This AudioFormat is compatible with the passed AudioFormat if both have
      * the same value for all non-null members of this instance.
      */
@@ -282,22 +328,25 @@ public class AudioFormat {
         if (audioFormat == null) {
             return false;
         }
-        if ((null != getContainer()) && (!getContainer().equals(audioFormat.getContainer()))) {
+        if (getContainer() instanceof String container && !container.equals(audioFormat.getContainer())) {
             return false;
         }
-        if ((null != getCodec()) && (!getCodec().equals(audioFormat.getCodec()))) {
+        if (getCodec() instanceof String codec && !codec.equals(audioFormat.getCodec())) {
             return false;
         }
-        if ((null != isBigEndian()) && (!isBigEndian().equals(audioFormat.isBigEndian()))) {
+        if (isBigEndian() instanceof Boolean bigEndian && !bigEndian.equals(audioFormat.isBigEndian())) {
             return false;
         }
-        if ((null != getBitDepth()) && (!getBitDepth().equals(audioFormat.getBitDepth()))) {
+        if (getBitDepth() instanceof Integer bitDepth && !bitDepth.equals(audioFormat.getBitDepth())) {
             return false;
         }
-        if ((null != getBitRate()) && (!getBitRate().equals(audioFormat.getBitRate()))) {
+        if (getBitRate() instanceof Integer bitRate && !bitRate.equals(audioFormat.getBitRate())) {
             return false;
         }
-        if ((null != getFrequency()) && (!getFrequency().equals(audioFormat.getFrequency()))) {
+        if (getFrequency() instanceof Long frequency && !frequency.equals(audioFormat.getFrequency())) {
+            return false;
+        }
+        if (getChannels() instanceof Integer channels && !channels.equals(audioFormat.getChannels())) {
             return false;
         }
         return true;
@@ -309,7 +358,9 @@ public class AudioFormat {
      * @param inputs the supported audio formats of an audio source
      * @param outputs the supported audio formats of an audio sink
      * @return the best matching format or null, if source and sink are incompatible
+     * @deprecated Use {@link org.openhab.core.audio.utils.AudioFormatMatcher#getBestMatch(Set, Set)} instead.
      */
+    @Deprecated
     public static @Nullable AudioFormat getBestMatch(Set<AudioFormat> inputs, Set<AudioFormat> outputs) {
         AudioFormat preferredFormat = getPreferredFormat(inputs);
         if (preferredFormat != null) {
@@ -329,13 +380,15 @@ public class AudioFormat {
     }
 
     /**
-     * Gets the first concrete AudioFormat in the passed set or a preferred one
-     * based on 16bit, 16KHz, big endian default
+     * Gets the first concrete AudioFormat from the passed set or a preferred one based on 16bit, 16KHz, big endian
+     * default.
      *
      * @param audioFormats The AudioFormats from which to choose
      * @return The preferred AudioFormat or null if none could be determined. A passed concrete format is preferred
-     *         adding default values to an abstract AudioFormat in the passed set.
+     *         adding default values to an abstract AudioFormat from the passed set.
+     * @deprecated Use {@link org.openhab.core.audio.utils.AudioFormatMatcher#getPreferredFormat(Set)} instead.
      */
+    @Deprecated
     public static @Nullable AudioFormat getPreferredFormat(Set<AudioFormat> audioFormats) {
         // Return the first concrete AudioFormat found
         for (AudioFormat currentAudioFormat : audioFormats) {
@@ -381,8 +434,9 @@ public class AudioFormat {
                 continue;
             }
 
-            // Prefer WAVE container
-            if (!CONTAINER_WAVE.equals(format.getContainer())) {
+            // Prefer WAVE container or raw SIGNED PCM encoded audio
+            if (!CONTAINER_WAVE.equals(format.getContainer())
+                    && !(CONTAINER_NONE.equals(format.getContainer()) && CODEC_PCM_SIGNED.equals(format.getCodec()))) {
                 continue;
             }
 
@@ -406,19 +460,19 @@ public class AudioFormat {
                 // These values must be interdependent (bitRate = bitDepth * frequency)
                 if (null == bitRate) {
                     if (null == bitDepth) {
-                        bitDepth = Integer.valueOf(defaultBitDepth);
+                        bitDepth = defaultBitDepth;
                     }
                     if (null == frequency) {
-                        frequency = Long.valueOf(defaultFrequency);
+                        frequency = defaultFrequency;
                     }
-                    bitRate = Integer.valueOf(bitDepth.intValue() * frequency.intValue());
+                    bitRate = bitDepth * frequency.intValue();
                 } else if (null == bitDepth) {
                     if (null == frequency) {
-                        frequency = Long.valueOf(defaultFrequency);
+                        frequency = defaultFrequency;
                     }
-                    bitDepth = Integer.valueOf(bitRate.intValue() / frequency.intValue());
+                    bitDepth = bitRate / frequency.intValue();
                 } else if (null == frequency) {
-                    frequency = Long.valueOf(bitRate.longValue() / bitDepth.longValue());
+                    frequency = bitRate.longValue() / bitDepth.longValue();
                 }
 
                 format = new AudioFormat(format.getContainer(), format.getCodec(), format.isBigEndian(), bitDepth,
@@ -435,31 +489,14 @@ public class AudioFormat {
 
     @Override
     public boolean equals(@Nullable Object obj) {
-        if (obj instanceof AudioFormat) {
-            AudioFormat format = (AudioFormat) obj;
-            if (!(null == getCodec() ? null == format.getCodec() : getCodec().equals(format.getCodec()))) {
-                return false;
-            }
-            if (!(null == getContainer() ? null == format.getContainer()
-                    : getContainer().equals(format.getContainer()))) {
-                return false;
-            }
-            if (!(null == isBigEndian() ? null == format.isBigEndian() : isBigEndian().equals(format.isBigEndian()))) {
-                return false;
-            }
-            if (!(null == getBitDepth() ? null == format.getBitDepth() : getBitDepth().equals(format.getBitDepth()))) {
-                return false;
-            }
-            if (!(null == getBitRate() ? null == format.getBitRate() : getBitRate().equals(format.getBitRate()))) {
-                return false;
-            }
-            if (!(null == getFrequency() ? null == format.getFrequency()
-                    : getFrequency().equals(format.getFrequency()))) {
-                return false;
-            }
-            if (!(null == getChannels() ? null == format.getChannels() : getChannels().equals(format.getChannels()))) {
-                return false;
-            }
+        if (obj instanceof AudioFormat format) {
+            return Objects.equals(getCodec(), format.getCodec()) && //
+                    Objects.equals(getContainer(), format.getContainer()) && //
+                    Objects.equals(isBigEndian(), format.isBigEndian()) && //
+                    Objects.equals(getBitDepth(), format.getBitDepth()) && //
+                    Objects.equals(getBitRate(), format.getBitRate()) && //
+                    Objects.equals(getFrequency(), format.getFrequency()) && //
+                    Objects.equals(getChannels(), format.getChannels());
         }
         return super.equals(obj);
     }
@@ -468,13 +505,13 @@ public class AudioFormat {
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result + ((bigEndian == null) ? 0 : bigEndian.hashCode());
-        result = prime * result + ((bitDepth == null) ? 0 : bitDepth.hashCode());
-        result = prime * result + ((bitRate == null) ? 0 : bitRate.hashCode());
-        result = prime * result + ((codec == null) ? 0 : codec.hashCode());
-        result = prime * result + ((container == null) ? 0 : container.hashCode());
-        result = prime * result + ((frequency == null) ? 0 : frequency.hashCode());
-        result = prime * result + ((channels == null) ? 0 : channels.hashCode());
+        result = prime * result + (bigEndian instanceof Object localBigEndian ? localBigEndian.hashCode() : 0);
+        result = prime * result + (bitDepth instanceof Object localBitDepth ? localBitDepth.hashCode() : 0);
+        result = prime * result + (bitRate instanceof Object localBitRate ? localBitRate.hashCode() : 0);
+        result = prime * result + (codec instanceof Object localCodec ? localCodec.hashCode() : 0);
+        result = prime * result + (container instanceof Object localContainer ? localContainer.hashCode() : 0);
+        result = prime * result + (frequency instanceof Object localFrequency ? localFrequency.hashCode() : 0);
+        result = prime * result + (channels instanceof Object localChannels ? localChannels.hashCode() : 0);
         return result;
     }
 
@@ -485,7 +522,7 @@ public class AudioFormat {
                 + (bigEndian != null ? "bigEndian=" + bigEndian + ", " : "")
                 + (bitDepth != null ? "bitDepth=" + bitDepth + ", " : "")
                 + (bitRate != null ? "bitRate=" + bitRate + ", " : "")
-                + (frequency != null ? "frequency=" + frequency : "") + (channels != null ? "channels=" + channels : "")
-                + "]";
+                + (frequency != null ? "frequency=" + frequency + ", " : "")
+                + (channels != null ? "channels=" + channels : "") + "]";
     }
 }

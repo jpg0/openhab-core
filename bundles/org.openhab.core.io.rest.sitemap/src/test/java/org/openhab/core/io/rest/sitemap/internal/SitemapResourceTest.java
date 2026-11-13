@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,11 +15,12 @@ package org.openhab.core.io.rest.sitemap.internal;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
-import static org.hamcrest.collection.IsEmptyCollection.empty;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
-import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -30,9 +31,6 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
-import org.eclipse.emf.common.util.BasicEList;
-import org.eclipse.emf.common.util.EList;
-import org.eclipse.emf.ecore.EClass;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,71 +39,104 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.io.rest.LocaleService;
 import org.openhab.core.io.rest.sitemap.SitemapSubscriptionService;
 import org.openhab.core.items.GenericItem;
 import org.openhab.core.items.ItemNotFoundException;
-import org.openhab.core.library.types.DecimalType;
+import org.openhab.core.items.events.ItemEvent;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.OpenClosedType;
 import org.openhab.core.library.types.PercentType;
-import org.openhab.core.model.sitemap.SitemapProvider;
-import org.openhab.core.model.sitemap.sitemap.ColorArray;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.VisibilityRule;
-import org.openhab.core.model.sitemap.sitemap.Widget;
+import org.openhab.core.sitemap.Condition;
+import org.openhab.core.sitemap.Group;
+import org.openhab.core.sitemap.Rule;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Widget;
+import org.openhab.core.sitemap.dto.SitemapDefinitionDTO;
+import org.openhab.core.sitemap.internal.SitemapImpl;
+import org.openhab.core.sitemap.registry.ManagedSitemapProvider;
+import org.openhab.core.sitemap.registry.SitemapFactory;
+import org.openhab.core.sitemap.registry.SitemapRegistry;
 import org.openhab.core.test.java.JavaTest;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.State;
 import org.openhab.core.ui.items.ItemUIRegistry;
+import org.openhab.core.ui.items.ItemUIRegistry.WidgetLabelSource;
+import org.osgi.framework.BundleContext;
 
 /**
  * Test aspects of the {@link SitemapResource}.
  *
  * @author Henning Treu - Initial contribution
+ * @author Laurent Garnier - Extended tests for static icon and icon based on conditional rules
+ * @author Mark Herwege - Implement sitemap registry
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-@NonNullByDefault
 public class SitemapResourceTest extends JavaTest {
 
     private static final int STATE_UPDATE_WAIT_TIME = 100;
 
-    private static final String HTTP_HEADER_X_ATMOSPHERE_TRANSPORT = "X-Atmosphere-Transport";
     private static final String ITEM_NAME = "itemName";
+
+    private static final String ITEM_LABEL = "item label";
     private static final String SITEMAP_PATH = "/sitemaps";
-    private static final String SITEMAP_MODEL_NAME = "sitemapModel";
     private static final String SITEMAP_NAME = "defaultSitemap";
     private static final String SITEMAP_TITLE = "Default Sitemap";
     private static final String VISIBILITY_RULE_ITEM_NAME = "visibilityRuleItem";
     private static final String LABEL_COLOR_ITEM_NAME = "labelColorItemName";
     private static final String VALUE_COLOR_ITEM_NAME = "valueColorItemName";
+    private static final String ICON_COLOR_ITEM_NAME = "iconColorItemName";
+    private static final String ICON_ITEM_NAME = "iconItemName";
+    private static final String COMMAND_CONFIRM_ITEM_NAME = "commandConfirmItemName";
     private static final String WIDGET1_LABEL = "widget 1";
-    private static final String WIDGET2_LABEL = "widget 2";
+    private static final String WIDGET3_LABEL = "widget 3";
+    private static final String GROUP_LABEL = "frame";
+    private static final String WIDGET4_LABEL = "widget 4";
     private static final String WIDGET1_ID = "00";
     private static final String WIDGET2_ID = "01";
+    private static final String WIDGET3_ID = "02";
+    private static final String FRAME_ID = "03";
+    private static final String WIDGET4_ID = "04";
+    private static final String WIDGET1_ICON = "icon1";
+    private static final String WIDGET2_ICON = "icon2";
+    private static final String WIDGET3_ICON = "icon3";
+    private static final String GROUP_ICON = "frame";
+    private static final String WIDGET4_ICON = "icon4";
     private static final String CLIENT_IP = "127.0.0.1";
 
     private @NonNullByDefault({}) SitemapResource sitemapResource;
-
+    private @NonNullByDefault({}) SitemapSubscriptionService subscriptions;
     private @NonNullByDefault({}) GenericItem item;
     private @NonNullByDefault({}) GenericItem visibilityRuleItem;
     private @NonNullByDefault({}) GenericItem labelColorItem;
     private @NonNullByDefault({}) GenericItem valueColorItem;
+    private @NonNullByDefault({}) GenericItem iconColorItem;
+    private @NonNullByDefault({}) GenericItem iconItem;
+    private @NonNullByDefault({}) GenericItem commandConfirmItem;
 
     private @Mock @NonNullByDefault({}) HttpHeaders headersMock;
     private @Mock @NonNullByDefault({}) Sitemap defaultSitemapMock;
     private @Mock @NonNullByDefault({}) ItemUIRegistry itemUIRegistryMock;
+    private @Mock @NonNullByDefault({}) TimeZoneProvider timeZoneProviderMock;
     private @Mock @NonNullByDefault({}) LocaleService localeServiceMock;
     private @Mock @NonNullByDefault({}) HttpServletRequest requestMock;
-    private @Mock @NonNullByDefault({}) SitemapProvider sitemapProviderMock;
-    private @Mock @NonNullByDefault({}) SitemapSubscriptionService subscriptionsMock;
+    private @Mock @NonNullByDefault({}) SitemapFactory sitemapFactory;
+    private @Mock @NonNullByDefault({}) SitemapRegistry sitemapRegistryMock;
+    private @Mock @NonNullByDefault({}) ManagedSitemapProvider managedSitemapProviderMock;
     private @Mock @NonNullByDefault({}) UriInfo uriInfoMock;
+    private @Mock @NonNullByDefault({}) BundleContext bundleContextMock;
 
-    private EList<Widget> widgets = new BasicEList<>();
+    private List<Widget> widgets = new ArrayList<>();
 
     @BeforeEach
     public void setup() throws Exception {
-        sitemapResource = new SitemapResource(itemUIRegistryMock, localeServiceMock, subscriptionsMock);
+        subscriptions = new SitemapSubscriptionService(Collections.emptyMap(), itemUIRegistryMock, sitemapRegistryMock,
+                timeZoneProviderMock, bundleContextMock);
+
+        sitemapResource = new SitemapResource(itemUIRegistryMock, sitemapFactory, sitemapRegistryMock,
+                managedSitemapProviderMock, localeServiceMock, timeZoneProviderMock, subscriptions);
 
         when(uriInfoMock.getAbsolutePathBuilder()).thenReturn(UriBuilder.fromPath(SITEMAP_PATH));
         when(uriInfoMock.getBaseUriBuilder()).thenReturn(UriBuilder.fromPath(SITEMAP_PATH));
@@ -118,27 +149,114 @@ public class SitemapResourceTest extends JavaTest {
         visibilityRuleItem = new TestItem(VISIBILITY_RULE_ITEM_NAME);
         labelColorItem = new TestItem(LABEL_COLOR_ITEM_NAME);
         valueColorItem = new TestItem(VALUE_COLOR_ITEM_NAME);
+        iconColorItem = new TestItem(ICON_COLOR_ITEM_NAME);
+        iconItem = new TestItem(ICON_ITEM_NAME);
+        commandConfirmItem = new TestItem(COMMAND_CONFIRM_ITEM_NAME);
 
         when(localeServiceMock.getLocale(null)).thenReturn(Locale.US);
 
-        configureSitemapProviderMock();
+        configureSitemapRegistryMock();
         configureSitemapMock();
-        sitemapResource.addSitemapProvider(sitemapProviderMock);
 
-        widgets = initSitemapWidgets();
+        widgets = initSitemapWidgetsWithSubpages();
         configureItemUIRegistry(PercentType.HUNDRED, OnOffType.ON);
-
-        // Disable long polling
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(null);
     }
 
     @Test
-    public void whenNoSitemapProvidersAreSetShouldReturnEmptyList() {
-        sitemapResource.removeSitemapProvider(sitemapProviderMock);
-        Response sitemaps = sitemapResource.getSitemaps();
+    public void whenGetSitemapsDefinitionShouldSetEditableFlag() {
+        // sitemapRegistryMock.getAll() already returns Set.of(defaultSitemapMock) via configureSitemapRegistryMock
+        // This test will have that sitemap be a managed sitemap
+        when(managedSitemapProviderMock.get(SITEMAP_NAME)).thenReturn(new SitemapImpl(SITEMAP_NAME));
 
-        assertThat(sitemaps.getEntity(), instanceOf(Collection.class));
-        assertThat((Collection<?>) sitemaps.getEntity(), is(empty()));
+        Response resp = sitemapResource.getSitemapsDefinition();
+        assertThat(resp.getStatus(), is(200));
+
+        @SuppressWarnings("unchecked")
+        List<EnrichedSitemapDefinitionDTO> body = (List<EnrichedSitemapDefinitionDTO>) resp.getEntity();
+        assertThat(body, hasSize(1));
+        assertThat(body.get(0).name, is(SITEMAP_NAME));
+        assertThat(body.get(0).editable, is(true));
+    }
+
+    @Test
+    public void whenGetSitemapDefinitionNotFoundShouldReturn404() {
+        when(sitemapRegistryMock.get("noexist")).thenReturn(null);
+        Response resp = sitemapResource.getSitemapDefinition(headersMock, "noexist");
+        assertThat(resp.getStatus(), is(Response.Status.NOT_FOUND.getStatusCode()));
+    }
+
+    @Test
+    public void whenCreateOrUpdateSitemapNullBodyShouldReturnBadRequest() {
+        Object resp = sitemapResource.createOrUpdateSitemap(headersMock, "any", null);
+        assertThat(((Response) resp).getStatus(), is(Response.Status.BAD_REQUEST.getStatusCode()));
+    }
+
+    @Test
+    public void whenCreateOrUpdateSitemapNameMismatchShouldReturnBadRequest() {
+        SitemapDefinitionDTO dto = new SitemapDefinitionDTO();
+        dto.name = "other";
+        Object resp = sitemapResource.createOrUpdateSitemap(headersMock, "pathName", dto);
+        assertThat(((Response) resp).getStatus(), is(Response.Status.BAD_REQUEST.getStatusCode()));
+    }
+
+    @Test
+    public void whenCreateOrUpdateSitemapCreateNewShouldAddManagedSitemap() {
+        SitemapDefinitionDTO dto = new SitemapDefinitionDTO();
+        dto.name = "s1";
+
+        when(sitemapRegistryMock.get("s1")).thenReturn(null);
+        when(sitemapFactory.createSitemap("s1")).thenReturn(new SitemapImpl("s1"));
+
+        Object respObj = sitemapResource.createOrUpdateSitemap(headersMock, "s1", dto);
+        Response resp = (Response) respObj;
+        assertThat(resp.getStatus(), is(Response.Status.CREATED.getStatusCode()));
+
+        verify(managedSitemapProviderMock, times(1)).add(any());
+    }
+
+    @Test
+    public void whenCreateOrUpdateSitemapUpdateManagedShouldUpdateManagedSitemap() {
+        SitemapDefinitionDTO dto = new SitemapDefinitionDTO();
+        dto.name = "s2";
+
+        when(sitemapRegistryMock.get("s2")).thenReturn(mock(Sitemap.class));
+        when(managedSitemapProviderMock.get("s2")).thenReturn(mock(Sitemap.class));
+        when(sitemapFactory.createSitemap("s2")).thenReturn(new SitemapImpl("s2"));
+
+        Object respObj = sitemapResource.createOrUpdateSitemap(headersMock, "s2", dto);
+        Response resp = (Response) respObj;
+        assertThat(resp.getStatus(), is(Response.Status.OK.getStatusCode()));
+
+        verify(managedSitemapProviderMock, times(1)).update(any());
+    }
+
+    @Test
+    public void whenRemoveSitemapNotFoundShouldReturn404() {
+        when(sitemapRegistryMock.get("xyz")).thenReturn(null);
+        Response resp = sitemapResource.removeSitemap("xyz");
+        assertThat(resp.getStatus(), is(Response.Status.NOT_FOUND.getStatusCode()));
+    }
+
+    @Test
+    public void whenRemoveSitemapNotManagedShouldReturnMethodNotAllowed() {
+        Sitemap sitemap = mock(Sitemap.class);
+        when(sitemapRegistryMock.get("sdel")).thenReturn(sitemap);
+        when(managedSitemapProviderMock.remove("sdel")).thenReturn(null);
+
+        Response resp = sitemapResource.removeSitemap("sdel");
+        assertThat(resp.getStatus(), is(Response.Status.METHOD_NOT_ALLOWED.getStatusCode()));
+        verify(managedSitemapProviderMock, times(1)).remove("sdel");
+    }
+
+    @Test
+    public void whenRemoveSitemapManagedShouldReturnOk() {
+        Sitemap sitemap = mock(Sitemap.class);
+        when(sitemapRegistryMock.get("sdel2")).thenReturn(sitemap);
+        when(managedSitemapProviderMock.remove("sdel2")).thenReturn(sitemap);
+
+        Response resp = sitemapResource.removeSitemap("sdel2");
+        assertThat(resp.getStatus(), is(Response.Status.OK.getStatusCode()));
+        verify(managedSitemapProviderMock, times(1)).remove("sdel2");
     }
 
     @Test
@@ -149,70 +267,94 @@ public class SitemapResourceTest extends JavaTest {
 
         @SuppressWarnings("unchecked")
         SitemapDTO dto = ((Collection<SitemapDTO>) sitemaps.getEntity()).iterator().next();
-        assertThat(dto.name, is(SITEMAP_MODEL_NAME));
-        assertThat(dto.link, is(SITEMAP_PATH + "/" + SITEMAP_MODEL_NAME));
+        assertThat(dto.name, is(SITEMAP_NAME));
+        assertThat(dto.link, is(SITEMAP_PATH + "/" + SITEMAP_NAME));
+    }
+
+    @Test
+    public void whenLongPollingWholeSitemapShouldObserveAllItems() throws ItemNotFoundException {
+        configureItemUIRegistryWithSubpages(PercentType.HUNDRED, OnOffType.ON, OpenClosedType.OPEN);
+
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(item.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
+
+        Response response = sitemapResource.getSitemapData(headersMock, null, "long-polling", SITEMAP_NAME, null,
+                false);
+
+        SitemapDTO sitemapDTO = (SitemapDTO) response.getEntity();
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(sitemapDTO.homepage.timeout, is(false));
+    }
+
+    @Test
+    public void whenLongPollingSpecificPageMustNotObserveAllItems() throws ItemNotFoundException {
+        configureItemUIRegistryWithSubpages(PercentType.HUNDRED, OnOffType.ON, OpenClosedType.OPEN);
+
+        // TODO it would be cooler to not wait 30s in this test because SitemapResource has that hardcoded timeout
+
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(item.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
+
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
+
+        PageDTO pageDTO = (PageDTO) response.getEntity();
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(true));
     }
 
     @Test
     public void whenLongPollingShouldObserveItems() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(STATE_UPDATE_WAIT_TIME); // wait for the #getPageData call and listeners to attach to the
-                                                      // item
-                item.setState(PercentType.ZERO);
-            } catch (InterruptedException e) {
-            }
-        }).start();
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(item.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
 
-        // non-null is sufficient here.
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(List.of());
-
-        Response response = sitemapResource.getPageData(headersMock, null, SITEMAP_MODEL_NAME, SITEMAP_NAME, null,
-                false);
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
 
         PageDTO pageDTO = (PageDTO) response.getEntity();
-        assertThat(pageDTO.timeout, is(false)); // assert that the item state change did trigger the blocking method to
-                                                // return
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(false));
     }
 
     @Test
-    public void whenLongPollingShouldObserveItemsFromVisibilityRules() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(STATE_UPDATE_WAIT_TIME); // wait for the #getPageData call and listeners to attach to the
-                                                      // item
-                visibilityRuleItem.setState(new DecimalType(BigDecimal.ONE));
-            } catch (InterruptedException e) {
-            }
-        }).start();
+    public void whenLongPollingShouldObserveItemsFromRules() {
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(visibilityRuleItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
 
-        // non-null is sufficient here.
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(List.of());
-
-        Response response = sitemapResource.getPageData(headersMock, null, SITEMAP_MODEL_NAME, SITEMAP_NAME, null,
-                false);
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
 
         PageDTO pageDTO = (PageDTO) response.getEntity();
-        assertThat(pageDTO.timeout, is(false)); // assert that the item state change did trigger the blocking method to
-                                                // return
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(false));
     }
 
     @Test
     public void whenLongPollingShouldObserveItemsFromLabelColorConditions() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(STATE_UPDATE_WAIT_TIME); // wait for the #getPageData call and listeners to attach to the
-                                                      // item
-                labelColorItem.setState(new DecimalType(BigDecimal.ONE));
-            } catch (InterruptedException e) {
-            }
-        }).start();
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(labelColorItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
 
-        // non-null is sufficient here.
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(List.of());
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
 
-        Response response = sitemapResource.getPageData(headersMock, null, SITEMAP_MODEL_NAME, SITEMAP_NAME, null,
-                false);
+        PageDTO pageDTO = (PageDTO) response.getEntity();
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(false));
+    }
+
+    @Test
+    public void whenLongPollingShouldObserveItemsFromValueColorConditions() {
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(valueColorItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
+
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
 
         PageDTO pageDTO = (PageDTO) response.getEntity();
         assertThat(pageDTO.timeout, is(false)); // assert that the item state change did trigger the blocking method to
@@ -220,25 +362,56 @@ public class SitemapResourceTest extends JavaTest {
     }
 
     @Test
-    public void whenLongPollingShouldObserveItemsFromValueColorConditions() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(STATE_UPDATE_WAIT_TIME); // wait for the #getPageData call and listeners to attach to the
-                                                      // item
-                valueColorItem.setState(new DecimalType(BigDecimal.ONE));
-            } catch (InterruptedException e) {
-            }
-        }).start();
+    public void whenLongPollingShouldObserveItemsFromIconColorConditions() {
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(iconColorItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
 
-        // non-null is sufficient here.
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(List.of());
-
-        Response response = sitemapResource.getPageData(headersMock, null, SITEMAP_MODEL_NAME, SITEMAP_NAME, null,
-                false);
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
 
         PageDTO pageDTO = (PageDTO) response.getEntity();
         assertThat(pageDTO.timeout, is(false)); // assert that the item state change did trigger the blocking method to
                                                 // return
+    }
+
+    @Test
+    public void whenLongPollingShouldObserveItemsFromIconConditions() {
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(iconItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
+
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
+
+        PageDTO pageDTO = (PageDTO) response.getEntity();
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(false));
+    }
+
+    @Test
+    public void whenLongPollingShouldObserveItemsFromConfirmCmdConditions() {
+        ItemEvent itemEvent = mock(ItemEvent.class);
+        when(itemEvent.getItemName()).thenReturn(commandConfirmItem.getName());
+        executeWithDelay(() -> sitemapResource.receive(itemEvent));
+
+        Response response = sitemapResource.getPageData(headersMock, null, "long-polling", SITEMAP_NAME, SITEMAP_NAME,
+                null, false);
+
+        PageDTO pageDTO = (PageDTO) response.getEntity();
+        // assert that the item state change did trigger the blocking method to return
+        assertThat(pageDTO.timeout, is(false));
+    }
+
+    private static void executeWithDelay(Runnable executionWithDelay) {
+        new Thread(() -> {
+            try {
+                // wait for the #getPageData call and listeners to attach to the item
+                Thread.sleep(STATE_UPDATE_WAIT_TIME);
+                executionWithDelay.run();
+            } catch (InterruptedException e) {
+            }
+        }).start();
     }
 
     @Test
@@ -246,10 +419,7 @@ public class SitemapResourceTest extends JavaTest {
         item.setState(new PercentType(50));
         configureItemUIRegistry(item.getState(), OnOffType.ON);
 
-        // Disable long polling
-        when(headersMock.getRequestHeader(HTTP_HEADER_X_ATMOSPHERE_TRANSPORT)).thenReturn(null);
-
-        Response response = sitemapResource.getPageData(headersMock, null, SITEMAP_MODEL_NAME, SITEMAP_NAME, null,
+        Response response = sitemapResource.getPageData(headersMock, null, null, SITEMAP_NAME, SITEMAP_NAME, null,
                 false);
 
         PageDTO pageDTO = (PageDTO) response.getEntity();
@@ -259,103 +429,283 @@ public class SitemapResourceTest extends JavaTest {
         assertThat(pageDTO.timeout, is(false));
 
         assertThat(pageDTO.widgets, notNullValue());
-        assertThat((Collection<?>) pageDTO.widgets, hasSize(2));
+        assertThat((Collection<?>) pageDTO.widgets, hasSize(3));
 
-        assertThat(pageDTO.widgets.get(0).widgetId, is(WIDGET1_ID));
-        assertThat(pageDTO.widgets.get(0).label, is(WIDGET1_LABEL));
-        assertThat(pageDTO.widgets.get(0).labelcolor, is("GREEN"));
-        assertThat(pageDTO.widgets.get(0).valuecolor, is("BLUE"));
-        assertThat(pageDTO.widgets.get(0).state, nullValue());
-        assertThat(pageDTO.widgets.get(0).item, notNullValue());
-        assertThat(pageDTO.widgets.get(0).item.name, is(ITEM_NAME));
-        assertThat(pageDTO.widgets.get(0).item.state, is("50"));
+        assertThat(pageDTO.widgets.getFirst().widgetId, is(WIDGET1_ID));
+        assertThat(pageDTO.widgets.getFirst().label, is(WIDGET1_LABEL));
+        assertThat(pageDTO.widgets.getFirst().labelSource, is("SITEMAP_WIDGET"));
+        assertThat(pageDTO.widgets.getFirst().labelcolor, is("GREEN"));
+        assertThat(pageDTO.widgets.getFirst().valuecolor, is("BLUE"));
+        assertThat(pageDTO.widgets.getFirst().iconcolor, is("ORANGE"));
+        assertThat(pageDTO.widgets.getFirst().icon, is(WIDGET1_ICON));
+        assertThat(pageDTO.widgets.getFirst().staticIcon, is(true));
+        assertThat(pageDTO.widgets.getFirst().state, nullValue());
+        assertThat(pageDTO.widgets.getFirst().item, notNullValue());
+        assertThat(pageDTO.widgets.getFirst().item.name, is(ITEM_NAME));
+        assertThat(pageDTO.widgets.getFirst().item.state, is("50"));
 
         assertThat(pageDTO.widgets.get(1).widgetId, is(WIDGET2_ID));
-        assertThat(pageDTO.widgets.get(1).label, is(WIDGET2_LABEL));
+        assertThat(pageDTO.widgets.get(1).label, is(ITEM_LABEL));
+        assertThat(pageDTO.widgets.get(1).labelSource, is("ITEM_LABEL"));
         assertThat(pageDTO.widgets.get(1).labelcolor, nullValue());
         assertThat(pageDTO.widgets.get(1).valuecolor, nullValue());
+        assertThat(pageDTO.widgets.get(1).iconcolor, nullValue());
+        assertThat(pageDTO.widgets.get(1).icon, is(WIDGET2_ICON));
+        assertThat(pageDTO.widgets.get(1).staticIcon, is(false));
         assertThat(pageDTO.widgets.get(1).state, is("ON"));
         assertThat(pageDTO.widgets.get(1).item, notNullValue());
         assertThat(pageDTO.widgets.get(1).item.name, is(ITEM_NAME));
         assertThat(pageDTO.widgets.get(1).item.state, is("50"));
+
+        assertThat(pageDTO.widgets.get(2).widgetId, is(WIDGET3_ID));
+        assertThat(pageDTO.widgets.get(2).label, is(WIDGET3_LABEL));
+        assertThat(pageDTO.widgets.get(2).labelcolor, nullValue());
+        assertThat(pageDTO.widgets.get(2).valuecolor, nullValue());
+        assertThat(pageDTO.widgets.get(2).iconcolor, nullValue());
+        assertThat(pageDTO.widgets.get(2).icon, is(WIDGET3_ICON));
+        assertThat(pageDTO.widgets.get(2).staticIcon, is(true));
+        assertThat(pageDTO.widgets.get(2).state, is("ON"));
+        assertThat(pageDTO.widgets.get(2).item, notNullValue());
+        assertThat(pageDTO.widgets.get(2).item.name, is(ITEM_NAME));
+        assertThat(pageDTO.widgets.get(2).item.state, is("50"));
+    }
+
+    private void configureItemUIRegistryWithSubpages(State state1, State state2, State state3)
+            throws ItemNotFoundException {
+        Group group1 = (Group) widgets.getFirst();
+        Group group2 = (Group) widgets.get(4);
+
+        when(itemUIRegistryMock.getChildren(defaultSitemapMock)).thenReturn(List.of(group1, group2));
+        configureCommonUIRegistryMockMethods();
+        List<Widget> subpage1Widgets = group1.getWidgets();
+
+        configureItemUIRegistryForWidget(group1, FRAME_ID, GROUP_ICON, GROUP_LABEL, WidgetLabelSource.SITEMAP_WIDGET,
+                true, null, null, null, null);
+        when(itemUIRegistryMock.getChildren(group1)).thenReturn(subpage1Widgets);
+
+        configureWidgetStatesPage1(state1, state2);
+
+        List<Widget> subpage2Widgets = group2.getWidgets();
+
+        configureItemUIRegistryForWidget(group2, FRAME_ID, GROUP_ICON, GROUP_LABEL, WidgetLabelSource.SITEMAP_WIDGET,
+                true, null, null, null, null);
+        when(itemUIRegistryMock.getChildren(group2)).thenReturn(subpage2Widgets);
+
+        configureWidgetStatesPage2(state3);
     }
 
     private void configureItemUIRegistry(State state1, State state2) throws ItemNotFoundException {
-        when(itemUIRegistryMock.getChildren(defaultSitemapMock)).thenReturn(widgets);
+        List<Widget> mainpageWidgets = widgets.subList(1, 4);
+
+        when(itemUIRegistryMock.getChildren(defaultSitemapMock)).thenReturn(mainpageWidgets);
+        configureCommonUIRegistryMockMethods();
+
+        configureWidgetStatesPage1(state1, state2);
+    }
+
+    private void configureCommonUIRegistryMockMethods() throws ItemNotFoundException {
         when(itemUIRegistryMock.getItem(ITEM_NAME)).thenReturn(item);
         when(itemUIRegistryMock.getItem(VISIBILITY_RULE_ITEM_NAME)).thenReturn(visibilityRuleItem);
         when(itemUIRegistryMock.getItem(LABEL_COLOR_ITEM_NAME)).thenReturn(labelColorItem);
         when(itemUIRegistryMock.getItem(VALUE_COLOR_ITEM_NAME)).thenReturn(valueColorItem);
-
-        when(itemUIRegistryMock.getWidgetId(widgets.get(0))).thenReturn(WIDGET1_ID);
-        when(itemUIRegistryMock.getCategory(widgets.get(0))).thenReturn("");
-        when(itemUIRegistryMock.getLabel(widgets.get(0))).thenReturn(WIDGET1_LABEL);
-        when(itemUIRegistryMock.getVisiblity(widgets.get(0))).thenReturn(true);
-        when(itemUIRegistryMock.getLabelColor(widgets.get(0))).thenReturn("GREEN");
-        when(itemUIRegistryMock.getValueColor(widgets.get(0))).thenReturn("BLUE");
-        when(itemUIRegistryMock.getState(widgets.get(0))).thenReturn(state1);
-
-        when(itemUIRegistryMock.getWidgetId(widgets.get(1))).thenReturn(WIDGET2_ID);
-        when(itemUIRegistryMock.getCategory(widgets.get(1))).thenReturn("");
-        when(itemUIRegistryMock.getLabel(widgets.get(1))).thenReturn(WIDGET2_LABEL);
-        when(itemUIRegistryMock.getVisiblity(widgets.get(1))).thenReturn(true);
-        when(itemUIRegistryMock.getLabelColor(widgets.get(1))).thenReturn(null);
-        when(itemUIRegistryMock.getValueColor(widgets.get(1))).thenReturn(null);
-        when(itemUIRegistryMock.getState(widgets.get(1))).thenReturn(state2);
+        when(itemUIRegistryMock.getItem(ICON_COLOR_ITEM_NAME)).thenReturn(iconColorItem);
+        when(itemUIRegistryMock.getItem(ICON_ITEM_NAME)).thenReturn(iconItem);
+        when(itemUIRegistryMock.getItem(COMMAND_CONFIRM_ITEM_NAME)).thenReturn(commandConfirmItem);
     }
 
-    private EList<Widget> initSitemapWidgets() {
-        // Initialize a sitemap containing 2 widgets linked to the same number item,
-        // one slider and one switch
+    private void configureWidgetStatesPage1(State state1, State state2) {
+        List<Widget> mainpageWidgets = widgets.subList(1, 4);
+        Widget w1 = mainpageWidgets.getFirst();
+        configureItemUIRegistryForWidget(w1, WIDGET1_ID, WIDGET1_ICON, WIDGET1_LABEL, WidgetLabelSource.SITEMAP_WIDGET,
+                true, "GREEN", "BLUE", "ORANGE", state1);
 
-        Widget w1 = mock(Widget.class);
-        EClass sliderEClass = mock(EClass.class);
-        when(sliderEClass.getName()).thenReturn("slider");
-        when(sliderEClass.getInstanceTypeName()).thenReturn("org.openhab.core.model.sitemap.Slider");
-        when(w1.eClass()).thenReturn(sliderEClass);
-        when(w1.getLabel()).thenReturn(WIDGET1_LABEL);
-        when(w1.getItem()).thenReturn(ITEM_NAME);
+        Widget w2 = mainpageWidgets.get(1);
+        configureItemUIRegistryForWidget(w2, WIDGET2_ID, WIDGET2_ICON, ITEM_LABEL, WidgetLabelSource.ITEM_LABEL, true,
+                null, null, null, state2);
+
+        Widget w3 = mainpageWidgets.get(2);
+        configureItemUIRegistryForWidget(w3, WIDGET3_ID, WIDGET3_ICON, WIDGET3_LABEL, WidgetLabelSource.SITEMAP_WIDGET,
+                true, null, null, null, state2);
+    }
+
+    private void configureWidgetStatesPage2(State state3) {
+        Widget w4 = widgets.get(5);
+        configureItemUIRegistryForWidget(w4, WIDGET4_ID, WIDGET4_ICON, WIDGET4_LABEL, WidgetLabelSource.SITEMAP_WIDGET,
+                true, null, null, null, state3);
+    }
+
+    private void configureItemUIRegistryForWidget(Widget w, String widgetId, String widgetIcon, String widgetLabel,
+            WidgetLabelSource widgetLabelSource, boolean visibility, String labelColor, String valueColor,
+            String iconColor, State state) {
+        when(itemUIRegistryMock.getWidgetId(w)).thenReturn(widgetId);
+        when(itemUIRegistryMock.getCategory(w)).thenReturn(widgetIcon);
+        when(itemUIRegistryMock.getLabel(w)).thenReturn(widgetLabel);
+        when(itemUIRegistryMock.getLabelSource(w)).thenReturn(widgetLabelSource);
+        when(itemUIRegistryMock.getVisiblity(w)).thenReturn(visibility);
+        when(itemUIRegistryMock.getLabelColor(w)).thenReturn(labelColor);
+        when(itemUIRegistryMock.getValueColor(w)).thenReturn(valueColor);
+        when(itemUIRegistryMock.getIconColor(w)).thenReturn(iconColor);
+        when(itemUIRegistryMock.getState(w)).thenReturn(state);
+    }
+
+    private List<Widget> initSitemapWidgets() {
+        // Initialize a sitemap containing 2 widgets linked to the same number item,
+        // one slider and one switch,
+        // which has one subpage
+
+        // add icon rules to the mock widget:
+        Class<Rule> classToMock = Rule.class;
+        Rule iconRule = mock(classToMock);
+        Condition condition0 = mock(Condition.class);
+        when(condition0.getItem()).thenReturn(ICON_ITEM_NAME);
+        List<Condition> conditions0 = new ArrayList<>();
+        conditions0.add(condition0);
+        when(iconRule.getConditions()).thenReturn(conditions0);
+        List<Rule> iconRulesW1 = new ArrayList<>();
+        iconRulesW1.add(iconRule);
 
         // add visibility rules to the mock widget:
-        VisibilityRule visibilityRule = mock(VisibilityRule.class);
-        when(visibilityRule.getItem()).thenReturn(VISIBILITY_RULE_ITEM_NAME);
-        BasicEList<VisibilityRule> visibilityRules = new BasicEList<>(1);
-        visibilityRules.add(visibilityRule);
-        when(w1.getVisibility()).thenReturn(visibilityRules);
+        Rule visibilityRule = mock(Rule.class);
+        Condition condition = mock(Condition.class);
+        when(condition.getItem()).thenReturn(VISIBILITY_RULE_ITEM_NAME);
+        List<Condition> conditions = new ArrayList<>();
+        conditions.add(condition);
+        when(visibilityRule.getConditions()).thenReturn(conditions);
+        List<Rule> visibilityRulesW1 = new ArrayList<>(1);
+        visibilityRulesW1.add(visibilityRule);
 
         // add label color conditions to the item:
-        ColorArray labelColor = mock(ColorArray.class);
-        when(labelColor.getItem()).thenReturn(LABEL_COLOR_ITEM_NAME);
-        EList<ColorArray> labelColors = new BasicEList<>();
-        labelColors.add(labelColor);
-        when(w1.getLabelColor()).thenReturn(labelColors);
+        Rule labelColor = mock(Rule.class);
+        Condition condition1 = mock(Condition.class);
+        when(condition1.getItem()).thenReturn(LABEL_COLOR_ITEM_NAME);
+        List<Condition> conditions1 = new ArrayList<>();
+        conditions1.add(condition1);
+        when(labelColor.getConditions()).thenReturn(conditions1);
+        List<Rule> labelColorsW1 = new ArrayList<>();
+        labelColorsW1.add(labelColor);
 
         // add value color conditions to the item:
-        ColorArray valueColor = mock(ColorArray.class);
-        when(valueColor.getItem()).thenReturn(VALUE_COLOR_ITEM_NAME);
-        EList<ColorArray> valueColors = new BasicEList<>();
-        valueColors.add(valueColor);
-        when(w1.getValueColor()).thenReturn(valueColors);
+        Rule valueColor = mock(Rule.class);
+        Condition condition2 = mock(Condition.class);
+        when(condition2.getItem()).thenReturn(VALUE_COLOR_ITEM_NAME);
+        List<Condition> conditions2 = new ArrayList<>();
+        conditions2.add(condition2);
+        when(valueColor.getConditions()).thenReturn(conditions2);
+        List<Rule> valueColorsW1 = new ArrayList<>();
+        valueColorsW1.add(valueColor);
 
-        visibilityRules = new BasicEList<>();
-        labelColors = new BasicEList<>();
-        valueColors = new BasicEList<>();
+        // add icon color conditions to the item:
+        Rule iconColor = mock(Rule.class);
+        Condition condition3 = mock(Condition.class);
+        when(condition3.getItem()).thenReturn(ICON_COLOR_ITEM_NAME);
+        List<Condition> conditions3 = new ArrayList<>();
+        conditions3.add(condition3);
+        when(iconColor.getConditions()).thenReturn(conditions3);
+        List<Rule> iconColorsW1 = new ArrayList<>();
+        iconColorsW1.add(iconColor);
 
-        Widget w2 = mock(Widget.class);
-        EClass switchEClass = mock(EClass.class);
-        when(switchEClass.getName()).thenReturn("switch");
-        when(switchEClass.getInstanceTypeName()).thenReturn("org.openhab.core.model.sitemap.Switch");
-        when(w2.eClass()).thenReturn(switchEClass);
-        when(w2.getLabel()).thenReturn(WIDGET2_LABEL);
-        when(w2.getItem()).thenReturn(ITEM_NAME);
-        when(w2.getVisibility()).thenReturn(visibilityRules);
-        when(w2.getLabelColor()).thenReturn(labelColors);
-        when(w2.getValueColor()).thenReturn(valueColors);
+        // add confirm command conditions to the item:
+        Rule confirmCmd = mock(Rule.class);
+        Condition conditon4 = mock(Condition.class);
+        when(conditon4.getItem()).thenReturn(COMMAND_CONFIRM_ITEM_NAME);
+        List<Condition> conditions4 = new ArrayList<>();
+        conditions4.add(conditon4);
+        when(confirmCmd.getConditions()).thenReturn(conditions4);
+        List<Rule> confirmCmdRulesW1 = new ArrayList<>();
+        confirmCmdRulesW1.add(confirmCmd);
 
-        BasicEList<Widget> widgets = new BasicEList<>(2);
+        String sliderType = "Slider";
+
+        Widget w1 = mockWidget(iconRulesW1, visibilityRulesW1, labelColorsW1, valueColorsW1, iconColorsW1,
+                confirmCmdRulesW1, sliderType, WIDGET1_LABEL, null, false);
+
+        List<Rule> iconRules = new ArrayList<>();
+        List<Rule> visibilityRules = new ArrayList<>();
+        List<Rule> labelColors = new ArrayList<>();
+        List<Rule> valueColors = new ArrayList<>();
+        List<Rule> iconColors = new ArrayList<>();
+        List<Rule> confirmCmdRules = new ArrayList<>();
+
+        String switchType = "Switch";
+
+        Widget w2 = mockWidget(iconRules, visibilityRules, labelColors, valueColors, iconColors, confirmCmdRules,
+                switchType, null, WIDGET2_ICON, false);
+        mock(Widget.class);
+
+        Widget w3 = mockWidget(iconRules, visibilityRules, labelColors, valueColors, iconColors, confirmCmdRules,
+                switchType, WIDGET3_LABEL, WIDGET3_ICON, true);
+
+        List<Widget> widgets = new ArrayList<>(3);
         widgets.add(w1);
         widgets.add(w2);
+        widgets.add(w3);
         return widgets;
+    }
+
+    private List<Widget> initSitemapWidgetsWithSubpages() {
+        List<Widget> baseWidgets = initSitemapWidgets();
+
+        String groupType = "Group";
+
+        List<Rule> iconRules = new ArrayList<>();
+        List<Rule> visibilityRules = new ArrayList<>();
+        List<Rule> labelColors = new ArrayList<>();
+        List<Rule> valueColors = new ArrayList<>();
+        List<Rule> iconColors = new ArrayList<>();
+        List<Rule> confirmCmdRules = new ArrayList<>();
+
+        Widget group1 = mockGroup(iconRules, visibilityRules, labelColors, valueColors, iconColors, confirmCmdRules,
+                groupType, GROUP_LABEL, GROUP_ICON, true, baseWidgets);
+
+        String switchType = "Switch";
+
+        Widget w4 = mockWidget(iconRules, visibilityRules, labelColors, valueColors, iconColors, confirmCmdRules,
+                switchType, WIDGET4_LABEL, WIDGET4_ICON, true);
+
+        Widget group2 = mockGroup(iconRules, visibilityRules, labelColors, valueColors, iconColors, confirmCmdRules,
+                groupType, GROUP_LABEL, GROUP_ICON, true, new ArrayList<>(List.of(w4)));
+
+        List<Widget> allWidgets = new ArrayList<>();
+        allWidgets.add(group1);
+        allWidgets.addAll(baseWidgets);
+        allWidgets.add(group2);
+        allWidgets.add(w4);
+        return allWidgets;
+    }
+
+    private static Widget mockWidget(List<Rule> iconRules1, List<Rule> visibilityRules1, List<Rule> labelColors1,
+            List<Rule> valueColors1, List<Rule> iconColors1, List<Rule> confirmCmdRules1, String widgetType,
+            String widgetLabel, String widgetIcon, boolean widgetStaticIcon) {
+        Widget w = mock(Widget.class);
+        mockWidgetMethods(iconRules1, visibilityRules1, labelColors1, valueColors1, iconColors1, confirmCmdRules1,
+                widgetType, widgetLabel, widgetIcon, widgetStaticIcon, w);
+        when(w.getItem()).thenReturn(ITEM_NAME);
+        return w;
+    }
+
+    private static Group mockGroup(List<Rule> iconRules1, List<Rule> visibilityRules1, List<Rule> labelColors1,
+            List<Rule> valueColors1, List<Rule> iconColors1, List<Rule> confirmCmdRules1, String widgetType,
+            String widgetLabel, String widgetIcon, boolean widgetStaticIcon, List<Widget> children) {
+        Group w = mock(Group.class);
+        mockWidgetMethods(iconRules1, visibilityRules1, labelColors1, valueColors1, iconColors1, confirmCmdRules1,
+                widgetType, widgetLabel, widgetIcon, widgetStaticIcon, w);
+        when(w.getWidgets()).thenReturn(children);
+        return w;
+    }
+
+    private static void mockWidgetMethods(List<Rule> iconRules1, List<Rule> visibilityRules1, List<Rule> labelColors1,
+            List<Rule> valueColors1, List<Rule> iconColors1, List<Rule> confirmCmdRules1, String widgetType,
+            String widgetLabel, String widgetIcon, boolean widgetStaticIcon, Widget w) {
+        when(w.getWidgetType()).thenReturn(widgetType);
+        when(w.getLabel()).thenReturn(widgetLabel);
+        when(w.getIcon()).thenReturn(widgetIcon);
+        when(w.isStaticIcon()).thenReturn(widgetStaticIcon);
+        when(w.getIconRules()).thenReturn(iconRules1);
+        when(w.getVisibility()).thenReturn(visibilityRules1);
+        when(w.getLabelColor()).thenReturn(labelColors1);
+        when(w.getValueColor()).thenReturn(valueColors1);
+        when(w.getIconColor()).thenReturn(iconColors1);
+        when(w.getConfirmCmdRules()).thenReturn(confirmCmdRules1);
     }
 
     private void configureSitemapMock() {
@@ -364,15 +714,16 @@ public class SitemapResourceTest extends JavaTest {
         when(defaultSitemapMock.getIcon()).thenReturn("");
     }
 
-    private void configureSitemapProviderMock() {
-        when(sitemapProviderMock.getSitemapNames()).thenReturn(Set.of(SITEMAP_MODEL_NAME));
-        when(sitemapProviderMock.getSitemap(SITEMAP_MODEL_NAME)).thenReturn(defaultSitemapMock);
+    private void configureSitemapRegistryMock() {
+        when(sitemapRegistryMock.getAll()).thenReturn(Set.of(defaultSitemapMock));
+        when(sitemapRegistryMock.get(SITEMAP_NAME)).thenReturn(defaultSitemapMock);
     }
 
-    private class TestItem extends GenericItem {
+    private static class TestItem extends GenericItem {
 
         public TestItem(String name) {
             super("Number", name);
+            label = ITEM_LABEL;
         }
 
         @Override

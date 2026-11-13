@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -52,7 +52,7 @@ public class MagicImageHandler extends BaseThingHandler {
     public void initialize() {
         url = (String) getConfig().get("url");
         if (url == null || url.isEmpty()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "The URL must not be blank");
+            updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "The URL must not be blank");
         }
 
         updateStatus(ThingStatus.ONLINE);

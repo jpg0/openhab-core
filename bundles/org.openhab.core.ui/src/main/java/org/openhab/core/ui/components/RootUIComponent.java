@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,8 +25,10 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.common.registry.Identifiable;
 import org.openhab.core.config.core.dto.ConfigDescriptionDTO;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 /**
- * A root component is a special type of {@link Component} at the root of the hierarchy.
+ * A root component is a special type of {@link UIComponent} at the root of the hierarchy.
  * It has a number of specific parameters, a set of tags, a timestamp, some configurable
  * parameters ("props") and is identifiable by its UID (generally a GUID).
  *
@@ -34,10 +36,13 @@ import org.openhab.core.config.core.dto.ConfigDescriptionDTO;
  */
 @NonNullByDefault
 public class RootUIComponent extends UIComponent implements Identifiable<String> {
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     String uid;
 
-    Set<String> tags = new HashSet<String>();
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
+    Set<String> tags = new HashSet<>();
 
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
     ConfigDescriptionDTO props;
 
     @Nullable
@@ -106,7 +111,7 @@ public class RootUIComponent extends UIComponent implements Identifiable<String>
     }
 
     /**
-     * Updates the timestamp of the component to the current date & time.
+     * Updates the timestamp of the component to the current date and time.
      */
     public void updateTimestamp() {
         this.timestamp = new Date();

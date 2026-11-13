@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,7 +17,9 @@ import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.DayOfWeek;
 import java.time.Duration;
+import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -31,7 +33,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.RuleRegistry;
 import org.openhab.core.automation.module.script.ScriptExtensionProvider;
-import org.openhab.core.events.EventPublisher;
+import org.openhab.core.automation.module.script.action.BusEvent;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.DecimalType;
@@ -83,14 +85,12 @@ public class DefaultScriptScopeProvider implements ScriptExtensionProvider {
 
     private final Map<String, Object> elements = new ConcurrentHashMap<>();
 
-    private final ScriptBusEventImpl busEvent;
     private final ScriptThingActionsImpl thingActions;
 
     @Activate
     public DefaultScriptScopeProvider(final @Reference ItemRegistry itemRegistry,
             final @Reference ThingRegistry thingRegistry, final @Reference RuleRegistry ruleRegistry,
-            final @Reference EventPublisher eventPublisher) {
-        this.busEvent = new ScriptBusEventImpl(itemRegistry, eventPublisher);
+            final @Reference BusEvent busEvent) {
         this.thingActions = new ScriptThingActionsImpl(thingRegistry);
 
         elements.put("State", State.class);
@@ -159,7 +159,9 @@ public class DefaultScriptScopeProvider implements ScriptExtensionProvider {
 
         // date time static functions
         elements.put("ChronoUnit", ChronoUnit.class);
+        elements.put("DayOfWeek", DayOfWeek.class);
         elements.put("Duration", Duration.class);
+        elements.put("Month", Month.class);
         elements.put("ZoneId", ZoneId.class);
         elements.put("ZonedDateTime", ZonedDateTime.class);
 
@@ -186,7 +188,6 @@ public class DefaultScriptScopeProvider implements ScriptExtensionProvider {
 
     @Deactivate
     protected void deactivate() {
-        busEvent.dispose();
         thingActions.dispose();
         elements.clear();
     }
@@ -216,7 +217,7 @@ public class DefaultScriptScopeProvider implements ScriptExtensionProvider {
         if (PRESET_DEFAULT.equals(preset)) {
             return Collections.unmodifiableMap(elements);
         }
-        return Collections.emptyMap();
+        return Map.of();
     }
 
     @Override

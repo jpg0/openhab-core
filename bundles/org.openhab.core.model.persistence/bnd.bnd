@@ -1,8 +1,6 @@
 Bundle-SymbolicName: ${project.artifactId}
 Export-Package: org.openhab.core.model.persistence,\
- org.openhab.core.model.persistence.extensions,\
  org.openhab.core.model.persistence.formatting,\
- org.openhab.core.model.persistence.generator,\
  org.openhab.core.model.persistence.parser.antlr,\
  org.openhab.core.model.persistence.parser.antlr.internal,\
  org.openhab.core.model.persistence.persistence,\
@@ -21,6 +19,8 @@ Import-Package: \
  org.openhab.core.persistence,\
  org.openhab.core.persistence.config,\
  org.openhab.core.persistence.strategy,\
+ org.openhab.core.persistence.filter,\
+ org.openhab.core.persistence.registry,\
  org.openhab.core.types,\
  org.openhab.core.model.core,\
  com.google.common.*;version="14",\
@@ -36,11 +36,9 @@ Require-Bundle: org.antlr.runtime,\
  org.eclipse.emf.mwe.utils;resolution:=optional,\
  org.eclipse.emf.mwe2.launch;resolution:=optional,\
  org.openhab.core.model.item,\
- org.openhab.core.model.lazygen;resolution:=optional,\
- org.eclipse.xtend.lib;resolution:=optional,\
  org.eclipse.xtext.common.types,\
- org.eclipse.xtext.generator;resolution:=optional,\
+ org.eclipse.xtext.xtext.generator;resolution:=optional,\
  org.eclipse.xtext.util,\
- org.eclipse.xtext.xbase.lib;bundle-version="2.26.0",\
- org.eclipse.xtext.xbase;bundle-version="2.26.0";resolution:=optional;visibility:=reexport,\
- org.eclipse.xtext;bundle-version="2.26.0";visibility:=reexport
+ org.eclipse.xtext.xbase.lib;bundle-version="2.34.0",\
+ org.eclipse.xtext.xbase;bundle-version="2.34.0";resolution:=optional;visibility:=reexport,\
+ org.eclipse.xtext;bundle-version="2.34.0";visibility:=reexport

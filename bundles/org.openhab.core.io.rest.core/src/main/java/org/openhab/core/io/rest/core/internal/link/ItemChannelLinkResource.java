@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,13 +13,14 @@
 package org.openhab.core.io.rest.core.internal.link;
 
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import javax.annotation.security.RolesAllowed;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
+import javax.ws.rs.POST;
 import javax.ws.rs.PUT;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
@@ -37,14 +38,29 @@ import org.openhab.core.io.rest.JSONResponse;
 import org.openhab.core.io.rest.RESTConstants;
 import org.openhab.core.io.rest.RESTResource;
 import org.openhab.core.io.rest.Stream2JSONInputStream;
+import org.openhab.core.io.rest.core.link.BrokenItemChannelLinkDTO;
 import org.openhab.core.io.rest.core.link.EnrichedItemChannelLinkDTO;
 import org.openhab.core.io.rest.core.link.EnrichedItemChannelLinkDTOMapper;
+import org.openhab.core.items.Item;
+import org.openhab.core.items.ItemNotFoundException;
+import org.openhab.core.items.ItemRegistry;
+import org.openhab.core.items.ItemUtil;
+import org.openhab.core.thing.Channel;
 import org.openhab.core.thing.ChannelUID;
+import org.openhab.core.thing.Thing;
+import org.openhab.core.thing.ThingRegistry;
+import org.openhab.core.thing.ThingUID;
 import org.openhab.core.thing.link.AbstractLink;
 import org.openhab.core.thing.link.ItemChannelLink;
 import org.openhab.core.thing.link.ItemChannelLinkRegistry;
+import org.openhab.core.thing.link.ItemChannelLinkRegistry.ItemChannelLinkProblem;
 import org.openhab.core.thing.link.ManagedItemChannelLinkProvider;
 import org.openhab.core.thing.link.dto.ItemChannelLinkDTO;
+import org.openhab.core.thing.profiles.ProfileType;
+import org.openhab.core.thing.profiles.ProfileTypeRegistry;
+import org.openhab.core.thing.profiles.TriggerProfileType;
+import org.openhab.core.thing.type.ChannelKind;
+import org.openhab.core.thing.type.ChannelTypeRegistry;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
@@ -73,6 +89,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
  * @author Yannick Schaus - Added filters to getAll
  * @author Markus Rathgeb - Migrated to JAX-RS Whiteboard Specification
  * @author Wouter Born - Migrated to OpenAPI annotations
+ * @author Arne Seime - Added orphan links detection
  */
 @Component(service = { RESTResource.class, ItemChannelLinkResource.class })
 @JaxrsResource
@@ -91,12 +108,21 @@ public class ItemChannelLinkResource implements RESTResource {
 
     private final ItemChannelLinkRegistry itemChannelLinkRegistry;
     private final ManagedItemChannelLinkProvider managedItemChannelLinkProvider;
+    private final ThingRegistry thingRegistry;
+    private final ItemRegistry itemRegistry;
+    private final ProfileTypeRegistry profileTypeRegistry;
 
     @Activate
-    public ItemChannelLinkResource(final @Reference ItemChannelLinkRegistry itemChannelLinkRegistry,
+    public ItemChannelLinkResource(final @Reference ItemRegistry itemRegistry,
+            final @Reference ThingRegistry thingRegistry, final @Reference ChannelTypeRegistry channelTypeRegistry,
+            final @Reference ProfileTypeRegistry profileTypeRegistry,
+            final @Reference ItemChannelLinkRegistry itemChannelLinkRegistry,
             final @Reference ManagedItemChannelLinkProvider managedItemChannelLinkProvider) {
         this.itemChannelLinkRegistry = itemChannelLinkRegistry;
         this.managedItemChannelLinkProvider = managedItemChannelLinkProvider;
+        this.thingRegistry = thingRegistry;
+        this.itemRegistry = itemRegistry;
+        this.profileTypeRegistry = profileTypeRegistry;
     }
 
     @GET
@@ -120,6 +146,24 @@ public class ItemChannelLinkResource implements RESTResource {
         return Response.ok(new Stream2JSONInputStream(linkStream)).build();
     }
 
+    @DELETE
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/{object}")
+    @Operation(operationId = "removeAllLinksForObject", summary = "Delete all links that refer to an item or thing.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK") })
+    public Response removeAllLinksForObject(
+            @PathParam("object") @Parameter(description = "item name or thing UID") String object) {
+        int removedLinks;
+        try {
+            ThingUID thingUID = new ThingUID(object);
+            removedLinks = itemChannelLinkRegistry.removeLinksForThing(thingUID);
+        } catch (IllegalArgumentException e) {
+            removedLinks = itemChannelLinkRegistry.removeLinksForItem(object);
+        }
+        return Response.ok(Map.of("count", removedLinks)).build();
+    }
+
     @GET
     @Path("/{itemName}/{channelUID}")
     @Produces(MediaType.APPLICATION_JSON)
@@ -130,13 +174,12 @@ public class ItemChannelLinkResource implements RESTResource {
             @PathParam("channelUID") @Parameter(description = "channel UID") String channelUid) {
         List<EnrichedItemChannelLinkDTO> links = itemChannelLinkRegistry.stream()
                 .filter(link -> channelUid.equals(link.getLinkedUID().getAsString()))
-                .filter(link -> itemName.equals(link.getItemName()))
-                .map(link -> EnrichedItemChannelLinkDTOMapper.map(link,
-                        isEditable(AbstractLink.getIDFor(link.getItemName(), link.getLinkedUID()))))
-                .collect(Collectors.toList());
+                .filter(link -> itemName.equals(link.getItemName())).map(link -> EnrichedItemChannelLinkDTOMapper
+                        .map(link, isEditable(AbstractLink.getIDFor(link.getItemName(), link.getLinkedUID()))))
+                .toList();
 
         if (!links.isEmpty()) {
-            return JSONResponse.createResponse(Status.OK, links.get(0), null);
+            return JSONResponse.createResponse(Status.OK, links.getFirst(), null);
         }
         return JSONResponse.createErrorResponse(Status.NOT_FOUND,
                 "No link found for item '" + itemName + "' + and channelUID '" + channelUid + "'");
@@ -154,12 +197,53 @@ public class ItemChannelLinkResource implements RESTResource {
     public Response link(@PathParam("itemName") @Parameter(description = "itemName") String itemName,
             @PathParam("channelUID") @Parameter(description = "channelUID") String channelUid,
             @Parameter(description = "link data") @Nullable ItemChannelLinkDTO bean) {
+        Item item;
+        try {
+            item = itemRegistry.getItem(itemName);
+        } catch (ItemNotFoundException e) {
+            return Response.status(Status.BAD_REQUEST).build();
+        }
+
         ChannelUID uid;
         try {
             uid = new ChannelUID(channelUid);
         } catch (IllegalArgumentException e) {
             return Response.status(Status.BAD_REQUEST).build();
         }
+
+        Channel channel = getChannel(uid);
+        if (channel == null) {
+            return Response.status(Status.BAD_REQUEST).build();
+        }
+        ChannelKind channelKind = channel.getKind();
+
+        if (ChannelKind.TRIGGER.equals(channelKind)) {
+            String itemType = ItemUtil.getMainItemType(item.getType());
+            if (bean == null || bean.configuration == null) {
+                // configuration is needed because a profile is mandatory
+                return Response.status(Status.BAD_REQUEST).build();
+            }
+            String profileUid = (String) bean.configuration.get("profile");
+            if (profileUid == null) {
+                // profile is mandatory for trigger channel links
+                return Response.status(Status.BAD_REQUEST).build();
+            }
+            ProfileType profileType = profileTypeRegistry.getProfileTypes().stream()
+                    .filter(p -> profileUid.equals(p.getUID().getAsString())).findFirst().orElse(null);
+            if (!(profileType instanceof TriggerProfileType)) {
+                // only trigger profiles are allowed
+                return Response.status(Status.BAD_REQUEST).build();
+            }
+            if (!(profileType.getSupportedItemTypes().isEmpty()
+                    || profileType.getSupportedItemTypes().contains(itemType))
+                    || !(((TriggerProfileType) profileType).getSupportedChannelTypeUIDs().isEmpty()
+                            || ((TriggerProfileType) profileType).getSupportedChannelTypeUIDs()
+                                    .contains(channel.getChannelTypeUID()))) {
+                // item or channel type not matching
+                return Response.status(Status.BAD_REQUEST).build();
+            }
+        }
+
         ItemChannelLink link;
         if (bean == null) {
             link = new ItemChannelLink(itemName, uid, new Configuration());
@@ -189,6 +273,7 @@ public class ItemChannelLinkResource implements RESTResource {
     @Operation(operationId = "unlinkItemFromChannel", summary = "Unlinks an item from a channel.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
+                    @ApiResponse(responseCode = "400", description = "Invalid channel UID."),
                     @ApiResponse(responseCode = "404", description = "Link not found."),
                     @ApiResponse(responseCode = "405", description = "Link not editable.") })
     public Response unlink(@PathParam("itemName") @Parameter(description = "itemName") String itemName,
@@ -211,7 +296,41 @@ public class ItemChannelLinkResource implements RESTResource {
         return Response.ok(null, MediaType.TEXT_PLAIN).build();
     }
 
+    @POST
+    @RolesAllowed({ Role.ADMIN })
+    @Path("/purge")
+    @Operation(operationId = "purgeDatabase", summary = "Remove unused/orphaned links.", security = {
+            @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
+                    @ApiResponse(responseCode = "200", description = "OK") })
+    public Response purge() {
+        itemChannelLinkRegistry.purge();
+        return Response.ok().build();
+    }
+
     private boolean isEditable(String linkId) {
         return managedItemChannelLinkProvider.get(linkId) != null;
+    }
+
+    private @Nullable Channel getChannel(ChannelUID channelUID) {
+        Thing thing = thingRegistry.get(channelUID.getThingUID());
+        if (thing == null) {
+            return null;
+        }
+        return thing.getChannel(channelUID);
+    }
+
+    @GET
+    @Path("/orphans")
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(operationId = "getOrphanLinks", summary = "Get orphan links between items and broken/non-existent thing channels", responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = BrokenItemChannelLinkDTO.class)))) })
+    public Response getOrphanLinks() {
+        Map<ItemChannelLink, ItemChannelLinkProblem> orphanLinks = itemChannelLinkRegistry.getOrphanLinks();
+        List<BrokenItemChannelLinkDTO> brokenLinks = orphanLinks.entrySet().stream()
+                .map(e -> new BrokenItemChannelLinkDTO(EnrichedItemChannelLinkDTOMapper.map(e.getKey(),
+                        managedItemChannelLinkProvider.get(e.getKey().getUID()) != null), e.getValue()))
+                .toList();
+
+        return JSONResponse.createResponse(Status.OK, brokenLinks, null);
     }
 }

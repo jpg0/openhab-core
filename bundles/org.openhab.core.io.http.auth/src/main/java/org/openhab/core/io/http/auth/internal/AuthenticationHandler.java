@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -149,12 +149,12 @@ public class AuthenticationHandler implements Handler {
     void modified(Map<String, Object> properties) {
         Object authenticationEnabled = properties.get(AUTHENTICATION_ENABLED);
         if (authenticationEnabled != null) {
-            this.enabled = Boolean.valueOf(authenticationEnabled.toString());
+            this.enabled = Boolean.parseBoolean(authenticationEnabled.toString());
         }
 
         Object loginUri = properties.get(AUTHENTICATION_ENDPOINT);
-        if (loginUri != null && loginUri instanceof String) {
-            this.loginUri = (String) loginUri;
+        if (loginUri instanceof String string) {
+            this.loginUri = string;
         }
     }
 

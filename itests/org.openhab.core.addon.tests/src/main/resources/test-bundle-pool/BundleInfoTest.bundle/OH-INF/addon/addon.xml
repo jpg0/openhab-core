@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon:addon xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:addon="https://openhab.org/schemas/addon/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/addon/v1.0.0 https://openhab.org/schemas/addon-1.0.0.xsd" id="hue">
+
+	<type>binding</type>
+	<name>hue Binding</name>
+	<description>The hue Binding integrates the Philips hue system. It
+		allows to control hue lights.</description>
+	<connection>local</connection>
+
+	<!-- Dummy config -->
+	<config-description>
+
+		<parameter name="list" type="text" multiple="true" min="2" max="3">
+			<options>
+				<option value="key1">label1</option>
+				<option value="key2">label2</option>
+			</options>
+		</parameter>
+
+		<parameter name="color-alarming-light" type="text" multiple="true">
+			<context>item</context>
+			<filter>
+				<criteria name="tags">alarm, light</criteria>
+				<criteria name="type">color</criteria>
+				<criteria name="binding-id">hue</criteria>
+			</filter>
+		</parameter>
+
+	</config-description>
+
+	<!-- discovery methods -->
+	<discovery-methods>
+		<discovery-method>
+			<service-type>mdns</service-type>
+			<discovery-parameters>
+				<discovery-parameter>
+					<name>mdnsServiceType</name>
+					<value>_hue._tcp.local.</value>
+				</discovery-parameter>
+			</discovery-parameters>
+		</discovery-method>
+		<discovery-method>
+			<service-type>upnp</service-type>
+			<match-properties>
+				<match-property>
+					<name>modelName</name>
+					<regex>Philips hue bridge</regex>
+				</match-property>
+			</match-properties>
+		</discovery-method>
+	</discovery-methods>
+
+</addon:addon>

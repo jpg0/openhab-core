@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -28,7 +28,7 @@ public interface ModuleHandler {
     /**
      * The method is called by RuleManager to free resources when {@link ModuleHandler} is released.
      */
-    public void dispose();
+    void dispose();
 
     /**
      * The callback is injected to the handler through this method.

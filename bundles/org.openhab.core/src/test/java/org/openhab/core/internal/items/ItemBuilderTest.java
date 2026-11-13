@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,10 +13,8 @@
 package org.openhab.core.internal.items;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.util.Collections;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -60,7 +58,7 @@ public class ItemBuilderTest {
         verify(factoryMock).createItem(eq(CoreItemFactory.STRING), eq("test"));
         verify(itemMock).setLabel(isNull());
         verify(itemMock).setCategory(isNull());
-        verify(itemMock).addGroupNames(eq(Collections.emptyList()));
+        verify(itemMock).addGroupNames(eq(List.of()));
     }
 
     @Test
@@ -71,7 +69,7 @@ public class ItemBuilderTest {
         GroupItem res = (GroupItem) resItem;
         verifyNoMoreInteractions(factoryMock);
         assertNull(res.getCategory());
-        assertEquals(Collections.emptyList(), res.getGroupNames());
+        assertEquals(List.of(), res.getGroupNames());
         assertNull(res.getLabel());
         assertNull(res.getFunction());
         assertNull(res.getBaseItem());

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,25 +12,14 @@
  */
 package org.openhab.core.semantics;
 
-import java.util.List;
-import java.util.Locale;
+import java.util.Collections;
 import java.util.Map;
-import java.util.MissingResourceException;
-import java.util.Optional;
-import java.util.ResourceBundle;
-import java.util.ResourceBundle.Control;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.items.Item;
-import org.openhab.core.semantics.model.equipment.Equipments;
-import org.openhab.core.semantics.model.location.Locations;
-import org.openhab.core.semantics.model.point.Measurement;
-import org.openhab.core.semantics.model.point.Points;
-import org.openhab.core.semantics.model.property.Properties;
 import org.openhab.core.types.StateDescription;
 
 /**
@@ -38,19 +27,31 @@ import org.openhab.core.types.StateDescription;
  * For everything that is not static, the {@link SemanticsService} should be used instead.
  *
  * @author Kai Kreuzer - Initial contribution
+ * @author Jimmy Tanagra - Add the ability to add new tags at runtime
+ * @author Laurent Garnier - Several methods moved into class SemanticsService or SemanticTagRegistry
  */
 @NonNullByDefault
 public class SemanticTags {
 
-    private static final String TAGS_BUNDLE_NAME = "tags";
+    /**
+     * The namespace to use for the semantics metadata.
+     */
+    public static final String METADATA_NAMESPACE = "semantics";
 
-    private static final Map<String, Class<? extends Tag>> TAGS = new TreeMap<>();
+    // the config property names to use for the metadata
+    public static final String REL_HAS_LOCATION = "hasLocation";
+    public static final String REL_IS_PART_OF = "isPartOf";
+    public static final String REL_IS_POINT_OF = "isPointOf";
+    public static final String REL_HAS_POINT = "hasPoint";
+    public static final String REL_RELATES_TO = "relatesTo";
+
+    private static final Map<String, Class<? extends Tag>> TAGS = Collections.synchronizedMap(new TreeMap<>());
 
     static {
-        Locations.stream().forEach(location -> addTagSet(location));
-        Equipments.stream().forEach(equipment -> addTagSet(equipment));
-        Points.stream().forEach(point -> addTagSet(point));
-        Properties.stream().forEach(property -> addTagSet(property));
+        addTagSet("Location", Location.class);
+        addTagSet("Equipment", Equipment.class);
+        addTagSet("Point", Point.class);
+        addTagSet("Property", Property.class);
     }
 
     /**
@@ -63,44 +64,6 @@ public class SemanticTags {
      */
     public static @Nullable Class<? extends Tag> getById(String tagId) {
         return TAGS.get(tagId);
-    }
-
-    public static @Nullable Class<? extends Tag> getByLabel(String tagLabel, Locale locale) {
-        Optional<Class<? extends Tag>> tag = TAGS.values().stream().distinct()
-                .filter(t -> getLabel(t, locale).equalsIgnoreCase(tagLabel)).findFirst();
-        return tag.isPresent() ? tag.get() : null;
-    }
-
-    public static List<Class<? extends Tag>> getByLabelOrSynonym(String tagLabelOrSynonym, Locale locale) {
-        return TAGS.values().stream().distinct()
-                .filter(t -> getLabelAndSynonyms(t, locale).contains(tagLabelOrSynonym.toLowerCase(locale)))
-                .collect(Collectors.toList());
-    }
-
-    public static List<String> getLabelAndSynonyms(Class<? extends Tag> tag, Locale locale) {
-        ResourceBundle rb = ResourceBundle.getBundle(TAGS_BUNDLE_NAME, locale,
-                Control.getNoFallbackControl(Control.FORMAT_PROPERTIES));
-        try {
-            String entry = rb.getString(tag.getAnnotation(TagInfo.class).id());
-            return List.of(entry.toLowerCase(locale).split(","));
-        } catch (MissingResourceException e) {
-            return List.of(tag.getAnnotation(TagInfo.class).label());
-        }
-    }
-
-    public static String getLabel(Class<? extends Tag> tag, Locale locale) {
-        ResourceBundle rb = ResourceBundle.getBundle(TAGS_BUNDLE_NAME, locale,
-                Control.getNoFallbackControl(Control.FORMAT_PROPERTIES));
-        try {
-            String entry = rb.getString(tag.getAnnotation(TagInfo.class).id());
-            if (entry.contains(",")) {
-                return entry.substring(0, entry.indexOf(","));
-            } else {
-                return entry;
-            }
-        } catch (MissingResourceException e) {
-            return tag.getAnnotation(TagInfo.class).label();
-        }
     }
 
     /**
@@ -121,12 +84,50 @@ public class SemanticTags {
         if (getProperty(item) != null) {
             StateDescription stateDescription = item.getStateDescription();
             if (stateDescription != null && stateDescription.isReadOnly()) {
-                return Measurement.class;
+                return getById("Point_Measurement");
             } else {
-                return org.openhab.core.semantics.model.point.Control.class;
+                return getById("Point_Control");
             }
         } else {
             return null;
+        }
+    }
+
+    /**
+     * Determines the semantic root of a given tag type.
+     *
+     * @param type the tag type
+     * @return the semantic root of the tag type, or null if the type is not a semantic tag
+     */
+    public static @Nullable Class<? extends Tag> getSemanticRoot(Class<? extends Tag> type) {
+        if (type == null) {
+            return null;
+        }
+        if (Point.class.isAssignableFrom(type)) {
+            return Point.class;
+        } else if (Property.class.isAssignableFrom(type)) {
+            return Property.class;
+        } else if (Location.class.isAssignableFrom(type)) {
+            return Location.class;
+        } else if (Equipment.class.isAssignableFrom(type)) {
+            return Equipment.class;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Determines the name of the semantic root of a given tag type.
+     *
+     * @param type the tag type
+     * @return the name of the semantic root of the tag type, or an empty string if the type is not a semantic tag
+     */
+    public static String getSemanticRootName(Class<? extends Tag> type) {
+        Class<? extends Tag> semanticRoot = getSemanticRoot(type);
+        if (semanticRoot != null) {
+            return semanticRoot.getSimpleName();
+        } else {
+            return "";
         }
     }
 
@@ -151,7 +152,7 @@ public class SemanticTags {
      * Determines the semantic {@link Point} type of an {@link Item}.
      *
      * @param item the Item to get the Point for
-     * @return a sub-type of a {@link Point}if the Item represents an Point, otherwise null
+     * @return a sub-type of a {@link Point}if the Item represents a Point, otherwise null
      */
     @SuppressWarnings("unchecked")
     public static @Nullable Class<? extends Point> getPoint(Item item) {
@@ -199,12 +200,11 @@ public class SemanticTags {
         return null;
     }
 
-    private static void addTagSet(Class<? extends Tag> tagSet) {
-        String id = tagSet.getAnnotation(TagInfo.class).id();
-        while (id.indexOf("_") != -1) {
-            TAGS.put(id, tagSet);
-            id = id.substring(id.indexOf("_") + 1);
-        }
+    public static void addTagSet(String id, Class<? extends Tag> tagSet) {
         TAGS.put(id, tagSet);
+    }
+
+    public static void removeTagSet(String id, Class<? extends Tag> tagSet) {
+        TAGS.remove(id, tagSet);
     }
 }

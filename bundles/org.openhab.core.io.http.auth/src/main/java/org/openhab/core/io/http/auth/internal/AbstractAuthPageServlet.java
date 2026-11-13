@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,16 +14,17 @@ package org.openhab.core.io.http.auth.internal;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Serial;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.ResourceBundle.Control;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletResponse;
@@ -39,7 +40,6 @@ import org.openhab.core.auth.UsernamePasswordCredentials;
 import org.openhab.core.i18n.LocaleProvider;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.component.annotations.Reference;
-import org.osgi.service.http.HttpService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,27 +52,25 @@ import org.slf4j.LoggerFactory;
 @NonNullByDefault
 public abstract class AbstractAuthPageServlet extends HttpServlet {
 
-    protected static final long serialVersionUID = 5340598701104679840L;
+    @Serial
+    private static final long serialVersionUID = 5340598701104679840L;
 
     private static final String MESSAGES_BUNDLE_NAME = "messages";
 
     private final Logger logger = LoggerFactory.getLogger(AbstractAuthPageServlet.class);
 
-    protected HttpService httpService;
     protected UserRegistry userRegistry;
     protected AuthenticationProvider authProvider;
     protected LocaleProvider localeProvider;
     protected @Nullable Instant lastAuthenticationFailure;
     protected int authenticationFailureCount = 0;
 
-    protected Map<String, Instant> csrfTokens = new HashMap<>();
+    protected Map<String, Instant> csrfTokens = new ConcurrentHashMap<>();
 
     protected String pageTemplate;
 
-    public AbstractAuthPageServlet(BundleContext bundleContext, @Reference HttpService httpService,
-            @Reference UserRegistry userRegistry, @Reference AuthenticationProvider authProvider,
-            @Reference LocaleProvider localeProvider) {
-        this.httpService = httpService;
+    protected AbstractAuthPageServlet(BundleContext bundleContext, @Reference UserRegistry userRegistry,
+            @Reference AuthenticationProvider authProvider, @Reference LocaleProvider localeProvider) {
         this.userRegistry = userRegistry;
         this.authProvider = authProvider;
         this.localeProvider = localeProvider;
@@ -97,6 +95,7 @@ public abstract class AbstractAuthPageServlet extends HttpServlet {
                 { "{repeatPasswordPlaceholder}", "auth.placeholder.repeatpassword" },
                 { "{tokenNamePlaceholder}", "auth.placeholder.tokenname" },
                 { "{tokenScopePlaceholder}", "auth.placeholder.tokenscope" },
+                { "{cancelButtonLabel}", "auth.button.cancel" }, //
                 { "{returnButtonLabel}", "auth.button.return" } //
         }) {
             template = template.replace(replace[0], getLocalizedMessage(replace[1]));
@@ -148,8 +147,12 @@ public abstract class AbstractAuthPageServlet extends HttpServlet {
         authenticationFailureCount += 1;
         resp.setContentType("text/html;charset=UTF-8");
         logger.warn("Authentication failed from {}: {}", remoteAddr, message);
-        resp.getWriter().append(getPageBody(params, getLocalizedMessage("auth.login.fail"), false));
+        resp.getWriter().append(getPageBody(params, getFailedLoginMessage(params), false));
         resp.getWriter().close();
+    }
+
+    protected String getFailedLoginMessage(Map<String, String[]> params) {
+        return getLocalizedMessage("auth.login.fail");
     }
 
     protected String getLocalizedMessage(String messageKey) {

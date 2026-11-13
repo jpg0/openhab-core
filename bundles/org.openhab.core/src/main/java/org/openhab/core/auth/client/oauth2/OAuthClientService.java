@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,11 +17,11 @@ import java.io.IOException;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 
-import com.google.gson.JsonDeserializer;
+import com.google.gson.GsonBuilder;
 
 /**
- * This is the service factory to produce a OAuth2 service client that authenticates using OAUTH2.
- * This is a service factory pattern; the OAuthe2 service client is not shared between bundles.
+ * This is the service factory to produce an OAuth2 service client that authenticates using OAUTH2.
+ * This is a service factory pattern; the OAuth2 service client is not shared between bundles.
  *
  * <p>
  * The basic uses of this OAuthClient are as follows:
@@ -104,8 +104,8 @@ public interface OAuthClientService extends AutoCloseable {
      *            If the state is null, a random UUID will be generated and added state=<random UUID>,
      *            the state will be assigned to the requestParams in this case.
      * @return An authorization URL during the Authorization Code Grant with http request parameters filled in.
-     *         e.g Produces an URL string like this:
-     *         https://oauth.provider?response_type=code&client_id=myClientId&redirect_uri=redirectURI&scope=myScope&state=mySecureRandomState
+     *         e.g Produces a URL string like this:
+     *         {@code https://oauth.provider?response_type=code&client_id=myClientId&redirect_uri=redirectURI&scope=myScope&state=mySecureRandomState}
      * @throws OAuthException if authorizationUrl or clientId were not previously provided (null)
      */
     String getAuthorizationUrl(@Nullable String redirectURI, @Nullable String scope, @Nullable String state)
@@ -122,8 +122,12 @@ public interface OAuthClientService extends AutoCloseable {
      *            returned by the oauth provider. It is encoded in application/x-www-form-urlencoded format
      *            as stated in RFC 6749 section 4.1.2.
      *            To quote from the RFC:
+     *
+     *            <pre>{@code
      *            HTTP/1.1 302 Found
      *            Location: https://client.example.com/cb?code=SplxlOBeZQQYbYS6WxSbIA&state=xyz
+     *            }</pre>
+     *
      * @return AuthorizationCode This authorizationCode can be used in the call {#getOAuthTokenByAuthCode(String)}
      * @throws OAuthException If the state from redirectURLwithParams does not exactly match the expectedState, or
      *             exceptions arise while parsing redirectURLwithParams.
@@ -149,7 +153,7 @@ public interface OAuthClientService extends AutoCloseable {
      * @return AccessTokenResponse
      * @throws IOException IO/ network exceptions
      * @throws OAuthException Other exceptions
-     * @throws OAuthErrorException Error codes given by authorization provider, as in RFC 6749 section 5.2 Error
+     * @throws OAuthResponseException Error codes given by authorization provider, as in RFC 6749 section 5.2 Error
      *             Response
      * @see <a href="https://tools.ietf.org/html/rfc6749#section-4.1.3">Access Token Request - rfc6749 section-4.1.3</a>
      * @see <a href="https://tools.ietf.org/html/rfc6749#section-5.2">Error Response - rfc6749 section-5.2</a>
@@ -167,9 +171,9 @@ public interface OAuthClientService extends AutoCloseable {
      * @return AccessTokenResponse
      * @throws IOException IO/ network exceptions
      * @throws OAuthException Other exceptions
-     * @throws OAuthErrorException Error codes given by authorization provider, as in RFC 6749 section 5.2 Error
+     * @throws OAuthResponseException Error codes given by authorization provider, as in RFC 6749 section 5.2 Error
      *             Response
-     * @see <a href="https://tools.ietf.org/html/rfc6749#section-4.3.2">rfc6749 section-4.3.2</>
+     * @see <a href="https://tools.ietf.org/html/rfc6749#section-4.3.2">rfc6749 section-4.3.2</a>
      */
     AccessTokenResponse getAccessTokenByResourceOwnerPasswordCredentials(String username, String password,
             @Nullable String scope) throws OAuthException, IOException, OAuthResponseException;
@@ -183,7 +187,7 @@ public interface OAuthClientService extends AutoCloseable {
      *
      * @return new AccessTokenResponse from authorization server
      * @throws IOException Web/ network issues etc.
-     * @throws OAuthErrorException For OAUTH error responses.
+     * @throws OAuthResponseException For OAUTH error responses.
      * @throws OAuthException For other exceptions.
      * @see <a href="https://tools.ietf.org/html/rfc6749#section-5.2">rfc6749 section-5.2</a>
      */
@@ -198,7 +202,7 @@ public interface OAuthClientService extends AutoCloseable {
      * @param scope of the access, a space delimited separated list
      * @return AccessTokenResponse
      * @throws IOException Web/ network issues etc.
-     * @throws OAuthErrorException For OAUTH error responses.
+     * @throws OAuthResponseException For OAUTH error responses.
      * @throws OAuthException For other exceptions.
      */
     AccessTokenResponse getAccessTokenByClientCredentials(@Nullable String scope)
@@ -217,7 +221,7 @@ public interface OAuthClientService extends AutoCloseable {
      *            to prevent cross-site forgery.
      * @return AccessTokenResponse
      * @throws IOException Web/ network issues etc.
-     * @throws OAuthErrorException For OAUTH error responses.
+     * @throws OAuthResponseException For OAUTH error responses.
      * @throws OAuthException For other exceptions.
      * @see <a href="https://tools.ietf.org/html/rfc6749#section-4.2">Implicit Grant - rfc6749 section-4.2</a>
      */
@@ -249,7 +253,7 @@ public interface OAuthClientService extends AutoCloseable {
      *
      * @return AccessTokenResponse or null, depending on situations listed above.
      * @throws IOException Web/ network issues etc.
-     * @throws OAuthErrorException For OAUTH error responses.
+     * @throws OAuthResponseException For OAUTH error responses.
      * @throws OAuthException For other exceptions.
      */
     @Nullable
@@ -277,7 +281,7 @@ public interface OAuthClientService extends AutoCloseable {
     boolean isClosed();
 
     /**
-     * Adds a {@link AccessTokenRefreshListener}.
+     * Adds an {@link AccessTokenRefreshListener}.
      *
      * @param listener the listener to add
      */
@@ -291,10 +295,46 @@ public interface OAuthClientService extends AutoCloseable {
     boolean removeAccessTokenRefreshListener(AccessTokenRefreshListener listener);
 
     /**
-     * Adds a personalized deserializer to a given oauth service.
+     * Adds extra fields to include in the form data when doing the token request
      *
-     * @param deserializeClass the deserializer class that should be used to deserialize AccessTokenResponse
-     * @return the oauth service
+     * @param key The name of the key to add to the auth form
+     * @param value The value of the new auth form param
      */
-    <T extends JsonDeserializer<?>> OAuthClientService withDeserializer(Class<T> deserializerClass);
+    void addExtraAuthField(String key, String value);
+
+    /**
+     * Adds a custom GsonBuilder to be used with the OAuth service instance.
+     *
+     * @param gsonBuilder the custom GsonBuilder instance
+     * @return the OAuth service
+     */
+    OAuthClientService withGsonBuilder(GsonBuilder gsonBuilder);
+
+    /**
+     * Begins the RFC-8628 Device Code Grant Flow authentication process.
+     * Specifically it executes the following steps as described in the article in the link below:
+     *
+     * <ul>
+     * <li>Step 1: create a request and POST it to the 'device authorize url'</li>
+     * <li>Step 2: process the response and create a {@link DeviceCodeResponseDTO}</li>
+     * <li>Step 3: the user goes off to authenticate themselves at the 'user authentication url'</li>
+     * <li>Step 4: repeatedly create a request and POST it to the 'token url'</li>
+     * <li>Step 5: repeatedly read the response and eventually create a {@link AccessTokenResponse}</li>
+     * </ul>
+     *
+     * @see <a href="https://datatracker.ietf.org/doc/html/rfc8628">RFC-8628</a>
+     *
+     * @return either null or a {@link DeviceCodeResponseDTO} containing the verification uri's where
+     *         users are expected authenticate themselves
+     * @throws OAuthException
+     * @throws IOException
+     * @throws OAuthResponseException
+     */
+    @Nullable
+    DeviceCodeResponseDTO getDeviceCodeResponse() throws OAuthException;
+
+    /**
+     * Notify the service listeners about the given {@link AccessTokenResponse}.
+     */
+    void notifyAccessTokenResponse(AccessTokenResponse accessTokenResponse);
 }

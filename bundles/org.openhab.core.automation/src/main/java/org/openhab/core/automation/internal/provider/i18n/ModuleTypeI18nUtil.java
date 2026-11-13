@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,8 +25,10 @@ import org.openhab.core.i18n.TranslationProvider;
 import org.osgi.framework.Bundle;
 
 /**
- * This class is used as utility for resolving the localized {@link ModuleTypes}s. It automatically infers the key if
- * the default text is not a constant with the assistance of {@link TranslationProvider}.
+ * This class is used as utility for resolving the localized {@link org.openhab.core.automation.type.ModuleType
+ * ModuleTypes}s.
+ * It automatically infers the key if the default text is not a constant with the assistance of
+ * {@link TranslationProvider}.
  *
  * @author Ana Dimova - Initial contribution
  * @author Yordan Mihaylov - updates related to api changes
@@ -116,10 +118,10 @@ public class ModuleTypeI18nUtil {
     }
 
     private String inferInputKey(String moduleTypeUID, String inputName, String lastSegment) {
-        return MODULE_TYPE + ".input." + moduleTypeUID + ".name." + inputName + "." + lastSegment;
+        return MODULE_TYPE + "." + moduleTypeUID + ".input." + inputName + "." + lastSegment;
     }
 
     private String inferOutputKey(String moduleTypeUID, String outputName, String lastSegment) {
-        return MODULE_TYPE + ".output." + moduleTypeUID + ".name." + outputName + "." + lastSegment;
+        return MODULE_TYPE + "." + moduleTypeUID + ".output." + outputName + "." + lastSegment;
     }
 }

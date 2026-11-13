@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -16,18 +16,22 @@ import static org.openhab.core.auth.oauth2client.internal.Keyword.*;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.security.GeneralSecurityException;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.jetty.util.Fields;
 import org.eclipse.jetty.util.UrlEncoded;
 import org.openhab.core.auth.client.oauth2.AccessTokenRefreshListener;
 import org.openhab.core.auth.client.oauth2.AccessTokenResponse;
+import org.openhab.core.auth.client.oauth2.DeviceCodeResponseDTO;
 import org.openhab.core.auth.client.oauth2.OAuthClientService;
 import org.openhab.core.auth.client.oauth2.OAuthException;
 import org.openhab.core.auth.client.oauth2.OAuthResponseException;
@@ -35,7 +39,7 @@ import org.openhab.core.io.net.http.HttpClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.gson.JsonDeserializer;
+import com.google.gson.GsonBuilder;
 
 /**
  * Implementation of OAuthClientService.
@@ -62,28 +66,35 @@ public class OAuthClientServiceImpl implements OAuthClientService {
 
     private final transient Logger logger = LoggerFactory.getLogger(OAuthClientServiceImpl.class);
 
+    private final Object refreshTokenProcessLock = new Object();
+
     private @NonNullByDefault({}) OAuthStoreHandler storeHandler;
 
     // Constructor params - static
     private final String handle;
     private final int tokenExpiresInSeconds;
     private final HttpClientFactory httpClientFactory;
+    private final @Nullable GsonBuilder gsonBuilder;
     private final List<AccessTokenRefreshListener> accessTokenRefreshListeners = new ArrayList<>();
 
     private PersistedParams persistedParams = new PersistedParams();
 
+    private @Nullable Fields extraAuthFields = null;
+    private @Nullable OAuthConnectorRFC8628 oAuthConnectorRFC8628 = null;
+
     private volatile boolean closed = false;
 
-    private OAuthClientServiceImpl(String handle, int tokenExpiresInSeconds, HttpClientFactory httpClientFactory) {
+    private OAuthClientServiceImpl(String handle, int tokenExpiresInSeconds, HttpClientFactory httpClientFactory,
+            @Nullable GsonBuilder gsonBuilder) {
         this.handle = handle;
         this.tokenExpiresInSeconds = tokenExpiresInSeconds;
         this.httpClientFactory = httpClientFactory;
+        this.gsonBuilder = gsonBuilder;
     }
 
     /**
      * It should only be used internally, thus the access is package level
      *
-     * @param bundleContext Bundle Context
      * @param handle The handle produced previously from
      *            {@link org.openhab.core.auth.client.oauth2.OAuthFactory#createOAuthClientService}
      * @param storeHandler Storage handler
@@ -103,7 +114,7 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             return null;
         }
         OAuthClientServiceImpl clientService = new OAuthClientServiceImpl(handle, tokenExpiresInSeconds,
-                httpClientFactory);
+                httpClientFactory, null);
         clientService.storeHandler = storeHandler;
         clientService.persistedParams = persistedParamsFromStore;
 
@@ -113,18 +124,17 @@ public class OAuthClientServiceImpl implements OAuthClientService {
     /**
      * It should only be used internally, thus the access is package level
      *
-     * @param bundleContext Bundle Context*
      * @param handle The handle produced previously from
      *            {@link org.openhab.core.auth.client.oauth2.OAuthFactory#createOAuthClientService}*
      * @param storeHandler Storage handler
      * @param httpClientFactory Http client factory
-     * @param persistedParams These parameters are static with respect to the oauth provider and thus can be persisted.
+     * @param params These parameters are static with respect to the OAuth provider and thus can be persisted.
      * @return OAuthClientServiceImpl an instance
      */
     static OAuthClientServiceImpl createInstance(String handle, OAuthStoreHandler storeHandler,
             HttpClientFactory httpClientFactory, PersistedParams params) {
         OAuthClientServiceImpl clientService = new OAuthClientServiceImpl(handle, params.tokenExpiresInSeconds,
-                httpClientFactory);
+                httpClientFactory, null);
 
         clientService.storeHandler = storeHandler;
         clientService.persistedParams = params;
@@ -153,7 +163,9 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             throw new OAuthException("Missing client ID");
         }
 
-        OAuthConnector connector = new OAuthConnector(httpClientFactory, persistedParams.deserializerClassName);
+        GsonBuilder gsonBuilder = this.gsonBuilder;
+        OAuthConnector connector = gsonBuilder == null ? new OAuthConnector(httpClientFactory, extraAuthFields)
+                : new OAuthConnector(httpClientFactory, extraAuthFields, gsonBuilder);
         return connector.getAuthorizationUrl(authorizationUrl, clientId, redirectURI, persistedParams.state,
                 scopeToUse);
     }
@@ -162,7 +174,7 @@ public class OAuthClientServiceImpl implements OAuthClientService {
     public String extractAuthCodeFromAuthResponse(String redirectURLwithParams) throws OAuthException {
         // parse the redirectURL
         try {
-            URL redirectURLObject = new URL(redirectURLwithParams);
+            URL redirectURLObject = (new URI(redirectURLwithParams)).toURL();
             UrlEncoded urlEncoded = new UrlEncoded(redirectURLObject.getQuery());
 
             String stateFromRedirectURL = urlEncoded.getValue(STATE, 0); // may contain multiple...
@@ -180,7 +192,7 @@ public class OAuthClientServiceImpl implements OAuthClientService {
                 throw new OAuthException(String.format("state from redirectURL is incorrect.  Expected: %s Found: %s",
                         persistedParams.state, stateFromRedirectURL));
             }
-        } catch (MalformedURLException e) {
+        } catch (IllegalArgumentException | MalformedURLException | URISyntaxException e) {
             throw new OAuthException("Redirect URL is malformed", e);
         }
     }
@@ -207,7 +219,9 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             throw new OAuthException("Missing client ID");
         }
 
-        OAuthConnector connector = new OAuthConnector(httpClientFactory, persistedParams.deserializerClassName);
+        GsonBuilder gsonBuilder = this.gsonBuilder;
+        OAuthConnector connector = gsonBuilder == null ? new OAuthConnector(httpClientFactory, extraAuthFields)
+                : new OAuthConnector(httpClientFactory, extraAuthFields, gsonBuilder);
         AccessTokenResponse accessTokenResponse = connector.grantTypeAuthorizationCode(tokenUrl, authorizationCode,
                 clientId, persistedParams.clientSecret, redirectURI,
                 Boolean.TRUE.equals(persistedParams.supportsBasicAuth));
@@ -239,7 +253,9 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             throw new OAuthException("Missing token url");
         }
 
-        OAuthConnector connector = new OAuthConnector(httpClientFactory, persistedParams.deserializerClassName);
+        GsonBuilder gsonBuilder = this.gsonBuilder;
+        OAuthConnector connector = gsonBuilder == null ? new OAuthConnector(httpClientFactory, extraAuthFields)
+                : new OAuthConnector(httpClientFactory, extraAuthFields, gsonBuilder);
         AccessTokenResponse accessTokenResponse = connector.grantTypePassword(tokenUrl, username, password,
                 persistedParams.clientId, persistedParams.clientSecret, scope,
                 Boolean.TRUE.equals(persistedParams.supportsBasicAuth));
@@ -264,7 +280,9 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             throw new OAuthException("Missing client ID");
         }
 
-        OAuthConnector connector = new OAuthConnector(httpClientFactory, persistedParams.deserializerClassName);
+        GsonBuilder gsonBuilder = this.gsonBuilder;
+        OAuthConnector connector = gsonBuilder == null ? new OAuthConnector(httpClientFactory, extraAuthFields)
+                : new OAuthConnector(httpClientFactory, extraAuthFields, gsonBuilder);
         // depending on usage, cannot guarantee every parameter is not null at the beginning
         AccessTokenResponse accessTokenResponse = connector.grantTypeClientCredentials(tokenUrl, clientId,
                 persistedParams.clientSecret, scope, Boolean.TRUE.equals(persistedParams.supportsBasicAuth));
@@ -279,38 +297,63 @@ public class OAuthClientServiceImpl implements OAuthClientService {
         if (isClosed()) {
             throw new OAuthException(EXCEPTION_MESSAGE_CLOSED);
         }
+        return refreshTokenInner(true);
+    }
 
-        AccessTokenResponse lastAccessToken;
-        try {
-            lastAccessToken = storeHandler.loadAccessTokenResponse(handle);
-        } catch (GeneralSecurityException e) {
-            throw new OAuthException("Cannot decrypt access token from store", e);
-        }
-        if (lastAccessToken == null) {
-            throw new OAuthException(
-                    "Cannot refresh token because last access token is not available from handle: " + handle);
-        }
-        if (lastAccessToken.getRefreshToken() == null) {
-            throw new OAuthException("Cannot refresh token because last access token did not have a refresh token");
-        }
-        String tokenUrl = persistedParams.tokenUrl;
-        if (tokenUrl == null) {
-            throw new OAuthException("tokenUrl is required but null");
+    /**
+     * Inner private method for refreshToken. If 'forceRefresh' is false then only fetch a new token if
+     * the prior token is not expired, otherwise return the prior token. If 'forceRefresh' is true
+     * then always fetch a new token.
+     *
+     * @param forceRefresh determines whether to force a refresh or check for token expiry
+     * @return either the prior AccessTokenResponse or a new one
+     */
+    private AccessTokenResponse refreshTokenInner(boolean forceRefresh)
+            throws OAuthException, IOException, OAuthResponseException {
+        AccessTokenResponse accessTokenResponse = null;
+
+        synchronized (refreshTokenProcessLock) {
+            AccessTokenResponse lastAccessToken;
+            try {
+                lastAccessToken = storeHandler.loadAccessTokenResponse(handle);
+            } catch (GeneralSecurityException e) {
+                throw new OAuthException("Cannot decrypt access token from store", e);
+            }
+            if (lastAccessToken == null) {
+                throw new OAuthException(
+                        "Cannot refresh token because last access token is not available from handle: " + handle);
+            }
+            if (lastAccessToken.getRefreshToken() == null) {
+                throw new OAuthException("Cannot refresh token because last access token did not have a refresh token");
+            }
+            String tokenUrl = persistedParams.tokenUrl;
+            if (tokenUrl == null) {
+                throw new OAuthException("tokenUrl is required but null");
+            }
+
+            if (forceRefresh || lastAccessToken.isExpired(Instant.now(), tokenExpiresInSeconds)) {
+                GsonBuilder gsonBuilder = this.gsonBuilder;
+                OAuthConnector connector = gsonBuilder == null ? new OAuthConnector(httpClientFactory, extraAuthFields)
+                        : new OAuthConnector(httpClientFactory, extraAuthFields, gsonBuilder);
+                accessTokenResponse = connector.grantTypeRefreshToken(tokenUrl, lastAccessToken.getRefreshToken(),
+                        persistedParams.clientId, persistedParams.clientSecret, persistedParams.scope,
+                        Boolean.TRUE.equals(persistedParams.supportsBasicAuth));
+
+                // The service may not return the refresh token so use the last refresh token otherwise it's not stored.
+                String refreshToken = accessTokenResponse.getRefreshToken();
+                if (refreshToken == null || refreshToken.isBlank()) {
+                    accessTokenResponse.setRefreshToken(lastAccessToken.getRefreshToken());
+                }
+
+                // store it
+                storeHandler.saveAccessTokenResponse(handle, accessTokenResponse);
+            } else {
+                // No need to refresh the token, just return the last one
+                return lastAccessToken;
+            }
         }
 
-        OAuthConnector connector = new OAuthConnector(httpClientFactory, persistedParams.deserializerClassName);
-        AccessTokenResponse accessTokenResponse = connector.grantTypeRefreshToken(tokenUrl,
-                lastAccessToken.getRefreshToken(), persistedParams.clientId, persistedParams.clientSecret,
-                persistedParams.scope, Boolean.TRUE.equals(persistedParams.supportsBasicAuth));
-
-        // The service may not return the refresh token so use the last refresh token otherwise it's not stored.
-        String refreshToken = accessTokenResponse.getRefreshToken();
-        if (refreshToken == null || refreshToken.isBlank()) {
-            accessTokenResponse.setRefreshToken(lastAccessToken.getRefreshToken());
-        }
-        // store it
-        storeHandler.saveAccessTokenResponse(handle, accessTokenResponse);
-        accessTokenRefreshListeners.forEach(l -> l.onAccessTokenResponse(accessTokenResponse));
+        notifyAccessTokenResponse(accessTokenResponse);
         return accessTokenResponse;
     }
 
@@ -331,9 +374,9 @@ public class OAuthClientServiceImpl implements OAuthClientService {
             return null;
         }
 
-        if (lastAccessToken.isExpired(LocalDateTime.now(), tokenExpiresInSeconds)
+        if (lastAccessToken.isExpired(Instant.now(), tokenExpiresInSeconds)
                 && lastAccessToken.getRefreshToken() != null) {
-            return refreshToken();
+            return refreshTokenInner(false);
         }
         return lastAccessToken;
     }
@@ -376,8 +419,16 @@ public class OAuthClientServiceImpl implements OAuthClientService {
     public void close() {
         closed = true;
         storeHandler = null;
-
         logger.debug("closing oauth client, handle: {}", handle);
+        closeOAuthConnectorRFC8628();
+    }
+
+    private synchronized void closeOAuthConnectorRFC8628() {
+        OAuthConnectorRFC8628 connector = this.oAuthConnectorRFC8628;
+        if (connector != null) {
+            connector.close();
+        }
+        this.oAuthConnectorRFC8628 = null;
     }
 
     @Override
@@ -399,16 +450,62 @@ public class OAuthClientServiceImpl implements OAuthClientService {
         return UUID.randomUUID().toString();
     }
 
+    /**
+     * Adds extra fields to include in the form data when doing the token request
+     *
+     * @param key The name of the key to add to the auth form
+     * @param value The value of the new auth form param
+     */
     @Override
-    public <T extends JsonDeserializer<?>> OAuthClientService withDeserializer(Class<T> deserializerClass) {
+    public void addExtraAuthField(String key, String value) {
+        Fields lcExtraAuthFields = extraAuthFields;
+        if (lcExtraAuthFields == null) {
+            lcExtraAuthFields = new Fields();
+            extraAuthFields = lcExtraAuthFields;
+        }
+
+        lcExtraAuthFields.add(key, value);
+    }
+
+    @Override
+    public OAuthClientService withGsonBuilder(GsonBuilder gsonBuilder) {
         OAuthClientServiceImpl clientService = new OAuthClientServiceImpl(handle, persistedParams.tokenExpiresInSeconds,
-                httpClientFactory);
-        persistedParams.deserializerClassName = deserializerClass.getName();
+                httpClientFactory, gsonBuilder);
         clientService.persistedParams = persistedParams;
         clientService.storeHandler = storeHandler;
 
         storeHandler.savePersistedParams(handle, clientService.persistedParams);
 
         return clientService;
+    }
+
+    @Override
+    public @Nullable DeviceCodeResponseDTO getDeviceCodeResponse() throws OAuthException {
+        closeOAuthConnectorRFC8628();
+
+        if (persistedParams.tokenUrl == null) {
+            throw new OAuthException("Missing access token request url");
+        }
+        if (persistedParams.authorizationUrl == null) {
+            throw new OAuthException("Missing device code request url");
+        }
+        if (persistedParams.clientId == null) {
+            throw new OAuthException("Missing client id");
+        }
+        if (persistedParams.scope == null) {
+            throw new OAuthException("Missing scope");
+        }
+
+        OAuthConnectorRFC8628 connector = new OAuthConnectorRFC8628(this, handle, storeHandler, httpClientFactory,
+                gsonBuilder, persistedParams.tokenUrl, persistedParams.authorizationUrl, persistedParams.clientId,
+                persistedParams.scope);
+
+        oAuthConnectorRFC8628 = connector;
+        return connector.getDeviceCodeResponse();
+    }
+
+    @Override
+    public void notifyAccessTokenResponse(AccessTokenResponse atr) {
+        accessTokenRefreshListeners.forEach(l -> l.onAccessTokenResponse(atr));
     }
 }

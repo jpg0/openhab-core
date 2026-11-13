@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -60,8 +60,8 @@ public class ActionTypeDTOMapper extends ModuleTypeDTOMapper {
         }
         final List<ActionTypeDTO> dtos = new ArrayList<>(types.size());
         for (final ActionType type : types) {
-            if (type instanceof CompositeActionType) {
-                dtos.add(map((CompositeActionType) type));
+            if (type instanceof CompositeActionType actionType) {
+                dtos.add(map(actionType));
             } else {
                 dtos.add(map(type));
             }

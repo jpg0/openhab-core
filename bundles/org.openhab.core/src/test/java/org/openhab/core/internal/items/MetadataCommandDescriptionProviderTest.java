@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,10 +13,8 @@
 package org.openhab.core.internal.items;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -30,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.core.items.ManagedMetadataProvider;
 import org.openhab.core.items.Metadata;
 import org.openhab.core.items.MetadataKey;
+import org.openhab.core.service.ReadyService;
 import org.openhab.core.types.CommandDescription;
 import org.openhab.core.types.CommandOption;
 import org.osgi.framework.BundleContext;
@@ -52,6 +51,7 @@ public class MetadataCommandDescriptionProviderTest {
     private @Mock @NonNullByDefault({}) ManagedMetadataProvider managedProviderMock;
 
     private @Mock @NonNullByDefault({}) MetadataRegistryImpl metadataRegistryMock;
+    private @Mock @NonNullByDefault({}) ReadyService readyServiceMock;
     private @NonNullByDefault({}) MetadataCommandDescriptionProvider commandDescriptionProvider;
 
     private @NonNullByDefault({}) ServiceListener providerTracker;
@@ -61,7 +61,7 @@ public class MetadataCommandDescriptionProviderTest {
     public void setup() throws Exception {
         when(bundleContextMock.getService(same(managedProviderRefMock))).thenReturn(managedProviderMock);
 
-        metadataRegistryMock = new MetadataRegistryImpl();
+        metadataRegistryMock = new MetadataRegistryImpl(readyServiceMock);
         metadataRegistryMock.setManagedProvider(managedProviderMock);
         metadataRegistryMock.activate(bundleContextMock);
         metadataRegistryMock.waitForCompletedAsyncActivationTasks();
@@ -71,7 +71,7 @@ public class MetadataCommandDescriptionProviderTest {
         providerTracker = captor.getValue();
         providerTracker.serviceChanged(new ServiceEvent(ServiceEvent.REGISTERED, managedProviderRefMock));
 
-        commandDescriptionProvider = new MetadataCommandDescriptionProvider(metadataRegistryMock, new HashMap<>());
+        commandDescriptionProvider = new MetadataCommandDescriptionProvider(metadataRegistryMock, Map.of());
     }
 
     @Test
@@ -83,7 +83,6 @@ public class MetadataCommandDescriptionProviderTest {
     @Test
     public void testEmptyConfig() throws Exception {
         MetadataKey metadataKey = new MetadataKey("commandDescription", ITEM_NAME);
-        // Map<String, Object> metadataConfig = new HashMap<>();
         Metadata metadata = new Metadata(metadataKey, "N/A", null);
 
         metadataRegistryMock.added(managedProviderMock, metadata);
@@ -94,15 +93,15 @@ public class MetadataCommandDescriptionProviderTest {
     @Test
     public void testOptions() throws Exception {
         MetadataKey metadataKey = new MetadataKey("commandDescription", ITEM_NAME);
-        Map<String, Object> metadataConfig = new HashMap<>();
-        metadataConfig.put("options", "OPTION1,OPTION2 , 3 =Option 3  ");
+        Map<String, Object> metadataConfig = Map.of("options",
+                "OPTION1,OPTION2 , 3 =Option 3  , \" 4=4 \"=\"Option 4 \"");
         Metadata metadata = new Metadata(metadataKey, "N/A", metadataConfig);
 
         metadataRegistryMock.added(managedProviderMock, metadata);
         CommandDescription commandDescription = commandDescriptionProvider.getCommandDescription(ITEM_NAME, null);
         assertNotNull(commandDescription);
         assertNotNull(commandDescription.getCommandOptions());
-        assertEquals(3, commandDescription.getCommandOptions().size());
+        assertEquals(4, commandDescription.getCommandOptions().size());
 
         Iterator<CommandOption> it = commandDescription.getCommandOptions().iterator();
         CommandOption commandOption = it.next();
@@ -114,5 +113,8 @@ public class MetadataCommandDescriptionProviderTest {
         commandOption = it.next();
         assertEquals("3", commandOption.getCommand());
         assertEquals("Option 3", commandOption.getLabel());
+        commandOption = it.next();
+        assertEquals("4=4", commandOption.getCommand());
+        assertEquals("Option 4", commandOption.getLabel());
     }
 }

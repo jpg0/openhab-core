@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,22 +12,24 @@
  */
 package org.openhab.core.automation.integration.test;
 
-import static java.util.stream.Collectors.*;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -38,6 +40,7 @@ import org.openhab.core.automation.Action;
 import org.openhab.core.automation.Condition;
 import org.openhab.core.automation.ManagedRuleProvider;
 import org.openhab.core.automation.Rule;
+import org.openhab.core.automation.Rule.TemplateState;
 import org.openhab.core.automation.RuleManager;
 import org.openhab.core.automation.RuleProvider;
 import org.openhab.core.automation.RuleRegistry;
@@ -49,6 +52,7 @@ import org.openhab.core.automation.events.RuleRemovedEvent;
 import org.openhab.core.automation.events.RuleStatusInfoEvent;
 import org.openhab.core.automation.events.RuleUpdatedEvent;
 import org.openhab.core.automation.internal.RuleEngineImpl;
+import org.openhab.core.automation.internal.module.factory.CoreModuleHandlerFactory;
 import org.openhab.core.automation.template.RuleTemplate;
 import org.openhab.core.automation.template.RuleTemplateProvider;
 import org.openhab.core.automation.template.Template;
@@ -65,9 +69,9 @@ import org.openhab.core.config.core.ConfigDescriptionParameter;
 import org.openhab.core.config.core.ConfigDescriptionParameterBuilder;
 import org.openhab.core.config.core.Configuration;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.i18n.TimeZoneProvider;
 import org.openhab.core.items.Item;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemProvider;
@@ -77,8 +81,10 @@ import org.openhab.core.items.events.ItemEventFactory;
 import org.openhab.core.library.items.SwitchItem;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.service.ReadyMarker;
+import org.openhab.core.service.StartLevelService;
 import org.openhab.core.storage.StorageService;
 import org.openhab.core.test.java.JavaOSGiTest;
+import org.openhab.core.thing.ThingRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -93,9 +99,11 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
 
     private final Logger logger = LoggerFactory.getLogger(AutomationIntegrationTest.class);
     private @Nullable EventPublisher eventPublisher;
+    private @Nullable ThingRegistry thingRegistry;
     private @Nullable ItemRegistry itemRegistry;
-    private @Nullable RuleRegistry ruleRegistry;
-    private @Nullable RuleManager ruleEngine;
+    private @NonNullByDefault({}) StartLevelService startLevelService;
+    private @NonNullByDefault({}) RuleRegistry ruleRegistry;
+    private @NonNullByDefault({}) RuleManager ruleEngine;
     private @Nullable ManagedRuleProvider managedRuleProvider;
     private @Nullable ModuleTypeRegistry moduleTypeRegistry;
     private @Nullable TemplateRegistry<RuleTemplate> templateRegistry;
@@ -107,7 +115,18 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
     public void before() {
         logger.info("@Before.begin");
 
-        getService(ItemRegistry.class);
+        eventPublisher = getService(EventPublisher.class);
+        thingRegistry = getService(ThingRegistry.class);
+        itemRegistry = getService(ItemRegistry.class);
+        startLevelService = mock(StartLevelService.class);
+        when(startLevelService.getStartLevel()).thenReturn(100);
+        registerService(startLevelService, StartLevelService.class.getName());
+
+        CoreModuleHandlerFactory coreModuleHandlerFactory = new CoreModuleHandlerFactory(getBundleContext(),
+                Objects.requireNonNull(eventPublisher), Objects.requireNonNull(thingRegistry),
+                Objects.requireNonNull(itemRegistry), mock(TimeZoneProvider.class), startLevelService);
+        mock(CoreModuleHandlerFactory.class);
+        registerService(coreModuleHandlerFactory);
 
         ItemProvider itemProvider = new ItemProvider() {
             @Override
@@ -145,12 +164,16 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
         };
 
+        int expectedItemCount = itemProvider.getAll().size();
         registerService(itemProvider);
         registerVolatileStorageService();
 
+        waitForAssert(() -> {
+            ItemRegistry registry = getService(ItemRegistry.class);
+            assertThat(registry.getAll(), hasSize(greaterThanOrEqualTo(expectedItemCount)));
+        }, 5000, 100);
+
         StorageService storageService = getService(StorageService.class);
-        eventPublisher = getService(EventPublisher.class);
-        itemRegistry = getService(ItemRegistry.class);
         ruleRegistry = getService(RuleRegistry.class);
         ruleEngine = getService(RuleManager.class);
         managedRuleProvider = getService(ManagedRuleProvider.class);
@@ -194,12 +217,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         EventSubscriber ruleEventHandler = new EventSubscriber() {
             @Override
             public Set<String> getSubscribedEventTypes() {
-                return Stream.of(RuleAddedEvent.TYPE, RuleRemovedEvent.TYPE, RuleUpdatedEvent.TYPE).collect(toSet());
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
+                return Set.of(RuleAddedEvent.TYPE, RuleRemovedEvent.TYPE, RuleUpdatedEvent.TYPE);
             }
 
             @Override
@@ -260,12 +278,11 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
     public void assertThatARuleWithConnectionsIsExecuted() {
         logger.info("assert that a rule with connections is executed");
         Map<String, Object> params = new HashMap<>();
-        params.put("eventSource", "myMotionItem3");
-        params.put("eventTopic", "openhab/*");
-        params.put("eventTypes", "ItemStateEvent");
+        params.put("topic", "openhab/items/myMotionItem3/*");
+        params.put("types", "ItemStateEvent");
         Configuration triggerConfig = new Configuration(params);
         params = new HashMap<>();
-        params.put("eventTopic", "openhab/*");
+        params.put("topic", "openhab/**");
         Configuration condition1Config = new Configuration(params);
         params = new HashMap<>();
         params.put("itemName", "myLampItem3");
@@ -299,11 +316,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
 
             @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
-
-            @Override
             public void receive(Event e) {
                 logger.info("RuleEvent: {}", e.getTopic());
                 ruleEvents.add((RuleStatusInfoEvent) e);
@@ -332,7 +344,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         params.put("eventTypes", "ItemStateEvent");
         Configuration triggerConfig = new Configuration(params);
         params = new HashMap<>();
-        params.put("topic", "openhab/*");
+        params.put("topic", "openhab/**");
         Configuration condition1Config = new Configuration(params);
         params = new HashMap<>();
         params.put("itemName", "myLampItem3");
@@ -396,11 +408,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
 
             @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
-
-            @Override
             public void receive(Event e) {
                 logger.info("Event: {}", e.getTopic());
                 if (e.getTopic().contains("myLampItem3")) {
@@ -419,8 +426,8 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
     }
 
     @Test
-    public void assertThatRuleNowMethodExecutesActionsOfTheRule() throws ItemNotFoundException {
-        Configuration triggerConfig = new Configuration(Map.of("eventTopic", "runNowEventTopic/*"));
+    public void assertThatRunNowMethodExecutesActionsOfTheRule() throws ItemNotFoundException {
+        Configuration triggerConfig = new Configuration(Map.of("topic", "runNowEventTopic/*"));
         Map<String, Object> params = new HashMap<>();
         params.put("itemName", "myLampItem3");
         params.put("command", "TOGGLE");
@@ -461,11 +468,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
 
             @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
-
-            @Override
             public void receive(Event e) {
                 logger.info("Event: {}", e.getTopic());
                 if (e.getTopic().contains("myLampItem3")) {
@@ -487,8 +489,71 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
     }
 
     @Test
+    public void assertThatRunAsyncMethodExecutesActionsOfTheRule() throws ItemNotFoundException {
+        Configuration triggerConfig = new Configuration(Map.of("topic", "runNowEventTopic/*"));
+        Map<String, Object> params = new HashMap<>();
+        params.put("itemName", "myLampItem3");
+        params.put("command", "TOGGLE");
+        Configuration actionConfig = new Configuration(params);
+        params = new HashMap<>();
+        params.put("itemName", "myLampItem3");
+        params.put("command", "ON");
+        Configuration actionConfig2 = new Configuration(params);
+        params = new HashMap<>();
+        params.put("itemName", "myLampItem3");
+        params.put("command", "OFFF");
+        Configuration actionConfig3 = new Configuration(params);
+        List<Trigger> triggers = List.of(ModuleBuilder.createTrigger().withId("GenericEventTriggerId")
+                .withTypeUID("core.GenericEventTrigger").withConfiguration(triggerConfig).build());
+        List<Action> actions = List.of(
+                ModuleBuilder.createAction().withId("ItemPostCommandActionId").withTypeUID("core.ItemCommandAction")
+                        .withConfiguration(actionConfig).build(),
+                ModuleBuilder.createAction().withId("ItemPostCommandActionId2").withTypeUID("core.ItemCommandAction")
+                        .withConfiguration(actionConfig2).build(),
+                ModuleBuilder.createAction().withId("ItemPostCommandActionId3").withTypeUID("core.ItemCommandAction")
+                        .withConfiguration(actionConfig3).build());
+
+        Rule rule = RuleBuilder.create("runNowRule" + new Random().nextInt()).withTriggers(triggers)
+                .withActions(actions).build();
+        logger.info("Rule created: {}", rule.getUID());
+
+        ruleRegistry.add(rule);
+
+        // TEST RULE
+        waitForAssert(() -> {
+            assertThat(ruleEngine.getStatusInfo(rule.getUID()).getStatus(), is(RuleStatus.IDLE));
+        }, 3000, 100);
+
+        EventSubscriber itemEventHandler = new EventSubscriber() {
+            @Override
+            public Set<String> getSubscribedEventTypes() {
+                return Set.of(ItemCommandEvent.TYPE);
+            }
+
+            @Override
+            public void receive(Event e) {
+                logger.info("Event: {}", e.getTopic());
+                if (e.getTopic().contains("myLampItem3")) {
+                    itemEvent = e;
+                }
+            }
+        };
+        registerService(itemEventHandler);
+
+        ruleEngine.runAsync(rule.getUID());
+        waitForAssert(() -> {
+            assertThat(itemEvent, is(notNullValue()));
+        }, 3000, 100);
+        waitForAssert(() -> {
+            assertThat(((ItemCommandEvent) itemEvent).getItemCommand(), is(OnOffType.ON));
+        }, 3000, 100);
+
+        ruleRegistry.remove(rule.getUID());
+    }
+
+    @Test
     public void assertThatRuleCanBeUpdated() throws ItemNotFoundException {
-        Configuration triggerConfig = new Configuration(Map.of("eventTopic", "runNowEventTopic/*"));
+        Configuration triggerConfig = new Configuration(Map.of("topic", "runNowEventTopic/*"));
         Map<String, Object> params = new HashMap<>();
         params.put("itemName", "myLampItem3");
         params.put("command", "ON");
@@ -513,11 +578,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             @Override
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
             }
 
             @Override
@@ -597,11 +657,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
 
             @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
-            }
-
-            @Override
             public void receive(Event e) {
                 logger.info("Event: {}", e.getTopic());
                 if (e.getTopic().contains("myLampItem4")) {
@@ -625,9 +680,8 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         logger.info("assert a rule added by api is executed as expected");
         // Creation of RULE
         Map<String, Object> params = new HashMap<>();
-        params.put("eventSource", "myMotionItem2");
-        params.put("eventTopic", "openhab/*");
-        params.put("eventTypes", "ItemStateEvent");
+        params.put("topic", "openhab/items/myMotionItem2/*");
+        params.put("types", "ItemStateEvent");
         Configuration triggerConfig = new Configuration(params);
         params = new HashMap<>();
         params.put("itemName", "myLampItem2");
@@ -686,7 +740,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         TemplateRegistry<?> templateRegistry = getService(TemplateRegistry.class);
         assertThat(templateRegistry, is(notNullValue()));
         waitForAssert(() -> {
-            Template template = null;
+            Template template;
             template = templateRegistry.get("SimpleTestTemplate");
             assertThat(template, is(notNullValue()));
             assertThat(template.getTags(), is(notNullValue()));
@@ -699,7 +753,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         configs.put("updateItem", "templ_LampItem");
         configs.put("updateCommand", "ON");
         Rule templateRule = RuleBuilder.create("templateRuleUID").withTemplateUID("SimpleTestTemplate")
-                .withConfiguration(new Configuration(configs)).build();
+                .withTemplateState(TemplateState.PENDING).withConfiguration(new Configuration(configs)).build();
         ruleRegistry.add(templateRule);
         assertThat(ruleRegistry.get(templateRule.getUID()), is(notNullValue()));
 
@@ -707,11 +761,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             @Override
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
             }
 
             @Override
@@ -739,7 +788,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         TemplateRegistry<?> templateRegistry = getService(TemplateRegistry.class);
         assertThat(templateRegistry, is(notNullValue()));
         waitForAssert(() -> {
-            Template template = null;
+            Template template;
             template = templateRegistry.get("TestTemplateWithCompositeModules");
             assertThat(template, is(notNullValue()));
             assertThat(template.getTags(), is(notNullValue()));
@@ -753,7 +802,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         configs.put("updateCommand", "ON");
         Configuration config = new Configuration(configs);
         Rule templateRule = RuleBuilder.create("xtemplateRuleUID").withTemplateUID("TestTemplateWithCompositeModules")
-                .withConfiguration(config).build();
+                .withTemplateState(TemplateState.PENDING).withConfiguration(config).build();
 
         ruleRegistry.add(templateRule);
         assertThat(ruleRegistry.get(templateRule.getUID()), is(notNullValue()));
@@ -766,11 +815,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             @Override
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
             }
 
             @Override
@@ -799,10 +843,10 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         TemplateRegistry<RuleTemplate> templateRegistry = getService(TemplateRegistry.class);
         ModuleTypeRegistry moduleTypeRegistry = getService(ModuleTypeRegistry.class);
         String templateUID = "testTemplate1";
-        Set<String> tags = Stream.of("test", "testTag").collect(toSet());
-        List<Trigger> templateTriggers = Collections.emptyList();
-        List<Condition> templateConditions = Collections.emptyList();
-        List<Action> templateActions = Collections.emptyList();
+        Set<String> tags = Set.of("test", "testTag");
+        List<Trigger> templateTriggers = List.of();
+        List<Condition> templateConditions = List.of();
+        List<Action> templateActions = List.of();
         List<ConfigDescriptionParameter> templateConfigDescriptionParameters = List
                 .of(ConfigDescriptionParameterBuilder.create("param", ConfigDescriptionParameter.Type.TEXT).build());
         RuleTemplate template = new RuleTemplate(templateUID, "Test template Label", "Test template description", tags,
@@ -816,8 +860,8 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
 
         RuleTemplateProvider templateProvider = new RuleTemplateProvider() {
             @Override
-            public @Nullable RuleTemplate getTemplate(String UID, @Nullable Locale locale) {
-                if (UID.equals(templateUID)) {
+            public @Nullable RuleTemplate getTemplate(String uid, @Nullable Locale locale) {
+                if (uid.equals(templateUID)) {
                     return template;
                 } else {
                     return null;
@@ -850,7 +894,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
 
             @Override
             public Collection<ModuleType> getAll() {
-                return Stream.of(triggerType, actionType).collect(toSet());
+                return Set.of(triggerType, actionType);
             }
 
             @Override
@@ -858,10 +902,10 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             }
 
             @Override
-            public <T extends ModuleType> @Nullable T getModuleType(String UID, @Nullable Locale locale) {
-                if (UID.equals(triggerTypeUID)) {
+            public <T extends ModuleType> @Nullable T getModuleType(String uid, @Nullable Locale locale) {
+                if (uid.equals(triggerTypeUID)) {
                     return (T) triggerType;
-                } else if (UID.equals(actionTypeUID)) {
+                } else if (uid.equals(actionTypeUID)) {
                     return (T) actionType;
                 } else {
                     return null;
@@ -870,7 +914,7 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
 
             @Override
             public <T extends ModuleType> Collection<T> getModuleTypes(@Nullable Locale locale) {
-                return (Collection<T>) Stream.of(triggerType, actionType).collect(toSet());
+                return (Collection<T>) Set.of(triggerType, actionType);
             }
         };
 
@@ -895,9 +939,8 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         int rand = new Random().nextInt();
 
         Map<String, Object> configs = new HashMap<>();
-        configs.put("eventSource", "myMotionItem2");
-        configs.put("eventTopic", "openhab/*");
-        configs.put("eventTypes", "ItemStateEvent");
+        configs.put("topic", "openhab/items/myMotionItem2/*");
+        configs.put("types", "ItemStateEvent");
         Configuration triggerConfig = new Configuration(configs);
         configs = new HashMap<>();
         configs.put("itemName", "myLampItem2");
@@ -921,9 +964,8 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         logger.info("assert a rule with generic condition works");
         // Creation of RULE
         Map<String, Object> configs = new HashMap<>();
-        configs.put("eventSource", "myMotionItem5");
-        configs.put("eventTopic", "openhab/*");
-        configs.put("eventTypes", "ItemStateEvent");
+        configs.put("topic", "openhab/items/myMotionItem5/*");
+        configs.put("types", "ItemStateEvent");
         Configuration triggerConfig = new Configuration(configs);
         configs = new HashMap<>();
         configs.put("operator", "matches");
@@ -942,14 +984,13 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
         String triggerId = "ItemStateChangeTrigger" + random;
         List<Trigger> triggers = List.of(ModuleBuilder.createTrigger().withId(triggerId)
                 .withTypeUID("core.GenericEventTrigger").withConfiguration(triggerConfig).build());
-        List<Condition> conditions = Stream.of(
+        List<Condition> conditions = List.of(
                 ModuleBuilder.createCondition().withId("ItemStateCondition" + random)
                         .withTypeUID("core.GenericCompareCondition").withConfiguration(condition1Config)
                         .withInputs(Map.of("input", triggerId + ".event")).build(),
                 ModuleBuilder.createCondition().withId("ItemStateCondition" + (random + 1))
                         .withTypeUID("core.GenericCompareCondition").withConfiguration(condition2Config)
-                        .withInputs(Map.of("input", triggerId + ".event")).build())
-                .collect(toList());
+                        .withInputs(Map.of("input", triggerId + ".event")).build());
 
         List<Action> actions = List.of(ModuleBuilder.createAction().withId("ItemPostCommandAction" + random)
                 .withTypeUID("core.ItemCommandAction").withConfiguration(actionConfig).build());
@@ -981,11 +1022,6 @@ public class AutomationIntegrationTest extends JavaOSGiTest {
             @Override
             public Set<String> getSubscribedEventTypes() {
                 return Set.of(ItemCommandEvent.TYPE);
-            }
-
-            @Override
-            public @Nullable EventFilter getEventFilter() {
-                return null;
             }
 
             @Override

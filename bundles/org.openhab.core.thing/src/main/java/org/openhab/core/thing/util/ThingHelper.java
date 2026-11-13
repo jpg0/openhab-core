@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,16 +12,13 @@
  */
 package org.openhab.core.thing.util;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.config.core.Configuration;
@@ -48,6 +45,7 @@ import org.openhab.core.thing.internal.ThingImpl;
  *         ThingTypeDescription
  * @author Dennis Nobel - Removed createAndBindItems method
  * @author Kai Kreuzer - Added merge method
+ * @author Andrew Fiddian-Green - Added semanticEquipmentTag
  */
 @NonNullByDefault
 public class ThingHelper {
@@ -79,25 +77,15 @@ public class ThingHelper {
         if (!Objects.equals(a.getLocation(), b.getLocation())) {
             return false;
         }
+        // semantic equipment tag
+        if (!Objects.equals(a.getSemanticEquipmentTag(), b.getSemanticEquipmentTag())) {
+            return false;
+        }
         // channels
-        List<Channel> channelsOfA = a.getChannels();
-        List<Channel> channelsOfB = b.getChannels();
-        if (channelsOfA.size() != channelsOfB.size()) {
-            return false;
-        }
-        if (!toString(channelsOfA).equals(toString(channelsOfB))) {
-            return false;
-        }
-        return true;
-    }
+        Set<Channel> channelsOfA = new HashSet<>(a.getChannels());
+        Set<Channel> channelsOfB = new HashSet<>(b.getChannels());
 
-    private static String toString(List<Channel> channels) {
-        List<String> strings = new ArrayList<>(channels.size());
-        for (Channel channel : channels) {
-            strings.add(channel.getUID().toString() + '#' + channel.getAcceptedItemType() + '#' + channel.getKind());
-        }
-        Collections.sort(strings);
-        return strings.stream().collect(Collectors.joining(","));
+        return channelsOfA.equals(channelsOfB);
     }
 
     public static void addChannelsToThing(Thing thing, Collection<Channel> channels) {
@@ -219,18 +207,17 @@ public class ThingHelper {
             builder.withChannels(thing.getChannels());
         }
 
-        if (updatedContents.location != null) {
-            builder.withLocation(updatedContents.location);
+        // Update the semantic equipment tag
+        if (updatedContents.semanticEquipmentTag != null) {
+            builder.withSemanticEquipmentTag(updatedContents.semanticEquipmentTag);
         } else {
-            builder.withLocation(thing.getLocation());
+            builder.withSemanticEquipmentTag(thing.getSemanticEquipmentTag());
         }
 
         Thing mergedThing = builder.build();
 
         // keep all child things in place on a merged bridge
-        if (mergedThing instanceof BridgeImpl && thing instanceof Bridge) {
-            Bridge bridge = (Bridge) thing;
-            BridgeImpl mergedBridge = (BridgeImpl) mergedThing;
+        if (mergedThing instanceof BridgeImpl mergedBridge && thing instanceof Bridge bridge) {
             for (Thing child : bridge.getThings()) {
                 mergedBridge.addThing(child);
             }

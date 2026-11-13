@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,8 +15,11 @@ package org.openhab.core.io.console.internal.extension;
 import java.util.List;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.events.AbstractEvent;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.io.console.Console;
+import org.openhab.core.io.console.ConsoleCommandCompleter;
 import org.openhab.core.io.console.extensions.AbstractConsoleCommandExtension;
 import org.openhab.core.io.console.extensions.ConsoleCommandExtension;
 import org.openhab.core.items.Item;
@@ -41,6 +44,7 @@ import org.osgi.service.component.annotations.Reference;
 @Component(service = ConsoleCommandExtension.class)
 @NonNullByDefault
 public class UpdateConsoleCommandExtension extends AbstractConsoleCommandExtension {
+    private static final String CONSOLE_SOURCE = "org.openhab.core.io.console";
 
     private final ItemRegistry itemRegistry;
     private final EventPublisher eventPublisher;
@@ -68,7 +72,8 @@ public class UpdateConsoleCommandExtension extends AbstractConsoleCommandExtensi
                     String stateName = args[1];
                     State state = TypeParser.parseState(item.getAcceptedDataTypes(), stateName);
                     if (state != null) {
-                        eventPublisher.post(ItemEventFactory.createStateEvent(item.getName(), state));
+                        eventPublisher.post(ItemEventFactory.createStateEvent(item.getName(), state,
+                                AbstractEvent.buildSource(CONSOLE_SOURCE, console.getUser())));
                         console.println("Update has been sent successfully.");
                     } else {
                         console.println("Error: State '" + stateName + "' is not valid for item '" + itemName + "'");
@@ -92,5 +97,11 @@ public class UpdateConsoleCommandExtension extends AbstractConsoleCommandExtensi
         } else {
             printUsage(console);
         }
+    }
+
+    @Override
+    public @Nullable ConsoleCommandCompleter getCompleter() {
+        return new ItemConsoleCommandCompleter(itemRegistry,
+                (Item i) -> i.getAcceptedDataTypes().toArray(Class<?>[]::new));
     }
 }

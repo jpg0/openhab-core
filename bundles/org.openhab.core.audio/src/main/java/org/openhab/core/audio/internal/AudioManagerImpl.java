@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,31 +13,46 @@
 package org.openhab.core.audio.internal;
 
 import static java.util.Comparator.comparing;
-import static java.util.stream.Collectors.toList;
 
+import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.text.ParseException;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+
+import javax.sound.sampled.AudioFileFormat;
+import javax.sound.sampled.AudioInputStream;
+import javax.sound.sampled.AudioSystem;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.OpenHAB;
 import org.openhab.core.audio.AudioException;
+import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioManager;
 import org.openhab.core.audio.AudioSink;
+import org.openhab.core.audio.AudioSinkRegistry;
 import org.openhab.core.audio.AudioSource;
+import org.openhab.core.audio.AudioSourceRegistry;
 import org.openhab.core.audio.AudioStream;
 import org.openhab.core.audio.FileAudioStream;
 import org.openhab.core.audio.URLAudioStream;
-import org.openhab.core.audio.UnsupportedAudioFormatException;
-import org.openhab.core.audio.UnsupportedAudioStreamException;
+import org.openhab.core.audio.transcode.AudioTranscoder;
+import org.openhab.core.audio.transcode.AudioTranscodingException;
+import org.openhab.core.audio.utils.AudioFormatMatcher;
+import org.openhab.core.audio.utils.AudioWaveUtils;
+import org.openhab.core.audio.utils.ToneSynthesizer;
+import org.openhab.core.common.Disposable;
 import org.openhab.core.config.core.ConfigOptionProvider;
 import org.openhab.core.config.core.ConfigurableService;
 import org.openhab.core.config.core.ParameterOption;
@@ -48,8 +63,6 @@ import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Modified;
 import org.osgi.service.component.annotations.Reference;
-import org.osgi.service.component.annotations.ReferenceCardinality;
-import org.osgi.service.component.annotations.ReferencePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,6 +74,8 @@ import org.slf4j.LoggerFactory;
  * @author Christoph Weitkamp - Added getSupportedStreams() and UnsupportedAudioStreamException
  * @author Christoph Weitkamp - Added parameter to adjust the volume
  * @author Wouter Born - Sort audio sink and source options
+ * @author Miguel Álvarez - Add record from source
+ * @author Florian Hotze - Track audio sinks and sources using {@link AudioSinkRegistry} and {@link AudioSourceRegistry}
  */
 @NonNullByDefault
 @Component(immediate = true, configurationPid = "org.openhab.audio", //
@@ -75,15 +90,21 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
 
     private final Logger logger = LoggerFactory.getLogger(AudioManagerImpl.class);
 
-    // service maps
-    private final Map<String, AudioSource> audioSources = new ConcurrentHashMap<>();
-    private final Map<String, AudioSink> audioSinks = new ConcurrentHashMap<>();
+    private final AudioSinkRegistry audioSinkRegistry;
+    private final AudioSourceRegistry audioSourceRegistry;
 
     /**
      * default settings filled through the service configuration
      */
     private @Nullable String defaultSource;
     private @Nullable String defaultSink;
+
+    @Activate
+    public AudioManagerImpl(final @Reference AudioSinkRegistry audioSinkRegistry,
+            final @Reference AudioSourceRegistry audioSourceRegistry) {
+        this.audioSinkRegistry = audioSinkRegistry;
+        this.audioSourceRegistry = audioSourceRegistry;
+    }
 
     @Activate
     protected void activate(Map<String, Object> config) {
@@ -97,17 +118,14 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     @Modified
     void modified(@Nullable Map<String, Object> config) {
         if (config != null) {
-            this.defaultSource = config.containsKey(CONFIG_DEFAULT_SOURCE)
-                    ? config.get(CONFIG_DEFAULT_SOURCE).toString()
-                    : null;
-            this.defaultSink = config.containsKey(CONFIG_DEFAULT_SINK) ? config.get(CONFIG_DEFAULT_SINK).toString()
-                    : null;
+            this.defaultSource = config.get(CONFIG_DEFAULT_SOURCE) instanceof Object source ? source.toString() : null;
+            this.defaultSink = config.get(CONFIG_DEFAULT_SINK) instanceof Object sink ? sink.toString() : null;
         }
     }
 
     @Override
     public void play(@Nullable AudioStream audioStream) {
-        play(audioStream, null);
+        play(audioStream, (String) null);
     }
 
     @Override
@@ -119,41 +137,54 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     public void play(@Nullable AudioStream audioStream, @Nullable String sinkId, @Nullable PercentType volume) {
         AudioSink sink = getSink(sinkId);
         if (sink != null) {
-            PercentType oldVolume = null;
-            try {
-                // get current volume
-                oldVolume = getVolume(sinkId);
-            } catch (IOException e) {
-                logger.debug("An exception occurred while getting the volume of sink '{}' : {}", sink.getId(),
-                        e.getMessage(), e);
-            }
-            // set notification sound volume
-            if (volume != null) {
-                try {
-                    setVolume(volume, sinkId);
-                } catch (IOException e) {
-                    logger.debug("An exception occurred while setting the volume of sink '{}' : {}", sink.getId(),
-                            e.getMessage(), e);
-                }
-            }
-            try {
-                sink.process(audioStream);
-            } catch (UnsupportedAudioFormatException | UnsupportedAudioStreamException e) {
-                logger.warn("Error playing '{}': {}", audioStream, e.getMessage(), e);
-            } finally {
-                if (volume != null && oldVolume != null) {
-                    // restore volume only if it was set before
-                    try {
-                        setVolume(oldVolume, sinkId);
-                    } catch (IOException e) {
-                        logger.debug("An exception occurred while setting the volume of sink '{}' : {}", sink.getId(),
-                                e.getMessage(), e);
-                    }
-                }
-            }
+            play(audioStream, sink, volume);
         } else {
+            closeQuietly(audioStream);
             logger.warn("Failed playing audio stream '{}' as no audio sink was found.", audioStream);
         }
+    }
+
+    @Override
+    public void play(@Nullable AudioStream audioStream, AudioSink sink, @Nullable PercentType volume) {
+        AudioStream streamCandidate = audioStream;
+        if (audioStream != null) {
+            boolean isFormatSupported = sink.getSupportedFormats().stream()
+                    .anyMatch(format -> format.isCompatible(audioStream.getFormat()));
+            boolean isStreamSupported = sink.getSupportedStreams().stream()
+                    .anyMatch(clazz -> clazz.isInstance(audioStream));
+            if (!isFormatSupported || !isStreamSupported) {
+                try {
+                    logger.debug("Transcoding stream '{}' for sink '{}'...", audioStream, sink.getId());
+                    streamCandidate = AudioTranscoder.transcodeToSupported(audioStream, sink.getSupportedFormats(),
+                            sink.getSupportedStreams());
+                } catch (AudioTranscodingException e) {
+                    closeQuietly(audioStream);
+                    logger.warn("Failed transcoding audio stream '{}' for sink '{}': {}", audioStream, sink.getId(),
+                            e.getMessage());
+                    return;
+                }
+            }
+        }
+        final AudioStream streamToPlay = streamCandidate;
+        Runnable restoreVolume = handleVolumeCommand(volume, sink);
+        sink.processAndComplete(streamToPlay).whenComplete((result, throwable) -> {
+            if (streamToPlay instanceof Disposable disposable) {
+                try {
+                    disposable.dispose();
+                } catch (IOException | RuntimeException ignored) {
+                }
+            }
+
+            if (throwable != null) {
+                logger.warn("Error playing '{}': {}", streamToPlay, throwable.getMessage(), throwable);
+            }
+
+            try {
+                restoreVolume.run();
+            } catch (RuntimeException e) {
+                logger.warn("Failed to restore volume after playing '{}': {}", streamToPlay, e.getMessage(), e);
+            }
+        });
     }
 
     @Override
@@ -174,8 +205,7 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     @Override
     public void playFile(String fileName, @Nullable String sinkId, @Nullable PercentType volume) throws AudioException {
         Objects.requireNonNull(fileName, "File cannot be played as fileName is null.");
-
-        File file = new File(OpenHAB.getConfigFolder() + File.separator + SOUND_DIR + File.separator + fileName);
+        File file = Path.of(OpenHAB.getConfigFolder(), SOUND_DIR, fileName).toFile();
         FileAudioStream is = new FileAudioStream(file);
         play(is, sinkId, volume);
     }
@@ -189,6 +219,98 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     public void stream(@Nullable String url, @Nullable String sinkId) throws AudioException {
         AudioStream audioStream = url != null ? new URLAudioStream(url) : null;
         play(audioStream, sinkId, null);
+    }
+
+    @Override
+    public void playMelody(String melody) {
+        playMelody(melody, null);
+    }
+
+    @Override
+    public void playMelody(String melody, @Nullable String sinkId) {
+        playMelody(melody, sinkId, null);
+    }
+
+    @Override
+    public void playMelody(String melody, @Nullable String sinkId, @Nullable PercentType volume) {
+        AudioSink sink = getSink(sinkId);
+        if (sink == null) {
+            logger.warn("Failed playing melody as no audio sink {} was found.", sinkId);
+            return;
+        }
+        var synthesizerFormat = AudioFormatMatcher.getBestMatchWithTranscoding(ToneSynthesizer.getSupportedFormats(),
+                sink.getSupportedFormats());
+        if (synthesizerFormat == null) {
+            logger.warn("Failed playing melody as sink {} does not support wav.", sinkId);
+            return;
+        }
+        try {
+            var audioStream = new ToneSynthesizer(synthesizerFormat).getStream(ToneSynthesizer.parseMelody(melody));
+            play(audioStream, sinkId, volume);
+        } catch (IOException | ParseException e) {
+            logger.warn("Failed playing melody: {}", e.getMessage());
+        }
+    }
+
+    @Override
+    public void record(int seconds, String filename, @Nullable String sourceId) throws AudioException {
+        var audioSource = sourceId != null ? getSource(sourceId) : getSource();
+        if (audioSource == null) {
+            throw new AudioException("Audio source '" + (sourceId != null ? sourceId : "default") + "' not available");
+        }
+        var audioFormat = AudioFormatMatcher.getBestMatch(audioSource.getSupportedFormats(),
+                Set.of(AudioFormat.PCM_SIGNED, AudioFormat.WAV));
+        if (audioFormat == null) {
+            throw new AudioException("Unable to find valid audio format");
+        }
+        javax.sound.sampled.AudioFormat jAudioFormat = new javax.sound.sampled.AudioFormat(
+                Objects.requireNonNull(audioFormat.getFrequency()), Objects.requireNonNull(audioFormat.getBitDepth()),
+                Objects.requireNonNull(audioFormat.getChannels()), true, false);
+        int secondByteLength = ((int) jAudioFormat.getSampleRate() * jAudioFormat.getFrameSize());
+        int targetByteLength = secondByteLength * seconds;
+        ByteBuffer recordBuffer = ByteBuffer.allocate(targetByteLength);
+        try (var audioStream = audioSource.getInputStream(audioFormat)) {
+            if (AudioFormatMatcher.isWaveFormat(audioFormat)) {
+                AudioWaveUtils.removeFMT(audioStream);
+            }
+            while (true) {
+                try {
+                    var bytes = audioStream.readNBytes(secondByteLength);
+                    if (bytes.length == 0) {
+                        logger.debug("End of input audio stream reached");
+                        break;
+                    }
+                    if (recordBuffer.position() + bytes.length > recordBuffer.limit()) {
+                        logger.debug("Recording limit reached");
+                        break;
+                    }
+                    recordBuffer.put(bytes);
+                } catch (IOException e) {
+                    logger.warn("Reading audio data failed");
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("IOException while reading audioStream: {}", e.getMessage());
+        }
+        String recordFilename = filename.endsWith(".wav") ? filename : filename + ".wav";
+        logger.info("Saving record file: {}", recordFilename);
+        byte[] audioBytes = new byte[recordBuffer.position()];
+        logger.info("Saving bytes: {}", audioBytes.length);
+        recordBuffer.rewind();
+        recordBuffer.get(audioBytes);
+        File recordFile = new File(
+                OpenHAB.getConfigFolder() + File.separator + SOUND_DIR + File.separator + recordFilename);
+        try (FileOutputStream fileOutputStream = new FileOutputStream(recordFile)) {
+            AudioSystem.write(
+                    new AudioInputStream(new ByteArrayInputStream(audioBytes), jAudioFormat,
+                            (long) Math.ceil(((double) audioBytes.length) / jAudioFormat.getFrameSize())), //
+                    AudioFileFormat.Type.WAVE, //
+                    fileOutputStream //
+            );
+            fileOutputStream.flush();
+        } catch (IOException e) {
+            logger.warn("IOException while saving record file: {}", e.getMessage());
+        }
     }
 
     @Override
@@ -211,29 +333,36 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     }
 
     @Override
+    public @Nullable String getSourceId() {
+        return defaultSource;
+    }
+
+    @Override
     public @Nullable AudioSource getSource() {
-        AudioSource source = null;
-        if (defaultSource != null) {
-            source = audioSources.get(defaultSource);
+        AudioSource source;
+        String sourceId = defaultSource;
+        if (sourceId != null) {
+            source = audioSourceRegistry.get(sourceId);
             if (source == null) {
-                logger.warn("Default AudioSource service '{}' not available!", defaultSource);
+                logger.warn("Default AudioSource service '{}' not available!", sourceId);
             }
-        } else if (!audioSources.isEmpty()) {
-            source = audioSources.values().iterator().next();
         } else {
-            logger.debug("No AudioSource service available!");
+            source = audioSourceRegistry.stream().findFirst().orElse(null);
+            if (source == null) {
+                logger.debug("No AudioSource service available!");
+            }
         }
         return source;
     }
 
     @Override
     public Set<AudioSource> getAllSources() {
-        return new HashSet<>(audioSources.values());
+        return new HashSet<>(audioSourceRegistry.getAll());
     }
 
     @Override
     public @Nullable AudioSource getSource(@Nullable String sourceId) {
-        return (sourceId == null) ? getSource() : audioSources.get(sourceId);
+        return (sourceId == null) ? getSource() : audioSourceRegistry.get(sourceId);
     }
 
     @Override
@@ -241,9 +370,9 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
         String regex = pattern.replace("?", ".?").replace("*", ".*?");
         Set<String> matchedSources = new HashSet<>();
 
-        for (String aSource : audioSources.keySet()) {
-            if (aSource.matches(regex)) {
-                matchedSources.add(aSource);
+        for (AudioSource aSource : audioSourceRegistry.getAll()) {
+            if (aSource.getId().matches(regex)) {
+                matchedSources.add(aSource.getId());
             }
         }
 
@@ -251,29 +380,36 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
     }
 
     @Override
+    public @Nullable String getSinkId() {
+        return defaultSink;
+    }
+
+    @Override
     public @Nullable AudioSink getSink() {
-        AudioSink sink = null;
-        if (defaultSink != null) {
-            sink = audioSinks.get(defaultSink);
+        AudioSink sink;
+        String sinkId = defaultSink;
+        if (sinkId != null) {
+            sink = audioSinkRegistry.get(sinkId);
             if (sink == null) {
-                logger.warn("Default AudioSink service '{}' not available!", defaultSink);
+                logger.warn("Default AudioSink service '{}' not available!", sinkId);
             }
-        } else if (!audioSinks.isEmpty()) {
-            sink = audioSinks.values().iterator().next();
         } else {
-            logger.debug("No AudioSink service available!");
+            sink = audioSinkRegistry.stream().findFirst().orElse(null);
+            if (sink == null) {
+                logger.debug("No AudioSink service available!");
+            }
         }
         return sink;
     }
 
     @Override
     public Set<AudioSink> getAllSinks() {
-        return new HashSet<>(audioSinks.values());
+        return new HashSet<>(audioSinkRegistry.getAll());
     }
 
     @Override
     public @Nullable AudioSink getSink(@Nullable String sinkId) {
-        return (sinkId == null) ? getSink() : audioSinks.get(sinkId);
+        return (sinkId == null) ? getSink() : audioSinkRegistry.get(sinkId);
     }
 
     @Override
@@ -281,9 +417,9 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
         String regex = pattern.replace("?", ".?").replace("*", ".*?");
         Set<String> matchedSinkIds = new HashSet<>();
 
-        for (String sinkId : audioSinks.keySet()) {
-            if (sinkId.matches(regex)) {
-                matchedSinkIds.add(sinkId);
+        for (AudioSink sink : audioSinkRegistry.getAll()) {
+            if (sink.getId().matches(regex)) {
+                matchedSinkIds.add(sink.getId());
             }
         }
 
@@ -296,31 +432,75 @@ public class AudioManagerImpl implements AudioManager, ConfigOptionProvider {
         if (CONFIG_URI.equals(uri.toString())) {
             final Locale safeLocale = locale != null ? locale : Locale.getDefault();
             if (CONFIG_DEFAULT_SOURCE.equals(param)) {
-                return audioSources.values().stream().sorted(comparing(s -> s.getLabel(safeLocale)))
-                        .map(s -> new ParameterOption(s.getId(), s.getLabel(safeLocale))).collect(toList());
+                return audioSourceRegistry.stream().sorted(comparing(s -> s.getLabel(safeLocale)))
+                        .map(s -> new ParameterOption(s.getId(), s.getLabel(safeLocale))).toList();
             } else if (CONFIG_DEFAULT_SINK.equals(param)) {
-                return audioSinks.values().stream().sorted(comparing(s -> s.getLabel(safeLocale)))
-                        .map(s -> new ParameterOption(s.getId(), s.getLabel(safeLocale))).collect(toList());
+                return audioSinkRegistry.stream().sorted(comparing(s -> s.getLabel(safeLocale)))
+                        .map(s -> new ParameterOption(s.getId(), s.getLabel(safeLocale))).toList();
             }
         }
         return null;
     }
 
-    @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
-    protected void addAudioSource(AudioSource audioSource) {
-        this.audioSources.put(audioSource.getId(), audioSource);
+    @Override
+    public Runnable handleVolumeCommand(@Nullable PercentType volume, AudioSink sink) {
+        boolean volumeChanged = false;
+        PercentType oldVolume = null;
+
+        Runnable toRunWhenProcessFinished = () -> {
+        };
+
+        if (volume == null) {
+            return toRunWhenProcessFinished;
+        }
+
+        // set notification sound volume
+        try {
+            // get current volume
+            oldVolume = sink.getVolume();
+        } catch (IOException | UnsupportedOperationException e) {
+            logger.debug("An exception occurred while getting the volume of sink '{}' : {}", sink.getId(),
+                    e.getMessage(), e);
+        }
+
+        if (!volume.equals(oldVolume) || oldVolume == null) {
+            try {
+                sink.setVolume(volume);
+                volumeChanged = true;
+            } catch (IOException | UnsupportedOperationException e) {
+                logger.debug("An exception occurred while setting the volume of sink '{}' : {}", sink.getId(),
+                        e.getMessage(), e);
+            }
+        }
+
+        final PercentType oldVolumeFinal = oldVolume;
+        // restore volume only if it was set before
+        if (volumeChanged && oldVolumeFinal != null) {
+            toRunWhenProcessFinished = () -> {
+                try {
+                    sink.setVolume(oldVolumeFinal);
+                } catch (IOException | UnsupportedOperationException e) {
+                    logger.debug("An exception occurred while setting the volume of sink '{}' : {}", sink.getId(),
+                            e.getMessage(), e);
+                }
+            };
+        }
+
+        return toRunWhenProcessFinished;
     }
 
-    protected void removeAudioSource(AudioSource audioSource) {
-        this.audioSources.remove(audioSource.getId());
-    }
-
-    @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
-    protected void addAudioSink(AudioSink audioSink) {
-        this.audioSinks.put(audioSink.getId(), audioSink);
-    }
-
-    protected void removeAudioSink(AudioSink audioSink) {
-        this.audioSinks.remove(audioSink.getId());
+    private void closeQuietly(@Nullable Closeable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (IOException ignored) {
+            }
+            if (closeable instanceof Disposable disposable) {
+                try {
+                    disposable.dispose();
+                } catch (IOException ignored) {
+                }
+            }
+        }
     }
 }

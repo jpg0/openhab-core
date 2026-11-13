@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -37,7 +37,7 @@ public class ConfigDescriptionBuilder {
     /**
      * Creates a config description builder
      *
-     * @param @param uri the URI of this description within the {@link ConfigDescriptionRegistry}
+     * @param uri the URI of this description within the {@link ConfigDescriptionRegistry}
      * @return the config description builder instance
      */
     public static ConfigDescriptionBuilder create(URI uri) {

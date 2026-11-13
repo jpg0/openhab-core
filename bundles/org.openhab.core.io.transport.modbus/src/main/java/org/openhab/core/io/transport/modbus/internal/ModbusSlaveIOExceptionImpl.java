@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,7 @@
 package org.openhab.core.io.transport.modbus.internal;
 
 import java.io.IOException;
+import java.io.Serial;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -29,6 +30,7 @@ import net.wimpi.modbus.ModbusIOException;
 @NonNullByDefault
 public class ModbusSlaveIOExceptionImpl extends ModbusSlaveIOException {
 
+    @Serial
     private static final long serialVersionUID = -8910463902857643468L;
     private Exception error;
 
@@ -43,16 +45,14 @@ public class ModbusSlaveIOExceptionImpl extends ModbusSlaveIOException {
     @Override
     public @Nullable String getMessage() {
         return String.format("Modbus IO Error with cause=%s, EOF=%s, message='%s', cause2=%s",
-                error.getClass().getSimpleName(),
-                error instanceof ModbusIOException ? ((ModbusIOException) error).isEOF() : "?", error.getMessage(),
-                error.getCause());
+                error.getClass().getSimpleName(), error instanceof ModbusIOException mioe ? mioe.isEOF() : "?",
+                error.getMessage(), error.getCause());
     }
 
     @Override
     public String toString() {
         return String.format("ModbusSlaveIOException(cause=%s, EOF=%s, message='%s', cause2=%s)",
-                error.getClass().getSimpleName(),
-                error instanceof ModbusIOException ? ((ModbusIOException) error).isEOF() : "?", error.getMessage(),
-                error.getCause());
+                error.getClass().getSimpleName(), error instanceof ModbusIOException mioe ? mioe.isEOF() : "?",
+                error.getMessage(), error.getCause());
     }
 }

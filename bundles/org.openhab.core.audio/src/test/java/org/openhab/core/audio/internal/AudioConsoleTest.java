@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,9 @@ package org.openhab.core.audio.internal;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.IOException;
@@ -47,6 +49,8 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
 
     private @NonNullByDefault({}) AudioConsoleCommandExtension audioConsoleCommandExtension;
     private @NonNullByDefault({}) AudioManagerImpl audioManager;
+    private @NonNullByDefault({}) AudioSinkRegistryImpl audioSinkRegistry;
+    private @NonNullByDefault({}) AudioSourceRegistryImpl audioSourceRegistry;
     private @NonNullByDefault({}) AudioSinkFake audioSink;
     private @NonNullByDefault({}) String consoleOutput;
     private @NonNullByDefault({}) BundledSoundFileHandler fileHandler;
@@ -69,15 +73,15 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
         }
     };
 
-    private final int testTimeout = 5;
-
     @BeforeEach
     public void setUp() throws IOException {
         fileHandler = new BundledSoundFileHandler();
         audioSink = new AudioSinkFake();
 
-        audioManager = new AudioManagerImpl();
-        audioManager.addAudioSink(audioSink);
+        audioSinkRegistry = new AudioSinkRegistryImpl();
+        audioSourceRegistry = new AudioSourceRegistryImpl();
+        audioManager = new AudioManagerImpl(audioSinkRegistry, audioSourceRegistry);
+        audioSinkRegistry.addAudioSink(audioSink);
 
         LocaleProvider localeProvider = mock(LocaleProvider.class);
         when(localeProvider.getLocale()).thenReturn(Locale.getDefault());
@@ -145,12 +149,14 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
         AudioStream audioStream = getByteArrayAudioStream(testByteArray, AudioFormat.CONTAINER_WAVE,
                 AudioFormat.CODEC_PCM_SIGNED);
 
-        String url = serveStream(audioStream, testTimeout);
+        String url = serveStream(audioStream);
 
         String[] args = { AudioConsoleCommandExtension.SUBCMD_STREAM, url };
         audioConsoleCommandExtension.execute(args, consoleMock);
 
-        assertThat("The streamed URL was not as expected", ((URLAudioStream) audioSink.audioStream).getURL(), is(url));
+        URLAudioStream urlAudioStream = assertInstanceOf(URLAudioStream.class, audioSink.audioStream);
+        assertThat("The streamed URL was not as expected", urlAudioStream.getURL(), is(url));
+        urlAudioStream.close();
     }
 
     @Test
@@ -158,12 +164,14 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
         AudioStream audioStream = getByteArrayAudioStream(testByteArray, AudioFormat.CONTAINER_WAVE,
                 AudioFormat.CODEC_PCM_SIGNED);
 
-        String url = serveStream(audioStream, testTimeout);
+        String url = serveStream(audioStream);
 
         String[] args = { AudioConsoleCommandExtension.SUBCMD_STREAM, audioSink.getId(), url };
         audioConsoleCommandExtension.execute(args, consoleMock);
 
-        assertThat("The streamed URL was not as expected", ((URLAudioStream) audioSink.audioStream).getURL(), is(url));
+        URLAudioStream urlAudioStream = assertInstanceOf(URLAudioStream.class, audioSink.audioStream);
+        assertThat("The streamed URL was not as expected", urlAudioStream.getURL(), is(url));
+        urlAudioStream.close();
     }
 
     @Test
@@ -179,7 +187,8 @@ public class AudioConsoleTest extends AbstractAudioServletTest {
     public void audioConsoleListsSources() {
         AudioSource audioSource = mock(AudioSource.class);
         when(audioSource.getId()).thenReturn("sourceId");
-        audioManager.addAudioSource(audioSource);
+        when(audioSource.getUID()).thenReturn("sourceId");
+        audioSourceRegistry.addAudioSource(audioSource);
 
         String[] args = { AudioConsoleCommandExtension.SUBCMD_SOURCES };
         audioConsoleCommandExtension.execute(args, consoleMock);

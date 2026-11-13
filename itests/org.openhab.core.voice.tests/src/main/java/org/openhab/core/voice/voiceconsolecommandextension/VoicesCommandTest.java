@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,8 +26,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.openhab.core.i18n.LocaleProvider;
 import org.openhab.core.voice.internal.SinkStub;
-import org.openhab.core.voice.internal.TTSServiceStub;
-import org.openhab.core.voice.internal.VoiceStub;
+import org.openhab.core.voice.tts.TTSServiceStub;
+import org.openhab.core.voice.tts.VoiceStub;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
@@ -50,6 +50,7 @@ public class VoicesCommandTest extends VoiceConsoleCommandExtensionTest {
 
     @BeforeEach
     public void setUp() throws IOException {
+        registerVolatileStorageService();
         localeProvider = getService(LocaleProvider.class);
         assertNotNull(localeProvider);
 

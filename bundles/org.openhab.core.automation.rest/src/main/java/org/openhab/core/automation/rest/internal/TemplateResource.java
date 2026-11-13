@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,6 @@ package org.openhab.core.automation.rest.internal;
 
 import java.util.Collection;
 import java.util.Locale;
-import java.util.stream.Collectors;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.HeaderParam;
@@ -25,13 +24,11 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
-import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.dto.RuleTemplateDTO;
 import org.openhab.core.automation.dto.RuleTemplateDTOMapper;
 import org.openhab.core.automation.template.RuleTemplate;
-import org.openhab.core.automation.template.Template;
 import org.openhab.core.automation.template.TemplateRegistry;
 import org.openhab.core.io.rest.LocaleService;
 import org.openhab.core.io.rest.RESTConstants;
@@ -74,12 +71,12 @@ public class TemplateResource implements RESTResource {
     public static final String PATH_TEMPLATES = "templates";
 
     private final LocaleService localeService;
-    private final TemplateRegistry<@NonNull RuleTemplate> templateRegistry;
+    private final TemplateRegistry<RuleTemplate> templateRegistry;
 
     @Activate
     public TemplateResource( //
             final @Reference LocaleService localeService,
-            final @Reference TemplateRegistry<@NonNull RuleTemplate> templateRegistry) {
+            final @Reference TemplateRegistry<RuleTemplate> templateRegistry) {
         this.localeService = localeService;
         this.templateRegistry = templateRegistry;
     }
@@ -87,12 +84,12 @@ public class TemplateResource implements RESTResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getTemplates", summary = "Get all available templates.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = Template.class)))) })
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = RuleTemplateDTO.class)))) })
     public Response getAll(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language) {
         Locale locale = localeService.getLocale(language);
         Collection<RuleTemplateDTO> result = templateRegistry.getAll(locale).stream()
-                .map(template -> RuleTemplateDTOMapper.map(template)).collect(Collectors.toList());
+                .map(template -> RuleTemplateDTOMapper.map(template)).toList();
         return Response.ok(result).build();
     }
 
@@ -100,7 +97,7 @@ public class TemplateResource implements RESTResource {
     @Path("/{templateUID}")
     @Produces(MediaType.APPLICATION_JSON)
     @Operation(operationId = "getTemplateById", summary = "Gets a template corresponding to the given UID.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = Template.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = RuleTemplateDTO.class))),
             @ApiResponse(responseCode = "404", description = "Template corresponding to the given UID does not found.") })
     public Response getByUID(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language,

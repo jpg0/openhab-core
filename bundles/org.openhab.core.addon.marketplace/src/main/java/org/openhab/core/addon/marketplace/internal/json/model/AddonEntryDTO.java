@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -22,9 +22,11 @@ import com.google.gson.annotations.SerializedName;
  * @author Jan N. Klug - Initial contribution
  */
 public class AddonEntryDTO {
+    public String uid = "";
     public String id = "";
     public String type = "";
     public String description = "";
+    public String keywords = "";
     public String title = "";
     public String link = "";
     public String version = "";
@@ -40,4 +42,6 @@ public class AddonEntryDTO {
     public String url = "";
     @SerializedName("logger_packages")
     public List<String> loggerPackages = List.of();
+    public String connection = "";
+    public List<String> countries = List.of();
 }

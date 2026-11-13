@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -15,13 +15,14 @@ package org.openhab.core.io.transport.mqtt;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -47,9 +48,14 @@ import com.hivemq.client.mqtt.mqtt3.message.publish.Mqtt3Publish;
 @NonNullByDefault
 public class MqttBrokerConnectionTests extends JavaTest {
     private static final byte[] HELLO_BYTES = "hello".getBytes();
+    private static final byte[] GOODBYE_BYTES = "goodbye".getBytes();
 
     private static byte[] eqHelloBytes() {
         return eq(HELLO_BYTES);
+    }
+
+    private static byte[] eqGoodbyeBytes() {
+        return eq(GOODBYE_BYTES);
     }
 
     @Test
@@ -141,12 +147,34 @@ public class MqttBrokerConnectionTests extends JavaTest {
     }
 
     @Test
+    public void retain()
+            throws ConfigurationException, MqttException, InterruptedException, ExecutionException, TimeoutException {
+        MqttBrokerConnectionEx connection = new MqttBrokerConnectionEx("123.123.123.123", null, false, false,
+                "MqttBrokerConnectionTests");
+
+        MqttMessageSubscriber subscriber1 = mock(MqttMessageSubscriber.class);
+        MqttMessageSubscriber subscriber2 = mock(MqttMessageSubscriber.class);
+        connection.subscribe("topic", subscriber1);
+
+        Mqtt3Publish publishMessage = Mqtt3Publish.builder().topic("topic").payload(HELLO_BYTES).retain(true).build();
+        connection.getSubscribers().get("topic").messageArrived(publishMessage);
+
+        publishMessage = Mqtt3Publish.builder().topic("topic").payload(GOODBYE_BYTES).build();
+        connection.getSubscribers().get("topic").messageArrived(publishMessage);
+
+        connection.subscribe("topic", subscriber2);
+
+        // the retained message was updated even though the subsequent message didn't have the retained flag
+        verify(subscriber2).processMessage(eq("topic"), eqGoodbyeBytes());
+    }
+
+    @Test
     public void reconnectPolicyDefault() throws ConfigurationException, MqttException, InterruptedException {
         MqttBrokerConnectionEx connection = new MqttBrokerConnectionEx("123.123.123.123", null, false, false,
                 "MqttBrokerConnectionTests");
 
         // Check if the default policy is set and that the broker within the policy is set.
-        assertTrue(connection.getReconnectStrategy() instanceof PeriodicReconnectStrategy);
+        assertInstanceOf(PeriodicReconnectStrategy.class, connection.getReconnectStrategy());
         AbstractReconnectStrategy p = connection.getReconnectStrategy();
         assertThat(p.getBrokerConnection(), equalTo(connection));
     }
@@ -241,6 +269,29 @@ public class MqttBrokerConnectionTests extends JavaTest {
         assertThat(future.get(5, TimeUnit.SECONDS), is(false));
     }
 
+    /**
+     * The mocked client answers synchronously, so {@link MqttBrokerConnection.ConnectionCallback#onConnected} runs
+     * while {@link MqttBrokerConnection#start()} is still connecting. The connect timeout must already be scheduled at
+     * that point, otherwise it is never cancelled and fires later although the connection is established.
+     */
+    @Test
+    public void timeoutIsCancelledWhenConnectSucceedsImmediately()
+            throws ConfigurationException, MqttException, InterruptedException, ExecutionException, TimeoutException {
+        MqttBrokerConnectionEx connection = new MqttBrokerConnectionEx("10.0.10.10", null, false, false,
+                "MqttBrokerConnectionTests");
+
+        ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
+        ScheduledFuture<?> timeoutFuture = mock(ScheduledFuture.class);
+        doReturn(timeoutFuture).when(scheduler).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+        connection.setTimeoutExecutor(scheduler, 10);
+
+        assertTrue(connection.start().get(5, TimeUnit.SECONDS));
+
+        verify(scheduler).schedule(any(Runnable.class), eq(10L), eq(TimeUnit.MILLISECONDS));
+        verify(timeoutFuture).cancel(false);
+        assertNull(connection.timeoutFuture.get());
+    }
+
     @Test
     public void connectionObserver() throws ConfigurationException, MqttException {
         MqttBrokerConnectionEx connection = spy(
@@ -304,8 +355,8 @@ public class MqttBrokerConnectionTests extends JavaTest {
     public void setterGetterTests() {
         MqttBrokerConnectionEx connection = new MqttBrokerConnectionEx("123.123.123.123", null, false, false,
                 "setterGetterTests");
-        assertEquals(connection.getHost(), "123.123.123.123", "URL getter");
-        assertEquals(connection.getPort(), 1883, "Name getter"); // Check for non-secure port
+        assertEquals("123.123.123.123", connection.getHost(), "URL getter");
+        assertEquals(1883, connection.getPort(), "Name getter"); // Check for non-secure port
         assertFalse(connection.isSecure(), "Secure getter");
         assertFalse(connection.isHostnameValidated(), "HostnameValidated getter");
         assertEquals("setterGetterTests", connection.getClientId(), "ClientID getter");

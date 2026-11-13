@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,14 +30,15 @@ import net.wimpi.modbus.net.ModbusSlaveConnection;
  *
  */
 @NonNullByDefault
-public class ModbusConnectionPool extends GenericKeyedObjectPool<ModbusSlaveEndpoint, ModbusSlaveConnection> {
+public class ModbusConnectionPool extends GenericKeyedObjectPool<ModbusSlaveEndpoint, @Nullable ModbusSlaveConnection> {
 
-    public ModbusConnectionPool(KeyedPooledObjectFactory<ModbusSlaveEndpoint, ModbusSlaveConnection> factory) {
+    public ModbusConnectionPool(
+            KeyedPooledObjectFactory<ModbusSlaveEndpoint, @Nullable ModbusSlaveConnection> factory) {
         super(factory, new ModbusPoolConfig());
     }
 
     @Override
-    public void setConfig(@Nullable GenericKeyedObjectPoolConfig<ModbusSlaveConnection> conf) {
+    public void setConfig(@Nullable GenericKeyedObjectPoolConfig<@Nullable ModbusSlaveConnection> conf) {
         if (conf == null) {
             return;
         } else if (!(conf instanceof ModbusPoolConfig)) {

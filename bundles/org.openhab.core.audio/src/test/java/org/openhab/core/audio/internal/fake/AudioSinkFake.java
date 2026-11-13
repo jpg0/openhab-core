@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,7 @@ import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.audio.AudioFormat;
 import org.openhab.core.audio.AudioSink;
 import org.openhab.core.audio.AudioStream;
-import org.openhab.core.audio.FixedLengthAudioStream;
+import org.openhab.core.audio.ByteArrayAudioStream;
 import org.openhab.core.audio.URLAudioStream;
 import org.openhab.core.audio.UnsupportedAudioFormatException;
 import org.openhab.core.audio.UnsupportedAudioStreamException;
@@ -48,9 +48,21 @@ public class AudioSinkFake implements AudioSink {
     public boolean isUnsupportedAudioFormatExceptionExpected;
     public boolean isUnsupportedAudioStreamExceptionExpected;
 
-    private static final Set<AudioFormat> SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.MP3, AudioFormat.WAV);
-    private static final Set<Class<? extends AudioStream>> SUPPORTED_AUDIO_STREAMS = Set
-            .of(FixedLengthAudioStream.class, URLAudioStream.class);
+    private static final Set<AudioFormat> DEFAULT_SUPPORTED_AUDIO_FORMATS = Set.of(AudioFormat.MP3, AudioFormat.WAV);
+    private static final Set<Class<? extends AudioStream>> DEFAULT_SUPPORTED_AUDIO_STREAMS = Set
+            .of(ByteArrayAudioStream.class, URLAudioStream.class);
+
+    public Set<AudioFormat> supportedAudioFormats = DEFAULT_SUPPORTED_AUDIO_FORMATS;
+    public Set<Class<? extends AudioStream>> supportedAudioStreams = DEFAULT_SUPPORTED_AUDIO_STREAMS;
+
+    public AudioSinkFake() {
+    }
+
+    public AudioSinkFake(Set<AudioFormat> supportedAudioFormats,
+            Set<Class<? extends AudioStream>> supportedAudioStreams) {
+        this.supportedAudioFormats = supportedAudioFormats;
+        this.supportedAudioStreams = supportedAudioStreams;
+    }
 
     @Override
     public String getId() {
@@ -71,6 +83,13 @@ public class AudioSinkFake implements AudioSink {
         if (isUnsupportedAudioStreamExceptionExpected) {
             throw new UnsupportedAudioStreamException("Expected audio stream exception", null);
         }
+        if (audioStream != null) {
+            boolean formatSupported = supportedAudioFormats.stream()
+                    .anyMatch(f -> f.isCompatible(audioStream.getFormat()));
+            if (!formatSupported) {
+                throw new UnsupportedAudioFormatException("Format not supported: " + audioStream.getFormat(), null);
+            }
+        }
         this.audioStream = audioStream;
         if (audioStream != null) {
             audioFormat = audioStream.getFormat();
@@ -86,12 +105,12 @@ public class AudioSinkFake implements AudioSink {
 
     @Override
     public Set<AudioFormat> getSupportedFormats() {
-        return SUPPORTED_AUDIO_FORMATS;
+        return supportedAudioFormats;
     }
 
     @Override
     public Set<Class<? extends AudioStream>> getSupportedStreams() {
-        return SUPPORTED_AUDIO_STREAMS;
+        return supportedAudioStreams;
     }
 
     @Override

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,9 +12,11 @@
  */
 package org.openhab.core.addon.marketplace.internal.community;
 
-import static org.openhab.core.addon.marketplace.internal.community.CommunityMarketplaceAddonService.JAR_CONTENT_TYPE;
+import static org.openhab.core.addon.marketplace.MarketplaceConstants.*;
 
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
@@ -28,6 +30,8 @@ import org.openhab.core.common.ThreadPoolManager;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A {@link MarketplaceAddonHandler} implementation, which handles add-ons as jar files (specifically, OSGi
@@ -44,8 +48,8 @@ import org.osgi.service.component.annotations.Component;
 public class CommunityBundleAddonHandler extends MarketplaceBundleInstaller implements MarketplaceAddonHandler {
     private static final List<String> SUPPORTED_EXT_TYPES = List.of("automation", "binding", "misc", "persistence",
             "transformation", "ui", "voice");
-    private static final String JAR_DOWNLOAD_URL_PROPERTY = "jar_download_url";
 
+    private final Logger logger = LoggerFactory.getLogger(CommunityBundleAddonHandler.class);
     private final ScheduledExecutorService scheduler = ThreadPoolManager
             .getScheduledPool(ThreadPoolManager.THREAD_POOL_NAME_COMMON);
     private final BundleContext bundleContext;
@@ -73,18 +77,25 @@ public class CommunityBundleAddonHandler extends MarketplaceBundleInstaller impl
 
     @Override
     public void install(Addon addon) throws MarketplaceHandlerException {
+        Object urlObject = addon.getProperties().get(JAR_DOWNLOAD_URL_PROPERTY);
+        if (!(urlObject instanceof String urlString)) {
+            logger.error("Bundle {} has no JAR download URL", addon.getUid());
+            throw new MarketplaceHandlerException("Bundle has no JAR download URL", null);
+        }
+
+        URL sourceUrl;
         try {
-            URL sourceUrl = new URL((String) addon.getProperties().get(JAR_DOWNLOAD_URL_PROPERTY));
-            addBundleToCache(addon.getId(), sourceUrl);
-            installFromCache(bundleContext, addon.getId());
-        } catch (MalformedURLException e) {
+            sourceUrl = new URI(urlString).toURL();
+        } catch (IllegalArgumentException | MalformedURLException | URISyntaxException e) {
             throw new MarketplaceHandlerException("Malformed source URL: " + e.getMessage(), e);
         }
+        addBundleToCache(addon.getUid(), sourceUrl);
+        installFromCache(bundleContext, addon.getUid());
     }
 
     @Override
     public void uninstall(Addon addon) throws MarketplaceHandlerException {
-        uninstallBundle(bundleContext, addon.getId());
+        uninstallBundle(bundleContext, addon.getUid());
     }
 
     @Override

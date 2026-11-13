@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,18 +14,21 @@ package org.openhab.core.config.discovery.internal.console;
 
 import static org.openhab.core.config.discovery.inbox.InboxPredicates.*;
 
-import java.util.Date;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.config.discovery.DiscoveryResult;
 import org.openhab.core.config.discovery.DiscoveryResultFlag;
 import org.openhab.core.config.discovery.inbox.Inbox;
 import org.openhab.core.config.discovery.internal.PersistentInbox;
 import org.openhab.core.io.console.Console;
+import org.openhab.core.io.console.ConsoleCommandCompleter;
+import org.openhab.core.io.console.StringsCompleter;
 import org.openhab.core.io.console.extensions.AbstractConsoleCommandExtension;
 import org.openhab.core.io.console.extensions.ConsoleCommandExtension;
 import org.openhab.core.thing.ThingTypeUID;
@@ -51,7 +54,38 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
     private static final String SUBCMD_CLEAR = "clear";
     private static final String SUBCMD_REMOVE = "remove";
 
+    private static final StringsCompleter SUBCMD_COMPLETER = new StringsCompleter(
+            List.of(SUBCMD_APPROVE, SUBCMD_IGNORE, SUBCMD_LIST, SUBCMD_LIST_IGNORED, SUBCMD_CLEAR, SUBCMD_REMOVE),
+            false);
+
     private final Inbox inbox;
+
+    private class InboxConsoleCommandCompleter implements ConsoleCommandCompleter {
+        @Override
+        public boolean complete(String[] args, int cursorArgumentIndex, int cursorPosition, List<String> candidates) {
+            if (cursorArgumentIndex <= 0) {
+                return SUBCMD_COMPLETER.complete(args, cursorArgumentIndex, cursorPosition, candidates);
+            } else if (cursorArgumentIndex == 1) {
+                if (SUBCMD_IGNORE.equalsIgnoreCase(args[0]) || SUBCMD_APPROVE.equalsIgnoreCase(args[0])) {
+                    return new StringsCompleter(getThingUIDs(), true).complete(args, cursorArgumentIndex,
+                            cursorPosition, candidates);
+                } else if (SUBCMD_REMOVE.equalsIgnoreCase(args[0])) {
+                    return new StringsCompleter(getThingAndThingTypeUIDs(), true).complete(args, cursorArgumentIndex,
+                            cursorPosition, candidates);
+                }
+            }
+            return false;
+        }
+
+        private Collection<String> getThingUIDs() {
+            return inbox.stream().map(r -> r.getThingUID().getAsString()).toList();
+        }
+
+        private Collection<String> getThingAndThingTypeUIDs() {
+            return inbox.stream()
+                    .flatMap(r -> Stream.of(r.getThingUID().getAsString(), r.getThingTypeUID().getAsString())).toList();
+        }
+    }
 
     @Activate
     public InboxConsoleCommandExtension(final @Reference Inbox inbox) {
@@ -73,8 +107,7 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
                         }
                         try {
                             ThingUID thingUID = new ThingUID(args[1]);
-                            List<DiscoveryResult> results = inbox.stream().filter(forThingUID(thingUID))
-                                    .collect(Collectors.toList());
+                            List<DiscoveryResult> results = inbox.stream().filter(forThingUID(thingUID)).toList();
                             if (results.isEmpty()) {
                                 console.println("No matching inbox entry could be found.");
                                 return;
@@ -102,12 +135,10 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
                     }
                     break;
                 case SUBCMD_LIST:
-                    printInboxEntries(console,
-                            inbox.stream().filter(withFlag((DiscoveryResultFlag.NEW))).collect(Collectors.toList()));
+                    printInboxEntries(console, inbox.stream().filter(withFlag((DiscoveryResultFlag.NEW))).toList());
                     break;
                 case SUBCMD_LIST_IGNORED:
-                    printInboxEntries(console, inbox.stream().filter(withFlag((DiscoveryResultFlag.IGNORED)))
-                            .collect(Collectors.toList()));
+                    printInboxEntries(console, inbox.stream().filter(withFlag((DiscoveryResultFlag.IGNORED))).toList());
                     break;
                 case SUBCMD_CLEAR:
                     clearInboxEntries(console, inbox.getAll());
@@ -117,8 +148,7 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
                         boolean validParam = true;
                         try {
                             ThingUID thingUID = new ThingUID(args[1]);
-                            List<DiscoveryResult> results = inbox.stream().filter(forThingUID(thingUID))
-                                    .collect(Collectors.toList());
+                            List<DiscoveryResult> results = inbox.stream().filter(forThingUID(thingUID)).toList();
                             if (results.isEmpty()) {
                                 console.println("No matching inbox entry could be found.");
                             } else {
@@ -131,7 +161,7 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
                             try {
                                 ThingTypeUID thingTypeUID = new ThingTypeUID(args[1]);
                                 List<DiscoveryResult> results = inbox.stream().filter(forThingTypeUID(thingTypeUID))
-                                        .collect(Collectors.toList());
+                                        .toList();
                                 if (results.isEmpty()) {
                                     console.println("No matching inbox entry could be found.");
                                 } else {
@@ -168,7 +198,7 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
             ThingUID bridgeId = discoveryResult.getBridgeUID();
             Map<String, Object> properties = discoveryResult.getProperties();
             String representationProperty = discoveryResult.getRepresentationProperty();
-            String timestamp = new Date(discoveryResult.getTimestamp()).toString();
+            String timestamp = discoveryResult.getCreationTime().toString();
             String timeToLive = discoveryResult.getTimeToLive() == DiscoveryResult.TTL_UNLIMITED ? "UNLIMITED"
                     : "" + discoveryResult.getTimeToLive();
             console.println(String.format(
@@ -207,5 +237,10 @@ public class InboxConsoleCommandExtension extends AbstractConsoleCommandExtensio
                 buildCommandUsage(SUBCMD_REMOVE + " [<thingUID>|<thingTypeUID>]",
                         "remove the inbox entries of a given thing id or thing type"),
                 buildCommandUsage(SUBCMD_IGNORE + " <thingUID>", "ignores an inbox entry permanently"));
+    }
+
+    @Override
+    public @Nullable ConsoleCommandCompleter getCompleter() {
+        return new InboxConsoleCommandCompleter();
     }
 }

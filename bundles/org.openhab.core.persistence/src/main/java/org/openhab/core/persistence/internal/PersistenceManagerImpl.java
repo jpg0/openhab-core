@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,18 +12,27 @@
  */
 package org.openhab.core.persistence.internal;
 
+import static org.openhab.core.persistence.FilterCriteria.Ordering.ASCENDING;
+import static org.openhab.core.persistence.strategy.PersistenceStrategy.Globals.*;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -36,27 +45,36 @@ import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
 import org.openhab.core.items.ItemRegistryChangeListener;
 import org.openhab.core.items.StateChangeListener;
+import org.openhab.core.items.TimeSeriesListener;
 import org.openhab.core.persistence.FilterCriteria;
 import org.openhab.core.persistence.HistoricItem;
+import org.openhab.core.persistence.ModifiablePersistenceService;
+import org.openhab.core.persistence.PersistedItem;
 import org.openhab.core.persistence.PersistenceItemConfiguration;
 import org.openhab.core.persistence.PersistenceManager;
 import org.openhab.core.persistence.PersistenceService;
-import org.openhab.core.persistence.PersistenceServiceConfiguration;
 import org.openhab.core.persistence.QueryablePersistenceService;
 import org.openhab.core.persistence.config.PersistenceAllConfig;
 import org.openhab.core.persistence.config.PersistenceConfig;
 import org.openhab.core.persistence.config.PersistenceGroupConfig;
+import org.openhab.core.persistence.config.PersistenceGroupExcludeConfig;
 import org.openhab.core.persistence.config.PersistenceItemConfig;
+import org.openhab.core.persistence.config.PersistenceItemExcludeConfig;
+import org.openhab.core.persistence.registry.PersistenceServiceConfiguration;
+import org.openhab.core.persistence.registry.PersistenceServiceConfigurationRegistry;
+import org.openhab.core.persistence.registry.PersistenceServiceConfigurationRegistryChangeListener;
 import org.openhab.core.persistence.strategy.PersistenceCronStrategy;
 import org.openhab.core.persistence.strategy.PersistenceStrategy;
 import org.openhab.core.scheduler.CronScheduler;
 import org.openhab.core.scheduler.ScheduledCompletableFuture;
+import org.openhab.core.scheduler.Scheduler;
 import org.openhab.core.service.ReadyMarker;
 import org.openhab.core.service.ReadyMarkerFilter;
 import org.openhab.core.service.ReadyService;
 import org.openhab.core.service.ReadyService.ReadyTracker;
 import org.openhab.core.service.StartLevelService;
 import org.openhab.core.types.State;
+import org.openhab.core.types.TimeSeries;
 import org.openhab.core.types.UnDefType;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -72,38 +90,47 @@ import org.slf4j.LoggerFactory;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Markus Rathgeb - Separation of persistence core and model, drop Quartz usage.
+ * @author Jan N. Klug - Refactored to use service configuration registry
+ * @author Jan N. Klug - Added time series support
+ * @author Mark Herwege - Added restoring lastState, lastStateChange and lastStateUpdate
+ * @author Mark Herwege - Make default strategy to be only a configuration suggestion
+ * @author Mark Herwege - Fix and enhance handling of time series and external persistence updates
  */
 @Component(immediate = true, service = PersistenceManager.class)
 @NonNullByDefault
-public class PersistenceManagerImpl
-        implements ItemRegistryChangeListener, PersistenceManager, StateChangeListener, ReadyTracker {
+public class PersistenceManagerImpl implements ItemRegistryChangeListener, StateChangeListener, ReadyTracker,
+        PersistenceServiceConfigurationRegistryChangeListener, TimeSeriesListener, PersistenceManager {
+    private static final String PERSISTENCE_SOURCE = "org.openhab.core.persistence";
 
     private final Logger logger = LoggerFactory.getLogger(PersistenceManagerImpl.class);
 
     private final ReadyMarker marker = new ReadyMarker("persistence", "restore");
 
     // the scheduler used for timer events
-    private final CronScheduler scheduler;
+    private final CronScheduler cronScheduler;
+    private final Scheduler scheduler;
     private final ItemRegistry itemRegistry;
     private final SafeCaller safeCaller;
     private final ReadyService readyService;
+    private final PersistenceServiceConfigurationRegistry persistenceServiceConfigurationRegistry;
+
     private volatile boolean started = false;
 
-    final Map<String, PersistenceService> persistenceServices = new HashMap<>();
-    final Map<String, @Nullable PersistenceServiceConfiguration> persistenceServiceConfigs = new HashMap<>();
-    private final Map<String, Set<ScheduledCompletableFuture<?>>> persistenceJobs = new HashMap<>();
+    private final Map<String, PersistenceServiceContainer> persistenceServiceContainers = new ConcurrentHashMap<>();
 
     @Activate
-    public PersistenceManagerImpl(final @Reference CronScheduler scheduler, final @Reference ItemRegistry itemRegistry,
-            final @Reference SafeCaller safeCaller, final @Reference ReadyService readyService) {
+    public PersistenceManagerImpl(final @Reference CronScheduler cronScheduler, final @Reference Scheduler scheduler,
+            final @Reference ItemRegistry itemRegistry, final @Reference SafeCaller safeCaller,
+            final @Reference ReadyService readyService,
+            final @Reference PersistenceServiceConfigurationRegistry persistenceServiceConfigurationRegistry) {
+        this.cronScheduler = cronScheduler;
         this.scheduler = scheduler;
         this.itemRegistry = itemRegistry;
         this.safeCaller = safeCaller;
         this.readyService = readyService;
-    }
+        this.persistenceServiceConfigurationRegistry = persistenceServiceConfigurationRegistry;
 
-    @Activate
-    protected void activate() {
+        persistenceServiceConfigurationRegistry.addRegistryChangeListener(this);
         readyService.registerTracker(this, new ReadyMarkerFilter().withType(StartLevelService.STARTLEVEL_MARKER_TYPE)
                 .withIdentifier(Integer.toString(StartLevelService.STARTLEVEL_MODEL)));
     }
@@ -111,109 +138,108 @@ public class PersistenceManagerImpl
     @Deactivate
     protected void deactivate() {
         itemRegistry.removeRegistryChangeListener(this);
+        persistenceServiceConfigurationRegistry.removeRegistryChangeListener(this);
         started = false;
-        removeTimers();
-        removeItemStateChangeListeners();
+
+        persistenceServiceContainers.values().forEach(PersistenceServiceContainer::cancelPersistJobs);
+        persistenceServiceContainers.values().forEach(PersistenceServiceContainer::cancelForecastJobs);
+
+        // remove item state change listeners
+        itemRegistry.stream().filter(GenericItem.class::isInstance)
+                .forEach(item -> ((GenericItem) item).removeStateChangeListener(this));
     }
 
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     protected void addPersistenceService(PersistenceService persistenceService) {
-        logger.debug("Initializing {} persistence service.", persistenceService.getId());
-        persistenceServices.put(persistenceService.getId(), persistenceService);
-        persistenceServiceConfigs.putIfAbsent(persistenceService.getId(), getDefaultConfig(persistenceService));
+        String serviceId = persistenceService.getId();
+        logger.debug("Initializing {} persistence service.", serviceId);
+        PersistenceServiceContainer container = new PersistenceServiceContainer(persistenceService,
+                persistenceServiceConfigurationRegistry.get(serviceId));
+
+        PersistenceServiceContainer oldContainer = persistenceServiceContainers.put(serviceId, container);
+
+        if (oldContainer != null) { // cancel all jobs if the persistence service is set and an old configuration is
+                                    // already present
+            oldContainer.cancelPersistJobs();
+            oldContainer.cancelForecastJobs();
+        }
+
         if (started) {
-            stopEventHandling(persistenceService.getId());
-            startEventHandling(persistenceService.getId());
+            startEventHandling(container);
         }
     }
 
     protected void removePersistenceService(PersistenceService persistenceService) {
-        stopEventHandling(persistenceService.getId());
-        persistenceServices.remove(persistenceService.getId());
+        PersistenceServiceContainer container = persistenceServiceContainers.remove(persistenceService.getId());
+        if (container != null) {
+            container.cancelPersistJobs();
+            container.cancelForecastJobs();
+        }
     }
 
     /**
      * Calls all persistence services which use change or update policy for the given item
      *
      * @param item the item to persist
-     * @param onlyChanges true, if it has the change strategy, false otherwise
+     * @param changed true, if it has the change strategy, false otherwise
      */
-    private void handleStateEvent(Item item, boolean onlyChanges) {
-        synchronized (persistenceServiceConfigs) {
-            for (Entry<String, @Nullable PersistenceServiceConfiguration> entry : persistenceServiceConfigs
-                    .entrySet()) {
-                final String serviceName = entry.getKey();
-                final PersistenceServiceConfiguration config = entry.getValue();
-                if (config != null && persistenceServices.containsKey(serviceName)) {
-                    for (PersistenceItemConfiguration itemConfig : config.getConfigs()) {
-                        if (hasStrategy(config, itemConfig, onlyChanges ? PersistenceStrategy.Globals.CHANGE
-                                : PersistenceStrategy.Globals.UPDATE)) {
-                            if (appliesToItem(itemConfig, item)) {
-                                persistenceServices.get(serviceName).store(item, itemConfig.getAlias());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    private void handleStateEvent(Item item, boolean changed) {
+        PersistenceStrategy changeStrategy = changed ? PersistenceStrategy.Globals.CHANGE
+                : PersistenceStrategy.Globals.UPDATE;
+
+        persistenceServiceContainers.values().forEach(container -> storeItem(container, item, changeStrategy));
     }
 
-    /**
-     * Checks if a given persistence configuration entry has a certain strategy for the given service
-     *
-     * @param config the configuration to check for
-     * @param itemConfig the persistence configuration entry
-     * @param strategy the strategy to check for
-     * @return true, if it has the given strategy
-     */
-    private boolean hasStrategy(PersistenceServiceConfiguration config, PersistenceItemConfiguration itemConfig,
-            PersistenceStrategy strategy) {
-        if (config.getDefaults().contains(strategy) && itemConfig.getStrategies().isEmpty()) {
-            return true;
-        } else {
-            for (PersistenceStrategy s : itemConfig.getStrategies()) {
-                if (s.equals(strategy)) {
-                    return true;
-                }
-            }
-            return false;
-        }
+    private void storeItem(PersistenceServiceContainer container, Item item, PersistenceStrategy changeStrategy) {
+        container.getMatchingConfigurations(changeStrategy).filter(itemConfig -> appliesToItem(itemConfig, item))
+                .filter(itemConfig -> itemConfig.filters().stream().allMatch(filter -> filter.apply(item)))
+                .forEach(itemConfig -> {
+                    itemConfig.filters().forEach(filter -> filter.persisted(item));
+                    container.getPersistenceService().store(item, container.getAlias(item));
+                });
     }
 
     /**
      * Checks if a given persistence configuration entry is relevant for an item
      *
-     * @param config the persistence configuration entry
+     * @param itemConfig the persistence configuration entry
      * @param item to check if the configuration applies to
      * @return true, if the configuration applies to the item
      */
-    private boolean appliesToItem(PersistenceItemConfiguration config, Item item) {
-        for (PersistenceConfig itemCfg : config.getItems()) {
+    private boolean appliesToItem(PersistenceItemConfiguration itemConfig, Item item) {
+        boolean applies = false;
+        for (PersistenceConfig itemCfg : itemConfig.items()) {
             if (itemCfg instanceof PersistenceAllConfig) {
-                return true;
-            }
-            if (itemCfg instanceof PersistenceItemConfig) {
-                PersistenceItemConfig singleItemConfig = (PersistenceItemConfig) itemCfg;
-                if (item.getName().equals(singleItemConfig.getItem())) {
-                    return true;
+                applies = true;
+            } else if (itemCfg instanceof PersistenceItemConfig persistenceItemConfig) {
+                if (item.getName().equals(persistenceItemConfig.getItem())) {
+                    applies = true;
                 }
-            }
-            if (itemCfg instanceof PersistenceGroupConfig) {
-                PersistenceGroupConfig groupItemConfig = (PersistenceGroupConfig) itemCfg;
+            } else if (itemCfg instanceof PersistenceItemExcludeConfig persistenceItemExcludeConfig) {
+                if (item.getName().equals(persistenceItemExcludeConfig.getItem())) {
+                    return false;
+                }
+            } else if (itemCfg instanceof PersistenceGroupConfig persistenceGroupConfig) {
                 try {
-                    Item gItem = itemRegistry.getItem(groupItemConfig.getGroup());
-                    if (gItem instanceof GroupItem) {
-                        GroupItem groupItem = (GroupItem) gItem;
-                        if (groupItem.getAllMembers().contains(item)) {
-                            return true;
-                        }
+                    Item gItem = itemRegistry.getItem(persistenceGroupConfig.getGroup());
+                    if (gItem instanceof GroupItem gItem2 && gItem2.getAllStateMembers().contains(item)) {
+                        applies = true;
+                    }
+                } catch (ItemNotFoundException e) {
+                    // do nothing
+                }
+            } else if (itemCfg instanceof PersistenceGroupExcludeConfig persistenceGroupExcludeConfig) {
+                try {
+                    Item gItem = itemRegistry.getItem(persistenceGroupExcludeConfig.getGroup());
+                    if (gItem instanceof GroupItem gItem2 && gItem2.getAllStateMembers().contains(item)) {
+                        return false;
                     }
                 } catch (ItemNotFoundException e) {
                     // do nothing
                 }
             }
         }
-        return false;
+        return applies;
     }
 
     /**
@@ -222,243 +248,96 @@ public class PersistenceManagerImpl
      * @param config the persistence configuration entry
      * @return all items that this configuration applies to
      */
-    Iterable<Item> getAllItems(PersistenceItemConfiguration config) {
-        // first check, if we should return them all
-        for (Object itemCfg : config.getItems()) {
-            if (itemCfg instanceof PersistenceAllConfig) {
-                return itemRegistry.getItems();
-            }
-        }
-
-        // otherwise, go through the detailed definitions
+    private Iterable<Item> getAllItems(PersistenceItemConfiguration config) {
         Set<Item> items = new HashSet<>();
-        for (Object itemCfg : config.getItems()) {
-            if (itemCfg instanceof PersistenceItemConfig) {
-                PersistenceItemConfig singleItemConfig = (PersistenceItemConfig) itemCfg;
-                String itemName = singleItemConfig.getItem();
+        Set<Item> excludeItems = new HashSet<>();
+        for (Object itemCfg : config.items()) {
+            if (itemCfg instanceof PersistenceAllConfig) {
+                items.addAll(itemRegistry.getItems());
+            } else if (itemCfg instanceof PersistenceItemConfig persistenceItemConfig) {
+                String itemName = persistenceItemConfig.getItem();
                 try {
                     items.add(itemRegistry.getItem(itemName));
                 } catch (ItemNotFoundException e) {
                     logger.debug("Item '{}' does not exist.", itemName);
                 }
-            }
-            if (itemCfg instanceof PersistenceGroupConfig) {
-                PersistenceGroupConfig groupItemConfig = (PersistenceGroupConfig) itemCfg;
-                String groupName = groupItemConfig.getGroup();
+            } else if (itemCfg instanceof PersistenceGroupConfig persistenceGroupConfig) {
+                String groupName = persistenceGroupConfig.getGroup();
                 try {
                     Item gItem = itemRegistry.getItem(groupName);
-                    if (gItem instanceof GroupItem) {
-                        GroupItem groupItem = (GroupItem) gItem;
-                        items.addAll(groupItem.getAllMembers());
+                    if (gItem instanceof GroupItem groupItem) {
+                        items.addAll(groupItem.getAllStateMembers());
+                    }
+                } catch (ItemNotFoundException e) {
+                    logger.debug("Item group '{}' does not exist.", groupName);
+                }
+            } else if (itemCfg instanceof PersistenceItemExcludeConfig persistenceItemConfig) {
+                String itemName = persistenceItemConfig.getItem();
+                try {
+                    excludeItems.add(itemRegistry.getItem(itemName));
+                } catch (ItemNotFoundException e) {
+                    logger.debug("Item '{}' does not exist.", itemName);
+                }
+            } else if (itemCfg instanceof PersistenceGroupExcludeConfig persistenceGroupConfig) {
+                String groupName = persistenceGroupConfig.getGroup();
+                try {
+                    Item gItem = itemRegistry.getItem(groupName);
+                    if (gItem instanceof GroupItem groupItem) {
+                        excludeItems.addAll(groupItem.getAllStateMembers());
                     }
                 } catch (ItemNotFoundException e) {
                     logger.debug("Item group '{}' does not exist.", groupName);
                 }
             }
         }
+        items.removeAll(excludeItems);
         return items;
     }
 
-    /**
-     * Handles the "restoreOnStartup" strategy for the item.
-     * If the item state is still undefined when entering this method, all persistence configurations are checked,
-     * if they have the "restoreOnStartup" strategy configured for the item. If so, the item state will be set
-     * to its last persisted value.
-     *
-     * @param item the item to restore the state for
-     */
-    @SuppressWarnings("null")
-    private void initialize(Item item) {
-        // get the last persisted state from the persistence service if no state is yet set
-        if (UnDefType.NULL.equals(item.getState()) && item instanceof GenericItem) {
-            for (Entry<String, @Nullable PersistenceServiceConfiguration> entry : persistenceServiceConfigs
-                    .entrySet()) {
-                final String serviceName = entry.getKey();
-                final PersistenceServiceConfiguration config = entry.getValue();
-                if (config != null) {
-                    for (PersistenceItemConfiguration itemConfig : config.getConfigs()) {
-                        if (hasStrategy(config, itemConfig, PersistenceStrategy.Globals.RESTORE)) {
-                            if (appliesToItem(itemConfig, item)) {
-                                PersistenceService service = persistenceServices.get(serviceName);
-                                if (service instanceof QueryablePersistenceService) {
-                                    QueryablePersistenceService queryService = (QueryablePersistenceService) service;
-                                    FilterCriteria filter = new FilterCriteria().setItemName(item.getName())
-                                            .setPageSize(1);
-                                    Iterable<HistoricItem> result = safeCaller
-                                            .create(queryService, QueryablePersistenceService.class).onTimeout(() -> {
-                                                logger.warn("Querying persistence service '{}' takes more than {}ms.",
-                                                        queryService.getId(), SafeCaller.DEFAULT_TIMEOUT);
-                                            }).onException(e -> {
-                                                logger.error(
-                                                        "Exception occurred while querying persistence service '{}': {}",
-                                                        queryService.getId(), e.getMessage(), e);
-                                            }).build().query(filter);
-                                    if (result != null) {
-                                        Iterator<HistoricItem> it = result.iterator();
-                                        if (it.hasNext()) {
-                                            HistoricItem historicItem = it.next();
-                                            GenericItem genericItem = (GenericItem) item;
-                                            genericItem.removeStateChangeListener(this);
-                                            genericItem.setState(historicItem.getState());
-                                            genericItem.addStateChangeListener(this);
-                                            if (logger.isDebugEnabled()) {
-                                                logger.debug("Restored item state from '{}' for item '{}' -> '{}'",
-                                                        DateTimeFormatter.ISO_ZONED_DATE_TIME
-                                                                .format(historicItem.getTimestamp()),
-                                                        item.getName(), historicItem.getState());
-                                            }
-                                            return;
-                                        }
-                                    }
-                                } else if (service != null) {
-                                    logger.warn(
-                                            "Failed to restore item states as persistence service '{}' cannot be queried.",
-                                            serviceName);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    private void startEventHandling(PersistenceServiceContainer serviceContainer) {
+        serviceContainer.restoreStatesAndScheduleForecastJobs();
+        serviceContainer.schedulePersistJobs();
     }
 
-    private void removeItemStateChangeListeners() {
-        for (Item item : itemRegistry.getAll()) {
-            if (item instanceof GenericItem) {
-                ((GenericItem) item).removeStateChangeListener(this);
-            }
-        }
-    }
-
-    /**
-     * Creates new {@link ScheduledCompletableFuture}s in the group <code>dbId</code> for the given collection of
-     * {@link PersistenceStrategy strategies}.
-     *
-     * @param dbId the database id used by the persistence service
-     * @param strategies a collection of strategies
-     */
-    private void createTimers(final String dbId, List<PersistenceStrategy> strategies) {
-        for (PersistenceStrategy strategy : strategies) {
-            if (strategy instanceof PersistenceCronStrategy) {
-                PersistenceCronStrategy cronStrategy = (PersistenceCronStrategy) strategy;
-                String cronExpression = cronStrategy.getCronExpression();
-
-                final PersistItemsJob job = new PersistItemsJob(this, dbId, cronStrategy.getName());
-                ScheduledCompletableFuture<?> schedule = scheduler.schedule(job, cronExpression);
-                if (persistenceJobs.containsKey(dbId)) {
-                    persistenceJobs.get(dbId).add(schedule);
-                } else {
-                    final Set<ScheduledCompletableFuture<?>> jobs = new HashSet<>();
-                    jobs.add(schedule);
-                    persistenceJobs.put(dbId, jobs);
-                }
-
-                logger.debug("Scheduled strategy {} with cron expression {}", cronStrategy.getName(), cronExpression);
-            }
-        }
-    }
-
-    /**
-     * Deletes all {@link ScheduledCompletableFuture}s of the group <code>dbId</code>.
-     *
-     * @param dbId the database id used by the persistence service
-     */
-    private void removeTimers(String dbId) {
-        if (!persistenceJobs.containsKey(dbId)) {
-            return;
-        }
-        for (final ScheduledCompletableFuture<?> job : persistenceJobs.get(dbId)) {
-            job.cancel(true);
-            logger.debug("Removed scheduled cron job for persistence service '{}'", dbId);
-        }
-        persistenceJobs.remove(dbId);
-    }
-
-    private void removeTimers() {
-        Set<String> dbIds = new HashSet<>(persistenceJobs.keySet());
-        for (String dbId : dbIds) {
-            removeTimers(dbId);
-        }
-    }
-
-    @Override
-    public void addConfig(final String dbId, final PersistenceServiceConfiguration config) {
-        synchronized (persistenceServiceConfigs) {
-            if (started && persistenceServiceConfigs.containsKey(dbId)) {
-                stopEventHandling(dbId);
-            }
-            persistenceServiceConfigs.put(dbId, config);
-            if (started && persistenceServices.containsKey(dbId)) {
-                startEventHandling(dbId);
-            }
-        }
-    }
-
-    @Override
-    public void removeConfig(final String dbId) {
-        synchronized (persistenceServiceConfigs) {
-            stopEventHandling(dbId);
-            PersistenceService persistenceService = persistenceServices.get(dbId);
-            if (persistenceService != null) {
-                persistenceServiceConfigs.put(dbId, getDefaultConfig(persistenceService));
-                startEventHandling(dbId);
-            } else {
-                persistenceServiceConfigs.remove(dbId);
-            }
-        }
-    }
-
-    private void startEventHandling(final String serviceName) {
-        synchronized (persistenceServiceConfigs) {
-            final PersistenceServiceConfiguration config = persistenceServiceConfigs.get(serviceName);
-            if (config != null) {
-                for (PersistenceItemConfiguration itemConfig : config.getConfigs()) {
-                    if (hasStrategy(config, itemConfig, PersistenceStrategy.Globals.RESTORE)) {
-                        for (Item item : getAllItems(itemConfig)) {
-                            initialize(item);
-                        }
-                    }
-                }
-                createTimers(serviceName, config.getStrategies());
-            }
-        }
-    }
-
-    private void stopEventHandling(String dbId) {
-        synchronized (persistenceServiceConfigs) {
-            removeTimers(dbId);
-        }
-    }
-
-    private @Nullable PersistenceServiceConfiguration getDefaultConfig(PersistenceService persistenceService) {
-        List<PersistenceStrategy> strategies = persistenceService.getDefaultStrategies();
-        List<PersistenceItemConfiguration> configs = List
-                .of(new PersistenceItemConfiguration(List.of(new PersistenceAllConfig()), null, strategies, null));
-        return new PersistenceServiceConfiguration(configs, strategies, strategies);
-    }
+    // ItemStateChangeListener methods
 
     @Override
     public void allItemsChanged(Collection<String> oldItemNames) {
-        for (Item item : itemRegistry.getItems()) {
-            added(item);
-        }
+        addPersistenceListeners(oldItemNames);
+        addToPersistenceServiceContainer(oldItemNames);
+    }
+
+    public void addPersistenceListeners(Collection<String> oldItemNames) {
+        itemRegistry.getItems().forEach(this::addItemToPersistenceListeners);
+    }
+
+    public void addToPersistenceServiceContainer(Collection<String> oldItemNames) {
+        itemRegistry.getItems().forEach(this::addItemToPersistenceServiceContainer);
     }
 
     @Override
     public void added(Item item) {
-        initialize(item);
-        if (item instanceof GenericItem) {
-            GenericItem genericItem = (GenericItem) item;
+        addItemToPersistenceListeners(item);
+        addItemToPersistenceServiceContainer(item);
+    }
+
+    public void addItemToPersistenceServiceContainer(Item item) {
+        persistenceServiceContainers.values().forEach(container -> container.addItem(item));
+    }
+
+    public void addItemToPersistenceListeners(Item item) {
+        if (item instanceof GenericItem genericItem) {
             genericItem.addStateChangeListener(this);
+            genericItem.addTimeSeriesListener(this);
         }
     }
 
     @Override
     public void removed(Item item) {
-        if (item instanceof GenericItem) {
-            GenericItem genericItem = (GenericItem) item;
+        persistenceServiceContainers.values().forEach(container -> container.removeItem(item.getName()));
+        if (item instanceof GenericItem genericItem) {
             genericItem.removeStateChangeListener(this);
+            genericItem.removeTimeSeriesListener(this);
         }
     }
 
@@ -479,13 +358,64 @@ public class PersistenceManagerImpl
     }
 
     @Override
+    public void timeSeriesUpdated(Item item, TimeSeries timeSeries) {
+        if (timeSeries.size() == 0) {
+            // discard empty time series
+            return;
+        }
+        persistenceServiceContainers.values().stream()
+                .filter(psc -> psc.persistenceService instanceof ModifiablePersistenceService)
+                .forEach(container -> Stream
+                        .concat(container.getMatchingConfigurations(UPDATE),
+                                container.getMatchingConfigurations(FORECAST))
+                        .distinct().filter(itemConfig -> appliesToItem(itemConfig, item)).forEach(itemConfig -> {
+                            ModifiablePersistenceService service = (ModifiablePersistenceService) container
+                                    .getPersistenceService();
+                            // remove old values if replace selected
+                            if (timeSeries.getPolicy() == TimeSeries.Policy.REPLACE) {
+                                ZonedDateTime begin = timeSeries.getBegin().atZone(ZoneId.systemDefault());
+                                ZonedDateTime end = timeSeries.getEnd().atZone(ZoneId.systemDefault());
+                                FilterCriteria removeFilter = new FilterCriteria().setItemName(item.getName())
+                                        .setBeginDate(begin).setEndDate(end);
+                                service.remove(removeFilter, container.getAlias(item));
+                                ScheduledCompletableFuture<?> forecastJob = container.forecastJobs.get(item.getName());
+                                if (forecastJob != null && forecastJob.getScheduledTime().isAfter(begin)
+                                        && forecastJob.getScheduledTime().isBefore(end)) {
+                                    forecastJob.cancel(true);
+                                    container.forecastJobs.remove(item.getName());
+                                }
+                            }
+                            // store time series
+                            timeSeries.getStates().forEach(e -> service.store(item,
+                                    e.timestamp().atZone(ZoneId.systemDefault()), e.state(), container.getAlias(item)));
+                            // update item states in the future
+                            Instant now = Instant.now();
+                            timeSeries.getStates().filter(s -> s.timestamp().isAfter(now)).findFirst().ifPresent(s -> {
+                                ScheduledCompletableFuture<?> forecastJob = container.forecastJobs.get(item.getName());
+                                if (forecastJob == null || forecastJob.getScheduledTime()
+                                        .isAfter(s.timestamp().atZone(ZoneId.systemDefault()))) {
+                                    container.scheduleNextForecastForItem(item, s.timestamp(), s.state());
+                                }
+                            });
+                            // update current item state if last entry in the past in time series is after last update
+                            // of item
+                            timeSeries.getStates().filter(s -> s.timestamp().isBefore(now))
+                                    .max(Comparator.comparing(TimeSeries.Entry::timestamp)).ifPresent(s -> {
+                                        ZonedDateTime lastStateUpdate = item.getLastStateUpdate();
+                                        ZonedDateTime timestamp = s.timestamp().atZone(ZoneId.systemDefault());
+                                        if (lastStateUpdate == null || timestamp.isAfter(lastStateUpdate)) {
+                                            container.restoreItemStateFromTimeSeriesEntry(item, timestamp, s.state());
+                                        }
+                                    });
+                        }));
+    }
+
+    @Override
     public void onReadyMarkerAdded(ReadyMarker readyMarker) {
         ExecutorService scheduler = Executors.newSingleThreadExecutor(new NamedThreadFactory("persistenceManager"));
         scheduler.submit(() -> {
-            allItemsChanged(Collections.emptySet());
-            for (String dbId : persistenceServices.keySet()) {
-                startEventHandling(dbId);
-            }
+            allItemsChanged(Set.of());
+            persistenceServiceContainers.values().forEach(this::startEventHandling);
             started = true;
             readyService.markReady(marker);
             itemRegistry.addRegistryChangeListener(this);
@@ -496,5 +426,408 @@ public class PersistenceManagerImpl
     @Override
     public void onReadyMarkerRemoved(ReadyMarker readyMarker) {
         readyService.unmarkReady(marker);
+    }
+
+    @Override
+    public void added(PersistenceServiceConfiguration element) {
+        PersistenceServiceContainer container = persistenceServiceContainers.get(element.getUID());
+        if (container != null) {
+            container.setConfiguration(element);
+            if (started) {
+                startEventHandling(container);
+            }
+        }
+    }
+
+    @Override
+    public void removed(PersistenceServiceConfiguration element) {
+        PersistenceServiceContainer container = persistenceServiceContainers.get(element.getUID());
+        if (container != null) {
+            container.setConfiguration(null);
+            if (started) {
+                startEventHandling(container);
+            }
+        }
+    }
+
+    @Override
+    public void updated(PersistenceServiceConfiguration oldElement, PersistenceServiceConfiguration element) {
+        // no need to remove before, configuration is overwritten if possible
+        added(element);
+    }
+
+    @Override
+    public void handleExternalPersistenceDataChange(PersistenceService persistenceService, Item item) {
+        if (!(persistenceService instanceof QueryablePersistenceService)) {
+            return;
+        }
+        persistenceServiceContainers.values().stream()
+                .filter(container -> container.persistenceService.equals(persistenceService) && Stream
+                        .concat(container.getMatchingConfigurations(UPDATE),
+                                Stream.concat(container.getMatchingConfigurations(CHANGE),
+                                        container.getMatchingConfigurations(FORECAST)))
+                        .distinct().anyMatch(itemConf -> appliesToItem(itemConf, item)))
+                .forEach(container -> {
+                    container.restoreItemStateFromPersistenceUpdate(item);
+                    container.scheduleNextPersistedForecastForItem(item);
+                });
+    }
+
+    private void storeInOtherServices(PersistenceService persistenceService, Item item, State oldState) {
+        boolean changed = !item.getState().equals(oldState);
+        persistenceServiceContainers.values().stream()
+                .filter(container -> !container.persistenceService.equals(persistenceService)).forEach(container -> {
+                    if (changed) {
+                        storeItem(container, item, PersistenceStrategy.Globals.CHANGE);
+                    }
+                    storeItem(container, item, PersistenceStrategy.Globals.UPDATE);
+                });
+    }
+
+    private class PersistenceServiceContainer {
+        private final PersistenceService persistenceService;
+        private final Set<ScheduledCompletableFuture<?>> persistJobs = new HashSet<>();
+        private final Map<String, ScheduledCompletableFuture<?>> forecastJobs = new ConcurrentHashMap<>();
+        private final Map<PersistenceStrategy, Collection<PersistenceItemConfiguration>> strategyCache = new ConcurrentHashMap<>();
+
+        private PersistenceServiceConfiguration configuration;
+
+        public PersistenceServiceContainer(PersistenceService persistenceService,
+                @Nullable PersistenceServiceConfiguration configuration) {
+            this.persistenceService = persistenceService;
+            this.configuration = Objects.requireNonNullElseGet(configuration, this::getEmptyConfig);
+        }
+
+        public PersistenceService getPersistenceService() {
+            return persistenceService;
+        }
+
+        /**
+         * Set a new configuration for this persistence service (also cancels all cron jobs)
+         *
+         * @param configuration the new {@link PersistenceServiceConfiguration}, if {@code null} all configuration will
+         *            be removed
+         */
+        public void setConfiguration(@Nullable PersistenceServiceConfiguration configuration) {
+            cancelPersistJobs();
+            cancelForecastJobs();
+            this.configuration = Objects.requireNonNullElseGet(configuration, this::getEmptyConfig);
+            strategyCache.clear();
+        }
+
+        /**
+         * Get all item configurations from this service that match a certain strategy
+         *
+         * @param strategy the {@link PersistenceStrategy} to look for
+         * @return a {@link Stream<PersistenceItemConfiguration>} of the result
+         */
+        public Stream<PersistenceItemConfiguration> getMatchingConfigurations(PersistenceStrategy strategy) {
+            return Objects.requireNonNull(strategyCache.computeIfAbsent(strategy, s -> {
+                return configuration.getConfigs().stream()
+                        .filter(itemConfig -> itemConfig.strategies().contains(strategy)).toList();
+            })).stream();
+        }
+
+        public @Nullable String getAlias(Item item) {
+            return configuration.getAliases().get(item.getName());
+        }
+
+        private PersistenceServiceConfiguration getEmptyConfig() {
+            return new PersistenceServiceConfiguration(persistenceService.getId(), List.of(), Map.of(), List.of(),
+                    List.of());
+        }
+
+        /**
+         * Cancel all scheduled cron jobs / strategies for this service
+         */
+        public void cancelPersistJobs() {
+            synchronized (persistJobs) {
+                persistJobs.forEach(job -> job.cancel(true));
+                persistJobs.clear();
+            }
+            logger.debug("Removed scheduled cron jobs for persistence service '{}'", configuration.getUID());
+        }
+
+        public void cancelForecastJobs() {
+            synchronized (forecastJobs) {
+                forecastJobs.values().forEach(job -> job.cancel(true));
+                forecastJobs.clear();
+            }
+            logger.debug("Removed scheduled forecast jobs for persistence service '{}'", configuration.getUID());
+        }
+
+        /**
+         * Schedule all necessary cron jobs / strategies for this service
+         */
+        public void schedulePersistJobs() {
+            configuration.getStrategies().stream().filter(PersistenceCronStrategy.class::isInstance)
+                    .forEach(strategy -> {
+                        PersistenceCronStrategy cronStrategy = (PersistenceCronStrategy) strategy;
+                        String cronExpression = cronStrategy.getCronExpression();
+                        List<PersistenceItemConfiguration> itemConfigs = getMatchingConfigurations(strategy).toList();
+                        persistJobs.add(cronScheduler.schedule(() -> persistJob(itemConfigs), cronExpression));
+
+                        logger.debug("Scheduled strategy {} with cron expression {} for service {}",
+                                cronStrategy.getName(), cronExpression, configuration.getUID());
+
+                    });
+        }
+
+        public void restoreStatesAndScheduleForecastJobs() {
+            itemRegistry.getItems().forEach(this::addItem);
+        }
+
+        public void addItem(Item item) {
+            if (persistenceService instanceof QueryablePersistenceService) {
+                if (UnDefType.NULL.equals(item.getState())
+                        && (getMatchingConfigurations(RESTORE)
+                                .anyMatch(configuration -> appliesToItem(configuration, item)))
+                        || getMatchingConfigurations(FORECAST)
+                                .anyMatch(configuration -> appliesToItem(configuration, item))) {
+                    restoreItemStateOnStartup(item);
+                }
+                if (getMatchingConfigurations(FORECAST).anyMatch(configuration -> appliesToItem(configuration, item))) {
+                    scheduleNextPersistedForecastForItem(item);
+                }
+            }
+        }
+
+        public void removeItem(String itemName) {
+            ScheduledCompletableFuture<?> job = forecastJobs.remove(itemName);
+            if (job != null) {
+                job.cancel(true);
+            }
+        }
+
+        private @Nullable PersistedItem getPersistedItem(Item item) {
+            QueryablePersistenceService queryService = (QueryablePersistenceService) persistenceService;
+            String alias = getAlias(item);
+
+            PersistedItem persistedItem = safeCaller.create(queryService, QueryablePersistenceService.class)
+                    .onTimeout(
+                            () -> logger.warn("Querying persistence service '{}' to restore '{}' takes more than {}ms.",
+                                    queryService.getId(), item.getName(), SafeCaller.DEFAULT_TIMEOUT))
+                    .onException(e -> logger.error(
+                            "Exception occurred while querying persistence service '{}' to restore '{}': {}",
+                            queryService.getId(), item.getName(), e.getMessage(), e))
+                    .build().persistedItem(item.getName(), alias);
+            return persistedItem;
+        }
+
+        public void scheduleNextForecastForItem(Item item, Instant time, State state) {
+            String itemName = item.getName();
+            ScheduledFuture<?> oldJob = forecastJobs.remove(itemName);
+            if (oldJob != null) {
+                oldJob.cancel(true);
+            }
+            forecastJobs.put(itemName, scheduler.at(() -> {
+                restoreItemStateFromTimeSeriesEntry(item, time.atZone(ZoneId.systemDefault()), state);
+                scheduleNextPersistedForecastForItem(item);
+            }, time));
+            logger.trace("Scheduled forecasted value for {} at {}", item.getName(), time);
+        }
+
+        public void scheduleNextPersistedForecastForItem(Item item) {
+            if (item instanceof GenericItem) {
+                String alias = getAlias(item);
+                QueryablePersistenceService queryService = (QueryablePersistenceService) persistenceService;
+                FilterCriteria filter = new FilterCriteria().setItemName(item.getName())
+                        .setBeginDate(ZonedDateTime.now()).setOrdering(ASCENDING);
+                Iterator<HistoricItem> result = safeCaller.create(queryService, QueryablePersistenceService.class)
+                        .onTimeout(() -> logger.warn("Querying persistence service '{}' takes more than {}ms.",
+                                queryService.getId(), SafeCaller.DEFAULT_TIMEOUT))
+                        .onException(e -> logger.error("Exception occurred while querying persistence service '{}': {}",
+                                queryService.getId(), e.getMessage(), e))
+                        .build().query(filter, alias).iterator();
+                while (result.hasNext()) {
+                    HistoricItem next = result.next();
+                    Instant timestamp = next.getInstant();
+                    if (timestamp.isAfter(Instant.now())) {
+                        scheduleNextForecastForItem(item, timestamp, next.getState());
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void restoreItemStateOnStartup(Item item) {
+            PersistedItem persistedItem = getPersistedItem(item);
+            if (persistedItem == null) {
+                // in case of an exception or timeout, the safe caller returns null
+                return;
+            }
+
+            PersistedItem newItemState = itemState(item, persistedItem);
+            if (newItemState == null) {
+                return;
+            }
+
+            GenericItem genericItem = (GenericItem) item;
+            genericItem.removeStateChangeListener(PersistenceManagerImpl.this);
+            try {
+                genericItem.setState(newItemState.getState(), newItemState.getLastState(), newItemState.getTimestamp(),
+                        newItemState.getLastStateChange(), PERSISTENCE_SOURCE);
+            } finally {
+                genericItem.addStateChangeListener(PersistenceManagerImpl.this);
+            }
+            if (logger.isDebugEnabled()) {
+                logger.debug("Restored item state from '{}' for item '{}' -> '{}'",
+                        DateTimeFormatter.ISO_ZONED_DATE_TIME.format(persistedItem.getTimestamp()), item.getName(),
+                        persistedItem.getState());
+            }
+        }
+
+        private void restoreItemStateFromTimeSeriesEntry(Item item, ZonedDateTime timestamp, State state) {
+            PersistedItem persistedItem = new PersistedItem() {
+
+                @Override
+                public ZonedDateTime getTimestamp() {
+                    return timestamp;
+                }
+
+                @Override
+                public State getState() {
+                    return state;
+                }
+
+                @Override
+                public String getName() {
+                    return item.getName();
+                }
+
+                @Override
+                public @Nullable ZonedDateTime getLastStateChange() {
+                    return null;
+                }
+
+                @Override
+                public @Nullable State getLastState() {
+                    return null;
+                }
+            };
+            restoreItemStateFromPersistenceUpdate(item, persistedItem);
+        }
+
+        public void restoreItemStateFromPersistenceUpdate(Item item) {
+            PersistedItem persistedItem = getPersistedItem(item);
+            if (persistedItem != null) {
+                restoreItemStateFromPersistenceUpdate(item, persistedItem);
+            }
+        }
+
+        private void restoreItemStateFromPersistenceUpdate(Item item, PersistedItem persistedItem) {
+            PersistedItem newItemState = itemState(item, persistedItem);
+            if (newItemState == null) {
+                return;
+            }
+
+            GenericItem genericItem = (GenericItem) item;
+            State oldState = item.getState();
+            genericItem.removeStateChangeListener(PersistenceManagerImpl.this);
+            try {
+                genericItem.setState(newItemState.getState(), newItemState.getLastState(), newItemState.getTimestamp(),
+                        newItemState.getLastStateChange(), PERSISTENCE_SOURCE);
+                // other services with update or change strategy should persist new state
+                storeInOtherServices(persistenceService, item, oldState);
+            } finally {
+                genericItem.addStateChangeListener(PersistenceManagerImpl.this);
+            }
+            if (logger.isDebugEnabled()) {
+                logger.debug("Reset item state from '{}' for item '{}' -> '{}'",
+                        DateTimeFormatter.ISO_ZONED_DATE_TIME.format(persistedItem.getTimestamp()), item.getName(),
+                        persistedItem.getState());
+            }
+        }
+
+        private @Nullable PersistedItem itemState(Item item, PersistedItem persistedItem) {
+            ZonedDateTime itemLastStateUpdate = item.getLastStateUpdate();
+            ZonedDateTime persistedItemTimestamp = persistedItem.getTimestamp();
+            State itemState = item.getState();
+
+            if (itemState != UnDefType.NULL && itemLastStateUpdate != null
+                    && persistedItemTimestamp.isBefore(itemLastStateUpdate)) {
+                return null;
+            }
+
+            State persistedItemState = persistedItem.getState();
+            State persistedItemLastState = persistedItem.getLastState();
+            ZonedDateTime persistedItemLastStateChange = persistedItem.getLastStateChange();
+            State itemLastState = item.getLastState();
+            ZonedDateTime itemLastStateChange = item.getLastStateChange();
+
+            State state;
+            ZonedDateTime lastStateUpdate = persistedItemTimestamp;
+            State lastState;
+            ZonedDateTime lastStateChange;
+
+            if (itemState.equals(persistedItemState)) {
+                state = itemState;
+                lastState = itemLastState;
+                lastStateChange = (persistedItemLastStateChange != null && itemLastStateChange != null
+                        && persistedItemLastStateChange.isAfter(itemLastStateChange)) ? persistedItemLastStateChange
+                                : itemLastStateChange;
+            } else {
+                state = persistedItemState;
+                if (itemState == UnDefType.NULL || (persistedItemLastStateChange != null
+                        && persistedItemLastState != null && itemLastStateUpdate != null
+                        && persistedItemLastStateChange.isAfter(itemLastStateUpdate))) {
+                    lastState = persistedItemLastState;
+                    lastStateChange = persistedItemLastStateChange;
+                } else {
+                    lastState = itemState;
+                    lastStateChange = persistedItemTimestamp;
+                }
+            }
+
+            // Check again if item has not been updated in the mean time before commit
+            itemLastStateUpdate = item.getLastStateUpdate();
+            itemState = item.getState();
+            if (itemState != UnDefType.NULL && itemLastStateUpdate != null
+                    && persistedItemTimestamp.isBefore(itemLastStateUpdate)) {
+                return null;
+            }
+
+            return new PersistedItem() {
+
+                @Override
+                public ZonedDateTime getTimestamp() {
+                    return lastStateUpdate;
+                }
+
+                @Override
+                public State getState() {
+                    return state;
+                }
+
+                @Override
+                public String getName() {
+                    return item.getName();
+                }
+
+                @Override
+                public @Nullable ZonedDateTime getLastStateChange() {
+                    return lastStateChange;
+                }
+
+                @Override
+                public @Nullable State getLastState() {
+                    return lastState;
+                }
+            };
+        }
+
+        private void persistJob(List<PersistenceItemConfiguration> itemConfigs) {
+            itemConfigs.forEach(itemConfig -> {
+                for (Item item : getAllItems(itemConfig)) {
+                    if (itemConfig.filters().stream().allMatch(filter -> filter.apply(item))) {
+                        long startTime = System.nanoTime();
+                        itemConfig.filters().forEach(filter -> filter.persisted(item));
+                        persistenceService.store(item, getAlias(item));
+                        logger.trace("Storing item '{}' with persistence service '{}' took {}ms", item.getName(),
+                                configuration.getUID(), TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
+                    }
+                }
+            });
+        }
     }
 }

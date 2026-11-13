@@ -33,7 +33,7 @@
 		</description>
 		<category>ColorLight</category>
 		<tags>
-			<tag>Lighting</tag>
+			<tag>Light</tag>
 		</tags>
 		<autoUpdatePolicy>recommend</autoUpdatePolicy>
 		<config-description>
@@ -160,4 +160,8 @@
 		<category>time</category>
 	</channel-type>
 
+	<channel-type id="forecast">
+		<item-type>Number</item-type>
+		<label>Forecast</label>
+	</channel-type>
 </thing:thing-descriptions>

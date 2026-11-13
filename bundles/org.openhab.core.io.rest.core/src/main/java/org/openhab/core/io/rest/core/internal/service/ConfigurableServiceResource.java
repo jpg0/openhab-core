@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,11 +18,9 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import javax.annotation.security.RolesAllowed;
 import javax.ws.rs.Consumes;
@@ -56,6 +54,7 @@ import org.openhab.core.io.rest.core.config.ConfigurationService;
 import org.openhab.core.io.rest.core.service.ConfigurableServiceDTO;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.Constants;
+import org.osgi.framework.FrameworkUtil;
 import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceReference;
 import org.osgi.service.cm.ConfigurationAdmin;
@@ -76,6 +75,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -151,7 +151,7 @@ public class ConfigurableServiceResource implements RESTResource {
         if (configurableService != null) {
             return Response.ok(configurableService).build();
         } else {
-            return Response.status(404).build();
+            return Response.status(Status.NOT_FOUND).build();
         }
     }
 
@@ -175,7 +175,7 @@ public class ConfigurableServiceResource implements RESTResource {
                 + "=*))";
         List<ConfigurableServiceDTO> services = getServicesByFilter(filter, locale);
         if (services.size() == 1) {
-            return services.get(0);
+            return services.getFirst();
         }
         return null;
     }
@@ -201,13 +201,13 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "getServiceConfig", summary = "Get service configuration for given service ID.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "500", description = "Configuration can not be read due to internal error") })
     public Response getConfiguration(@PathParam("serviceId") @Parameter(description = "service ID") String serviceId) {
         try {
             Configuration configuration = configurationService.get(serviceId);
             return configuration != null ? Response.ok(configuration.getProperties()).build()
-                    : Response.ok(Collections.emptyMap()).build();
+                    : Response.ok(Map.of()).build();
         } catch (IOException ex) {
             logger.error("Cannot get configuration for service {}: ", serviceId, ex);
             return Response.status(Status.INTERNAL_SERVER_ERROR).build();
@@ -218,14 +218,14 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces({ MediaType.APPLICATION_JSON })
-    @Operation(operationId = "updateServiceConfig", summary = "Updates a service configuration for given service ID and returns the old configuration.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+    @Operation(operationId = "updateServiceConfig", summary = "Updates a service configuration for given service ID and returns the old configuration.", requestBody = @RequestBody(required = false, content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(type = "object"))), responses = {
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "204", description = "No old configuration"),
             @ApiResponse(responseCode = "500", description = "Configuration can not be updated due to internal error") })
     public Response updateConfiguration(
             @HeaderParam("Accept-Language") @Parameter(description = "language") @Nullable String language,
             @PathParam("serviceId") @Parameter(description = "service ID") String serviceId,
-            @Nullable Map<String, Object> configuration) {
+            @Nullable Map<String, @Nullable Object> configuration) {
         Locale locale = localeService.getLocale(language);
         try {
             Configuration oldConfiguration = configurationService.get(serviceId);
@@ -239,8 +239,8 @@ public class ConfigurableServiceResource implements RESTResource {
         }
     }
 
-    private @Nullable Map<String, Object> normalizeConfiguration(@Nullable Map<String, Object> properties,
-            String serviceId, Locale locale) {
+    private @Nullable Map<String, @Nullable Object> normalizeConfiguration(
+            @Nullable Map<String, @Nullable Object> properties, String serviceId, Locale locale) {
         if (properties == null || properties.isEmpty()) {
             return properties;
         }
@@ -270,14 +270,13 @@ public class ConfigurableServiceResource implements RESTResource {
     @Path("/{serviceId}/config")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "deleteServiceConfig", summary = "Deletes a service configuration for given service ID and returns the old configuration.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = String.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(type = "object"))),
             @ApiResponse(responseCode = "204", description = "No old configuration"),
             @ApiResponse(responseCode = "500", description = "Configuration can not be deleted due to internal error") })
     public Response deleteConfiguration(
             @PathParam("serviceId") @Parameter(description = "service ID") String serviceId) {
         try {
-            Configuration oldConfiguration = configurationService.get(serviceId);
-            configurationService.delete(serviceId);
+            Configuration oldConfiguration = configurationService.delete(serviceId);
             return oldConfiguration != null ? Response.ok(oldConfiguration).build() : Response.noContent().build();
         } catch (IOException ex) {
             logger.error("Cannot delete configuration for service {}: {}", serviceId, ex.getMessage(), ex);
@@ -298,7 +297,7 @@ public class ConfigurableServiceResource implements RESTResource {
             for (ServiceReference<?> serviceReference : serviceReferences) {
                 String id = getServiceId(serviceReference);
                 ConfigurableService configurableService = ConfigurableServiceUtil
-                        .asConfigurableService((key) -> serviceReference.getProperty(key));
+                        .asConfigurableService(serviceReference::getProperty);
 
                 String defaultLabel = configurableService.label();
                 if (defaultLabel.isEmpty()) { // for multi context services the label can be changed and must be read
@@ -309,7 +308,11 @@ public class ConfigurableServiceResource implements RESTResource {
                 String key = I18nUtil.stripConstantOr(defaultLabel,
                         () -> inferKey(configurableService.description_uri(), "label"));
 
-                String label = i18nProvider.getText(serviceReference.getBundle(), key, defaultLabel, locale);
+                // i18n file containing label for system:addons service is exceptionally located in bundle
+                // org.openhab.core (and not in bundle org.openhab.core.addon.eclipse)
+                String label = i18nProvider.getText("system:addons".equals(configurableService.description_uri())
+                        ? FrameworkUtil.getBundle(OpenHAB.class)
+                        : serviceReference.getBundle(), key, defaultLabel, locale);
 
                 String category = configurableService.category();
 
@@ -338,7 +341,7 @@ public class ConfigurableServiceResource implements RESTResource {
 
             if (refs != null && refs.length > 0) {
                 ConfigurableService configurableService = ConfigurableServiceUtil
-                        .asConfigurableService((key) -> refs[0].getProperty(key));
+                        .asConfigurableService(key -> refs[0].getProperty(key));
                 configDescriptionURI = configurableService.description_uri();
             }
         } catch (InvalidSyntaxException e) {
@@ -364,14 +367,12 @@ public class ConfigurableServiceResource implements RESTResource {
         }
 
         final String serviceId;
-        if (pid instanceof String) {
-            serviceId = (String) pid;
-        } else if (pid instanceof String[]) {
-            final String[] pids = (String[]) pid;
+        if (pid instanceof String string) {
+            serviceId = string;
+        } else if (pid instanceof String[] pids) {
             serviceId = getServicePID(cn, Arrays.asList(pids));
-        } else if (pid instanceof Collection) {
-            Collection<?> pids = (Collection<?>) pid;
-            serviceId = getServicePID(cn, pids.stream().map(entry -> entry.toString()).collect(Collectors.toList()));
+        } else if (pid instanceof Collection<?> pids) {
+            serviceId = getServicePID(cn, pids.stream().map(Object::toString).toList());
         } else {
             logger.warn("The component \"{}\" is using an unhandled service PID type ({}). Use component name.", cn,
                     pid.getClass());
@@ -390,9 +391,9 @@ public class ConfigurableServiceResource implements RESTResource {
             case 0:
                 return "";
             case 1:
-                return pids.get(0);
+                return pids.getFirst();
             default: // multiple entries
-                final String first = pids.get(0);
+                final String first = pids.getFirst();
                 boolean differences = false;
                 for (int i = 1; i < pids.size(); ++i) {
                     if (!first.equals(pids.get(i))) {
@@ -410,6 +411,6 @@ public class ConfigurableServiceResource implements RESTResource {
     }
 
     private String inferKey(String uri, String lastSegment) {
-        return "service." + uri.replaceAll(":", ".") + "." + lastSegment;
+        return "service." + uri.replace(":", ".") + "." + lastSegment;
     }
 }

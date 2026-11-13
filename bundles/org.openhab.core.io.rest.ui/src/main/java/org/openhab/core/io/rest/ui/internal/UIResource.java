@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,7 +13,11 @@
 package org.openhab.core.io.rest.ui.internal;
 
 import java.security.InvalidParameterException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -27,16 +31,20 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Request;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.auth.Role;
+import org.openhab.core.common.registry.RegistryChangeListener;
 import org.openhab.core.io.rest.RESTConstants;
 import org.openhab.core.io.rest.RESTResource;
 import org.openhab.core.io.rest.Stream2JSONInputStream;
+import org.openhab.core.io.rest.ui.EnrichedRootUIComponent;
 import org.openhab.core.io.rest.ui.TileDTO;
 import org.openhab.core.ui.components.RootUIComponent;
 import org.openhab.core.ui.components.UIComponentRegistry;
@@ -45,6 +53,7 @@ import org.openhab.core.ui.tiles.Tile;
 import org.openhab.core.ui.tiles.TileProvider;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.jaxrs.whiteboard.JaxrsWhiteboardConstants;
 import org.osgi.service.jaxrs.whiteboard.propertytypes.JSONRequired;
@@ -84,6 +93,9 @@ public class UIResource implements RESTResource {
     private final UIComponentRegistryFactory componentRegistryFactory;
     private final TileProvider tileProvider;
 
+    private Map<String, Date> lastModifiedDates = new HashMap<>();
+    private Map<String, RegistryChangeListener<RootUIComponent>> registryChangeListeners = new HashMap<>();
+
     @Activate
     public UIResource( //
             final @Reference UIComponentRegistryFactory componentRegistryFactory,
@@ -92,7 +104,16 @@ public class UIResource implements RESTResource {
         this.tileProvider = tileProvider;
     }
 
+    @Deactivate
+    public void deactivate() {
+        registryChangeListeners.forEach((n, l) -> {
+            UIComponentRegistry registry = componentRegistryFactory.getRegistry(n);
+            registry.removeRegistryChangeListener(l);
+        });
+    }
+
     @GET
+    @RolesAllowed({ Role.USER, Role.ADMIN })
     @Path("/tiles")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "getUITiles", summary = "Get all registered UI tiles.", responses = {
@@ -103,21 +124,24 @@ public class UIResource implements RESTResource {
     }
 
     @GET
+    @RolesAllowed({ Role.USER, Role.ADMIN })
     @Path("/components/{namespace}")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "getRegisteredUIComponentsInNamespace", summary = "Get all registered UI components in the specified namespace.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = RootUIComponent.class)))) })
-    public Response getAllComponents(@PathParam("namespace") String namespace,
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(array = @ArraySchema(schema = @Schema(implementation = EnrichedRootUIComponent.class)))) })
+    public Response getAllComponents(@Context Request request, @PathParam("namespace") String namespace,
             @QueryParam("summary") @Parameter(description = "summary fields only") @Nullable Boolean summary) {
         UIComponentRegistry registry = componentRegistryFactory.getRegistry(namespace);
-        Stream<RootUIComponent> components = registry.getAll().stream();
+        Stream<EnrichedRootUIComponent> components = registry.getAll().stream()
+                .map(c -> new EnrichedRootUIComponent(c, registry.isEditable(c.getUID())));
         if (summary != null && summary) {
             components = components.map(c -> {
-                RootUIComponent component = new RootUIComponent(c.getUID(), c.getType());
+                EnrichedRootUIComponent component = new EnrichedRootUIComponent(
+                        new RootUIComponent(c.getUID(), c.getType()), c.editable);
                 @Nullable
                 Set<String> tags = c.getTags();
                 if (tags != null) {
-                    component.addTags(c.getTags());
+                    component.addTags(tags);
                 }
                 @Nullable
                 Date timestamp = c.getTimestamp();
@@ -126,15 +150,38 @@ public class UIResource implements RESTResource {
                 }
                 return component;
             });
+            return Response.ok(new Stream2JSONInputStream(components)).build();
+        } else {
+            if (!registryChangeListeners.containsKey(namespace)) {
+                RegistryChangeListener<RootUIComponent> changeListener = new ResetLastModifiedChangeListener(namespace);
+                registryChangeListeners.put(namespace, changeListener);
+                registry.addRegistryChangeListener(changeListener);
+            }
+
+            Date lastModifiedDate = Date.from(Instant.now());
+            if (lastModifiedDates.containsKey(namespace)) {
+                lastModifiedDate = lastModifiedDates.get(namespace);
+                Response.ResponseBuilder responseBuilder = request.evaluatePreconditions(lastModifiedDate);
+                if (responseBuilder != null) {
+                    // send 304 Not Modified
+                    return responseBuilder.build();
+                }
+            } else {
+                lastModifiedDate = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS));
+                lastModifiedDates.put(namespace, lastModifiedDate);
+            }
+
+            return Response.ok(new Stream2JSONInputStream(components)).lastModified(lastModifiedDate)
+                    .cacheControl(RESTConstants.CACHE_CONTROL).build();
         }
-        return Response.ok(new Stream2JSONInputStream(components)).build();
     }
 
     @GET
+    @RolesAllowed({ Role.USER, Role.ADMIN })
     @Path("/components/{namespace}/{componentUID}")
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "getUIComponentInNamespace", summary = "Get a specific UI component in the specified namespace.", responses = {
-            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = RootUIComponent.class))),
+            @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedRootUIComponent.class))),
             @ApiResponse(responseCode = "404", description = "Component not found") })
     public Response getComponentByUID(@PathParam("namespace") String namespace,
             @PathParam("componentUID") String componentUID) {
@@ -143,7 +190,7 @@ public class UIResource implements RESTResource {
         if (component == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
-        return Response.ok(component).build();
+        return Response.ok(new EnrichedRootUIComponent(component, registry.isEditable(componentUID))).build();
     }
 
     @POST
@@ -151,14 +198,14 @@ public class UIResource implements RESTResource {
     @Path("/components/{namespace}")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces({ MediaType.APPLICATION_JSON })
-    @Operation(operationId = "addUIComponentToNamespace", summary = "Add an UI component in the specified namespace.", security = {
+    @Operation(operationId = "addUIComponentToNamespace", summary = "Add a UI component in the specified namespace.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
-                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = RootUIComponent.class))) })
+                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedRootUIComponent.class))) })
     public Response addComponent(@PathParam("namespace") String namespace, RootUIComponent component) {
         UIComponentRegistry registry = componentRegistryFactory.getRegistry(namespace);
         component.updateTimestamp();
         RootUIComponent createdComponent = registry.add(component);
-        return Response.ok(createdComponent).build();
+        return Response.ok(new EnrichedRootUIComponent(createdComponent, true)).build();
     }
 
     @PUT
@@ -168,8 +215,9 @@ public class UIResource implements RESTResource {
     @Produces({ MediaType.APPLICATION_JSON })
     @Operation(operationId = "updateUIComponentInNamespace", summary = "Update a specific UI component in the specified namespace.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
-                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = RootUIComponent.class))),
-                    @ApiResponse(responseCode = "404", description = "Component not found") })
+                    @ApiResponse(responseCode = "200", description = "OK", content = @Content(schema = @Schema(implementation = EnrichedRootUIComponent.class))),
+                    @ApiResponse(responseCode = "404", description = "Component not found"),
+                    @ApiResponse(responseCode = "405", description = "Component is not editable.") })
     public Response updateComponent(@PathParam("namespace") String namespace,
             @PathParam("componentUID") String componentUID, RootUIComponent component) {
         UIComponentRegistry registry = componentRegistryFactory.getRegistry(namespace);
@@ -177,13 +225,17 @@ public class UIResource implements RESTResource {
         if (existingComponent == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
+        if (!registry.isEditable(componentUID)) {
+            return Response.status(Status.METHOD_NOT_ALLOWED)
+                    .entity("Cannot update component " + componentUID + " as it is not editable.").build();
+        }
         if (!componentUID.equals(component.getUID())) {
             throw new InvalidParameterException(
                     "The component UID in the body of the request should match the UID in the URL");
         }
         component.updateTimestamp();
         registry.update(component);
-        return Response.ok(component).build();
+        return Response.ok(new EnrichedRootUIComponent(component, true)).build();
     }
 
     @DELETE
@@ -193,7 +245,8 @@ public class UIResource implements RESTResource {
     @Operation(operationId = "removeUIComponentFromNamespace", summary = "Remove a specific UI component in the specified namespace.", security = {
             @SecurityRequirement(name = "oauth2", scopes = { "admin" }) }, responses = {
                     @ApiResponse(responseCode = "200", description = "OK"),
-                    @ApiResponse(responseCode = "404", description = "Component not found") })
+                    @ApiResponse(responseCode = "404", description = "Component not found"),
+                    @ApiResponse(responseCode = "405", description = "Component is not editable.") })
     public Response deleteComponent(@PathParam("namespace") String namespace,
             @PathParam("componentUID") String componentUID) {
         UIComponentRegistry registry = componentRegistryFactory.getRegistry(namespace);
@@ -201,11 +254,43 @@ public class UIResource implements RESTResource {
         if (component == null) {
             return Response.status(Status.NOT_FOUND).build();
         }
+        if (!registry.isEditable(componentUID)) {
+            return Response.status(Status.METHOD_NOT_ALLOWED)
+                    .entity("Cannot delete component " + componentUID + " as it is not editable.").build();
+        }
         registry.remove(componentUID);
         return Response.ok().build();
     }
 
     private TileDTO toTileDTO(Tile tile) {
         return new TileDTO(tile.getName(), tile.getUrl(), tile.getOverlay(), tile.getImageUrl());
+    }
+
+    private void resetLastModifiedDate(String namespace) {
+        lastModifiedDates.remove(namespace);
+    }
+
+    private class ResetLastModifiedChangeListener implements RegistryChangeListener<RootUIComponent> {
+
+        private String namespace;
+
+        ResetLastModifiedChangeListener(String namespace) {
+            this.namespace = namespace;
+        }
+
+        @Override
+        public void added(RootUIComponent element) {
+            resetLastModifiedDate(namespace);
+        }
+
+        @Override
+        public void removed(RootUIComponent element) {
+            resetLastModifiedDate(namespace);
+        }
+
+        @Override
+        public void updated(RootUIComponent oldElement, RootUIComponent element) {
+            resetLastModifiedDate(namespace);
+        }
     }
 }

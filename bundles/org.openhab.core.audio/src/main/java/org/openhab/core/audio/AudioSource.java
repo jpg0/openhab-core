@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -17,6 +17,7 @@ import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.openhab.core.common.registry.Identifiable;
 
 /**
  * This is an audio source, which can provide a continuous live stream of audio.
@@ -26,7 +27,7 @@ import org.eclipse.jdt.annotation.Nullable;
  * @author Kai Kreuzer - Initial contribution
  */
 @NonNullByDefault
-public interface AudioSource {
+public interface AudioSource extends Identifiable<String> {
 
     /**
      * Returns a simple string that uniquely identifies this service
@@ -34,6 +35,11 @@ public interface AudioSource {
      * @return an id that identifies this service
      */
     String getId();
+
+    @Override
+    default String getUID() {
+        return getId();
+    }
 
     /**
      * Returns a localized human readable label that can be used within UIs.

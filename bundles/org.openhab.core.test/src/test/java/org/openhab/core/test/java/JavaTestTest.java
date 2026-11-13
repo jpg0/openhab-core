@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -18,8 +18,11 @@ import static org.mockito.Mockito.*;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Testing the test. Test suite for the JavaTest base test class.
@@ -47,7 +50,7 @@ public class JavaTestTest {
     public void waitForAssertShouldRunAfterLastCallWhenAssertionFails() {
         Runnable afterLastCall = mock(Runnable.class);
         try {
-            javaTest.waitForAssert(() -> assertTrue(false), null, afterLastCall, 100, 50);
+            javaTest.waitForAssert(() -> fail(), null, afterLastCall, 100, 50);
         } catch (final AssertionError ex) {
         }
         verify(afterLastCall, times(1)).run();
@@ -61,5 +64,43 @@ public class JavaTestTest {
                 Map.of().get("key").toString();
             });
         });
+    }
+
+    @Test
+    public void interceptedLoggerShouldNotLogBelowAboveMinLevel() {
+        javaTest.setupInterceptedLogger(LogTest.class, JavaTest.LogLevel.INFO);
+
+        LogTest logTest = new LogTest();
+        logTest.logDebug("debug message");
+
+        javaTest.stopInterceptedLogger(LogTest.class);
+        Assertions.assertThrows(AssertionError.class,
+                () -> javaTest.assertLogMessage(LogTest.class, JavaTest.LogLevel.DEBUG, "debug message"));
+    }
+
+    @Test
+    public void interceptedLoggerShouldLogAboveMinLevel() {
+        LogTest logTest = new LogTest();
+        javaTest.setupInterceptedLogger(LogTest.class, JavaTest.LogLevel.INFO);
+
+        logTest.logError("error message");
+
+        javaTest.stopInterceptedLogger(LogTest.class);
+        javaTest.assertLogMessage(LogTest.class, JavaTest.LogLevel.ERROR, "error message");
+    }
+
+    private static class LogTest {
+        private final Logger logger = LoggerFactory.getLogger(LogTest.class);
+
+        public LogTest() {
+        }
+
+        public void logDebug(String message) {
+            logger.debug(message);
+        }
+
+        public void logError(String message) {
+            logger.error(message);
+        }
     }
 }

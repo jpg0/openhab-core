@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,9 +12,11 @@
  */
 package org.openhab.core.thing.link;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
@@ -72,18 +74,10 @@ public abstract class AbstractLinkRegistry<L extends AbstractLink, P extends Pro
         try {
             Set<L> set;
 
-            set = itemNameToLink.get(itemName);
-            if (set == null) {
-                set = new HashSet<>();
-                itemNameToLink.put(itemName, set);
-            }
+            set = Objects.requireNonNull(itemNameToLink.computeIfAbsent(itemName, k -> new HashSet<>()));
             set.add(element);
 
-            set = linkedUidToLink.get(linkedUid);
-            if (set == null) {
-                set = new HashSet<>();
-                linkedUidToLink.put(linkedUid, set);
-            }
+            set = Objects.requireNonNull(linkedUidToLink.computeIfAbsent(linkedUid, k -> new HashSet<>()));
             set.add(element);
         } finally {
             toLinkLock.writeLock().unlock();
@@ -134,7 +128,7 @@ public abstract class AbstractLinkRegistry<L extends AbstractLink, P extends Pro
             if (forItemName == null || forLinkedUID == null) {
                 return false;
             } else {
-                return forItemName.parallelStream().anyMatch(forLinkedUID::contains);
+                return !Collections.disjoint(forItemName, forLinkedUID);
             }
         } finally {
             toLinkLock.readLock().unlock();
@@ -184,7 +178,7 @@ public abstract class AbstractLinkRegistry<L extends AbstractLink, P extends Pro
             if (forLinkedUID == null) {
                 return Set.of();
             }
-            return forLinkedUID.parallelStream().map(link -> link.getItemName()).collect(Collectors.toSet());
+            return forLinkedUID.stream().map(AbstractLink::getItemName).collect(Collectors.toSet());
         } finally {
             toLinkLock.readLock().unlock();
         }

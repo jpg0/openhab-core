@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -75,21 +75,19 @@ public class ReferenceResolver {
      * try to find values for {{firstName}} and {{lastName}} in the given context and replace them. References that are
      * not found in the context - are not replaced.
      *
-     * @param module module that is directly part of Rule or part of CompositeModule
      * @param context containing Rule configuration or Composite configuration values.
      */
     public static void updateConfiguration(Configuration config, Map<String, ?> context, Logger logger) {
         for (String configKey : config.keySet()) {
             Object o = config.get(configKey);
-            if (o instanceof String) {
-                Object result = resolveProperty(config, context, logger, configKey, (String) o);
+            if (o instanceof String string) {
+                Object result = resolveProperty(config, context, logger, configKey, string);
                 config.put(configKey, result);
-            } else if (o instanceof List) {
+            } else if (o instanceof List list) {
                 List<Object> resultList = new ArrayList<>();
-                List<?> list = (List<?>) o;
                 for (Object obj : list) {
-                    if (obj instanceof String) {
-                        resultList.add(resolveProperty(config, context, logger, configKey, (String) obj));
+                    if (obj instanceof String string) {
+                        resultList.add(resolveProperty(config, context, logger, configKey, string));
                     }
                 }
                 config.put(configKey, resultList);
@@ -124,10 +122,10 @@ public class ReferenceResolver {
         Map<String, Object> resultContext = new HashMap<>();
         Map<String, String> inputs = null;
 
-        if (module instanceof Condition) {
-            inputs = ((Condition) module).getInputs();
-        } else if (module instanceof Action) {
-            inputs = ((Action) module).getInputs();
+        if (module instanceof Condition condition) {
+            inputs = condition.getInputs();
+        } else if (module instanceof Action action) {
+            inputs = action.getInputs();
         }
 
         if (inputs != null) {
@@ -324,7 +322,7 @@ public class ReferenceResolver {
      *             {@link SecurityManager#checkPackageAccess s.checkPackageAccess()} denies
      *             access to the package of this class</li>
      *             </ul>
-     * @throws ArrayIndexOutOfBoundsException if one of the tokens represent a invalid index in the list.
+     * @throws ArrayIndexOutOfBoundsException if one of the tokens represent an invalid index in the list.
      * @throws NullPointerException if the path references something in a non existing map entry.
      * @throws NumberFormatException if one of the tokens is accessing a list and the token that represent the
      *             index can't be converted to integer.
@@ -340,10 +338,10 @@ public class ReferenceResolver {
         try {
             Object obj = object;
             for (String token : tokens) {
-                if (obj instanceof Map) {
-                    obj = getValueFromMap(((Map<?, ?>) obj), token);
-                } else if (obj instanceof List) {
-                    obj = getValueFromList(((List<?>) obj), Integer.parseInt(token));
+                if (obj instanceof Map map) {
+                    obj = getValueFromMap(map, token);
+                } else if (obj instanceof List list) {
+                    obj = getValueFromList(list, Integer.parseInt(token));
                 } else {
                     final Class<?> objClass = obj.getClass();
                     obj = getValueFromBean(objClass, obj, token);

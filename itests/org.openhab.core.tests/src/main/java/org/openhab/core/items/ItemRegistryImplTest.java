@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,7 +12,6 @@
  */
 package org.openhab.core.items;
 
-import static java.util.stream.Collectors.toList;
 import static org.hamcrest.CoreMatchers.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
@@ -36,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.core.common.registry.RegistryChangeListener;
 import org.openhab.core.events.EventPublisher;
 import org.openhab.core.i18n.UnitProvider;
+import org.openhab.core.internal.items.DefaultStateDescriptionFragmentProvider;
 import org.openhab.core.internal.items.ItemBuilderFactoryImpl;
 import org.openhab.core.internal.items.ItemRegistryImpl;
 import org.openhab.core.items.events.ItemAddedEvent;
@@ -77,6 +77,7 @@ public class ItemRegistryImplTest extends JavaTest {
     private @NonNullByDefault({}) ManagedItemProvider itemProvider;
 
     private @Mock @NonNullByDefault({}) EventPublisher eventPublisherMock;
+    private @Mock @NonNullByDefault({}) UnitProvider unitProviderMock;
 
     @BeforeEach
     public void beforeEach() {
@@ -92,7 +93,7 @@ public class ItemRegistryImplTest extends JavaTest {
 
         // setup ManageItemProvider with necessary dependencies:
         itemProvider = new ManagedItemProvider(new VolatileStorageService(),
-                new ItemBuilderFactoryImpl(new CoreItemFactory()));
+                new ItemBuilderFactoryImpl(new CoreItemFactory(unitProviderMock)));
 
         itemProvider.add(new SwitchItem(ITEM_NAME));
         itemProvider.add(cameraItem1);
@@ -101,13 +102,13 @@ public class ItemRegistryImplTest extends JavaTest {
         itemProvider.add(cameraItem4);
 
         // setup ItemRegistryImpl with necessary dependencies:
-        itemRegistry = new ItemRegistryImpl(mock(MetadataRegistry.class)) {
+        itemRegistry = new ItemRegistryImpl(mock(MetadataRegistry.class),
+                mock(DefaultStateDescriptionFragmentProvider.class)) {
             {
                 addProvider(itemProvider);
                 setManagedProvider(itemProvider);
                 setEventPublisher(ItemRegistryImplTest.this.eventPublisherMock);
                 setStateDescriptionService(mock(StateDescriptionService.class));
-                setUnitProvider(mock(UnitProvider.class));
                 setItemStateConverter(mock(ItemStateConverter.class));
             }
         };
@@ -117,14 +118,14 @@ public class ItemRegistryImplTest extends JavaTest {
     public void assertGetItemsReturnsItemFromRegisteredItemProvider() {
         List<Item> items = new ArrayList<>(itemRegistry.getItems());
         assertThat(items.size(), is(5));
-        assertThat(items.get(0).getName(), is(equalTo(ITEM_NAME)));
+        assertThat(items.getFirst().getName(), is(equalTo(ITEM_NAME)));
     }
 
     @Test
     public void assertGetItemsOfTypeReturnsItemFromRegisteredItemProvider() {
         List<Item> items = new ArrayList<>(itemRegistry.getItemsOfType(CoreItemFactory.SWITCH));
         assertThat(items.size(), is(3));
-        assertThat(items.get(0).getName(), is(equalTo(ITEM_NAME)));
+        assertThat(items.getFirst().getName(), is(equalTo(ITEM_NAME)));
     }
 
     @Test
@@ -132,7 +133,7 @@ public class ItemRegistryImplTest extends JavaTest {
         List<Item> items = new ArrayList<>(itemRegistry.getItemsByTag(CAMERA_TAG));
         assertThat(items, hasSize(4));
 
-        List<String> itemNames = items.stream().map(i -> i.getName()).collect(toList());
+        List<String> itemNames = items.stream().map(Item::getName).toList();
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME1));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME2));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME3));
@@ -144,7 +145,7 @@ public class ItemRegistryImplTest extends JavaTest {
         List<Item> items = new ArrayList<>(itemRegistry.getItemsByTag(CAMERA_TAG_UPPERCASE));
         assertThat(items, hasSize(4));
 
-        List<String> itemNames = items.stream().map(i -> i.getName()).collect(toList());
+        List<String> itemNames = items.stream().map(Item::getName).toList();
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME1));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME2));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME3));
@@ -156,7 +157,7 @@ public class ItemRegistryImplTest extends JavaTest {
         List<Item> items = new ArrayList<>(itemRegistry.getItemsByTagAndType("Switch", CAMERA_TAG));
         assertThat(items, hasSize(2));
 
-        List<String> itemNames = items.stream().map(i -> i.getName()).collect(toList());
+        List<String> itemNames = items.stream().map(Item::getName).toList();
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME1));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME2));
     }
@@ -165,7 +166,7 @@ public class ItemRegistryImplTest extends JavaTest {
     public void assertGetItemsByTagWithTwoTagsReturnsItemFromRegisteredItemProvider() {
         List<Item> items = new ArrayList<>(itemRegistry.getItemsByTag(CAMERA_TAG, SENSOR_TAG));
         assertThat(items.size(), is(1));
-        assertThat(items.get(0).getName(), is(equalTo(CAMERA_ITEM_NAME2)));
+        assertThat(items.getFirst().getName(), is(equalTo(CAMERA_ITEM_NAME2)));
     }
 
     @Test
@@ -178,7 +179,7 @@ public class ItemRegistryImplTest extends JavaTest {
         List<SwitchItem> items = new ArrayList<>(itemRegistry.getItemsByTag(SwitchItem.class, CAMERA_TAG));
         assertThat(items, hasSize(2));
 
-        List<String> itemNames = items.stream().map(i -> i.getName()).collect(toList());
+        List<String> itemNames = items.stream().map(GenericItem::getName).toList();
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME1));
         assertThat(itemNames, hasItem(CAMERA_ITEM_NAME2));
     }
@@ -238,7 +239,7 @@ public class ItemRegistryImplTest extends JavaTest {
 
         Item res = itemRegistry.get("item");
         assertEquals(1, res.getGroupNames().size());
-        assertEquals("group", res.getGroupNames().get(0));
+        assertEquals("group", res.getGroupNames().getFirst());
 
         GroupItem group = (GroupItem) itemRegistry.get("group");
         assertEquals(1, group.getMembers().size());
@@ -359,7 +360,7 @@ public class ItemRegistryImplTest extends JavaTest {
 
         ArgumentCaptor<Item> itemCaptor = ArgumentCaptor.forClass(Item.class);
         verify(registryChangeListener).removed(itemCaptor.capture());
-        assertTrue(itemCaptor.getValue() == item);
+        assertSame(itemCaptor.getValue(), item);
     }
 
     @Test
@@ -369,25 +370,40 @@ public class ItemRegistryImplTest extends JavaTest {
 
         assertNotNull(item.eventPublisher);
         assertNotNull(item.itemStateConverter);
-        assertNotNull(item.unitProvider);
 
         itemProvider.update(new SwitchItem("Item1"));
 
         assertNull(item.eventPublisher);
         assertNull(item.itemStateConverter);
-        assertNull(item.unitProvider);
         assertEquals(0, item.listeners.size());
+    }
+
+    @Test
+    public void assertStateDescriptionServiceGetsInjected() {
+        GenericItem item = spy(new SwitchItem("Item1"));
+        NumberItem baseItem = spy(new NumberItem("baseItem"));
+        GenericItem group = new GroupItem("Group", baseItem);
+        itemProvider.add(item);
+        itemProvider.add(group);
+
+        verify(item).setStateDescriptionService(any(StateDescriptionService.class));
+        verify(baseItem).setStateDescriptionService(any(StateDescriptionService.class));
     }
 
     @Test
     public void assertCommandDescriptionServiceGetsInjected() {
         GenericItem item = spy(new SwitchItem("Item1"));
+        NumberItem baseItem = spy(new NumberItem("baseItem"));
+        GenericItem group = new GroupItem("Group", baseItem);
         itemProvider.add(item);
+        itemProvider.add(group);
 
         verify(item).setCommandDescriptionService(null);
 
         ((ItemRegistryImpl) itemRegistry).setCommandDescriptionService(mock(CommandDescriptionService.class));
         verify(item).setCommandDescriptionService(any(CommandDescriptionService.class));
+
+        verify(baseItem).setCommandDescriptionService(any(CommandDescriptionService.class));
     }
 
     @Test

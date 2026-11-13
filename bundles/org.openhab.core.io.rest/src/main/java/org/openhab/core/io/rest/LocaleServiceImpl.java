@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
  * @author Dennis Nobel - Initial contribution
  * @author Markus Rathgeb - Use locale provider
  * @author Martin Herbst - Support of different language definition variants
- * @authro Lyubomir Papazov - Add component annotation, rename the class to LocaleService and add method tryGetLocale
+ * @author Lyubomir Papazov - Add component annotation, rename the class to LocaleService and add method tryGetLocale
  */
 @Component
 @NonNullByDefault
@@ -44,17 +44,23 @@ public class LocaleServiceImpl implements LocaleService {
     public Locale getLocale(@Nullable String acceptLanguageHttpHeader) {
         Locale locale = tryGetLocale();
         if (acceptLanguageHttpHeader != null) {
-            int pos = acceptLanguageHttpHeader.indexOf(',');
-            String[] split;
+            String primary = acceptLanguageHttpHeader;
+            int pos = primary.indexOf(',');
             if (pos > -1) {
-                split = acceptLanguageHttpHeader.substring(0, pos).split("-");
-            } else {
-                split = acceptLanguageHttpHeader.split("-");
+                primary = primary.substring(0, pos);
             }
-            if (split.length == 2) {
-                locale = new Locale(split[0], split[1]);
-            } else {
-                locale = new Locale(split[0]);
+            int semiPos = primary.indexOf(';');
+            if (semiPos > -1) {
+                primary = primary.substring(0, semiPos);
+            }
+            primary = primary.trim();
+            if (!primary.isEmpty()) {
+                String[] split = primary.replace('_', '-').split("-");
+                if (split.length == 2) {
+                    locale = Locale.of(split[0], split[1]);
+                } else {
+                    locale = Locale.of(split[0]);
+                }
             }
         }
         return locale;
@@ -62,12 +68,12 @@ public class LocaleServiceImpl implements LocaleService {
 
     @Reference(policy = ReferencePolicy.DYNAMIC)
     protected void setLocaleProvider(LocaleProvider provider) {
-        logger.debug("The localeProvider in LocaleUtilService has been set");
+        logger.debug("The localeProvider in {} has been set", LocaleServiceImpl.class.getSimpleName());
         localeProvider = provider;
     }
 
     protected void unsetLocaleProvider(LocaleProvider provider) {
-        logger.debug("The localeProvider in LocaleUtilService has been unset");
+        logger.debug("The localeProvider in {} has been unset", LocaleServiceImpl.class.getSimpleName());
         localeProvider = null;
     }
 
@@ -81,7 +87,7 @@ public class LocaleServiceImpl implements LocaleService {
         if (provider != null) {
             return provider.getLocale();
         } else {
-            logger.error("There should ALWAYS be a local provider available, as it is provided by the core.");
+            logger.error("There should ALWAYS be a locale provider available, as it is provided by the core.");
             return Locale.US;
         }
     }

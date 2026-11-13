@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,15 +13,12 @@
 package org.openhab.core.io.monitor.internal.metrics;
 
 import java.util.Collection;
-import java.util.Dictionary;
 import java.util.HashSet;
-import java.util.Hashtable;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.events.Event;
-import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
 import org.openhab.core.items.events.ItemCommandEvent;
 import org.openhab.core.items.events.ItemStateEvent;
@@ -43,7 +40,13 @@ import io.micrometer.core.instrument.Tag;
 @NonNullByDefault
 public class EventCountMetric implements OpenhabCoreMeterBinder, EventSubscriber {
 
-    public static final String METRIC_NAME = "event_count";
+    public static final String METRIC_NAME = "openhab.event.count";
+    /**
+     * @deprecated use {@link #METRIC_NAME} instead. Kept for a transition period and will be removed in a future
+     *             release.
+     */
+    @Deprecated
+    public static final String LEGACY_METRIC_NAME = "event_count";
     private final Logger logger = LoggerFactory.getLogger(EventCountMetric.class);
     private static final Tag CORE_EVENT_COUNT_METRIC_TAG = Tag.of("metric", "openhab.core.metric.eventcount");
     private static final String TOPIC_TAG_NAME = "topic";
@@ -63,10 +66,8 @@ public class EventCountMetric implements OpenhabCoreMeterBinder, EventSubscriber
         unbind();
         logger.debug("EventCountMetric is being bound...");
         this.meterRegistry = meterRegistry;
-        Dictionary<String, Object> properties = new Hashtable<>();
-        properties.put("event.topics", "openhab/*");
         this.eventSubscriberRegistration = this.bundleContext.registerService(EventSubscriber.class.getName(), this,
-                properties);
+                null);
     }
 
     @Override
@@ -95,11 +96,6 @@ public class EventCountMetric implements OpenhabCoreMeterBinder, EventSubscriber
     }
 
     @Override
-    public @Nullable EventFilter getEventFilter() {
-        return null;
-    }
-
-    @Override
     public void receive(Event event) {
         MeterRegistry meterRegistry = this.meterRegistry;
         if (meterRegistry == null) {
@@ -111,5 +107,6 @@ public class EventCountMetric implements OpenhabCoreMeterBinder, EventSubscriber
         Set<Tag> tagsWithTopic = new HashSet<>(tags);
         tagsWithTopic.add(Tag.of(TOPIC_TAG_NAME, topic));
         meterRegistry.counter(METRIC_NAME, tagsWithTopic).increment();
+        meterRegistry.counter(LEGACY_METRIC_NAME, tagsWithTopic).increment();
     }
 }

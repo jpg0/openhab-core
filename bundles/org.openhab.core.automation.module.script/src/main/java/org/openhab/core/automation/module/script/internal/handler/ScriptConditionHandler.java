@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,7 +13,8 @@
 package org.openhab.core.automation.module.script.internal.handler;
 
 import java.util.Map;
-import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 import javax.script.ScriptEngine;
 import javax.script.ScriptException;
@@ -21,6 +22,7 @@ import javax.script.ScriptException;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.openhab.core.automation.Condition;
 import org.openhab.core.automation.handler.ConditionHandler;
+import org.openhab.core.automation.module.script.LockableScriptEngine;
 import org.openhab.core.automation.module.script.ScriptEngineManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +32,8 @@ import org.slf4j.LoggerFactory;
  *
  * @author Kai Kreuzer - Initial contribution
  * @author Simon Merschjohann - Initial contribution
+ * @author Florian Hotze - Add support for script pre-compilation, Synchronize script context access if the ScriptEngine
+ *         implements locking
  */
 @NonNullByDefault
 public class ScriptConditionHandler extends AbstractScriptModuleHandler<Condition> implements ConditionHandler {
@@ -43,22 +47,63 @@ public class ScriptConditionHandler extends AbstractScriptModuleHandler<Conditio
     }
 
     @Override
+    public String getTypeId() {
+        return TYPE_ID;
+    }
+
+    @Override
+    public void compile() throws ScriptException {
+        super.compileScript();
+    }
+
+    @Override
     public boolean isSatisfied(final Map<String, Object> context) {
         boolean result = false;
-        Optional<ScriptEngine> engine = getScriptEngine();
 
-        if (engine.isPresent()) {
-            ScriptEngine scriptEngine = engine.get();
-            setExecutionContext(scriptEngine, context);
+        if (script.isEmpty()) {
+            return true;
+        }
+
+        ScriptEngine scriptEngine = getScriptEngine();
+        Lock lock = null;
+        long timeout = 0L;
+        if (scriptEngine instanceof LockableScriptEngine lockable) {
+            lock = lockable.getLock();
+            timeout = lockable.getLockAcquisitionTimeoutMs();
+        }
+
+        if (scriptEngine != null) {
             try {
-                Object returnVal = scriptEngine.eval(script);
-                if (returnVal instanceof Boolean) {
-                    result = (boolean) returnVal;
-                } else {
-                    logger.error("Script did not return a boolean value, but '{}'", returnVal);
+                if (lock != null && !lock.tryLock(timeout, TimeUnit.MILLISECONDS)) {
+                    if (timeout < 2000L) {
+                        logger.error(
+                                "Failed to acquire lock within {} milliseconds for script module '{}' of rule with UID '{}'",
+                                timeout, module.getId(), ruleUID);
+                    } else {
+                        logger.error(
+                                "Failed to acquire lock within {} seconds for script module '{}' of rule with UID '{}'",
+                                TimeUnit.MILLISECONDS.toSeconds(timeout), module.getId(), ruleUID);
+                    }
+                    return result;
                 }
-            } catch (ScriptException e) {
-                logger.error("Script execution failed: {}", e.getMessage());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+            try {
+                setExecutionContext(scriptEngine, context);
+                Object returnVal = eval(scriptEngine);
+                if (returnVal instanceof Boolean boolean1) {
+                    result = boolean1;
+                } else {
+                    logger.error("Script of rule with UID '{}' did not return a boolean value, but '{}'", ruleUID,
+                            returnVal);
+                }
+                resetExecutionContext(scriptEngine, context);
+            } finally {
+                if (lock != null) {
+                    lock.unlock();
+                }
             }
         }
 

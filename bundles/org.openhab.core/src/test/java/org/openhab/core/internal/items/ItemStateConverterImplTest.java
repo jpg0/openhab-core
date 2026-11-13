@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -14,7 +14,7 @@ package org.openhab.core.internal.items;
 
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.*;
 
 import java.util.Locale;
@@ -24,6 +24,9 @@ import javax.measure.quantity.Length;
 import javax.measure.quantity.Temperature;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -46,7 +49,22 @@ import org.openhab.core.types.UnDefType;
 @NonNullByDefault
 public class ItemStateConverterImplTest {
 
+    @Nullable
+    private static Locale initialLocale;
+
     private @NonNullByDefault({}) ItemStateConverterImpl itemStateConverter;
+
+    @BeforeAll
+    public static void setUpClass() {
+        initialLocale = Locale.getDefault();
+    }
+
+    @AfterAll
+    @SuppressWarnings("PMD.SetDefaultLocale")
+    public static void tearDownClass() {
+        // Set the default locale to its initial value.
+        Locale.setDefault(initialLocale);
+    }
 
     /**
      * Locales having a different decimal and grouping separators to test string parsing and generation.
@@ -70,6 +88,7 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testNullState(Locale locale) {
         Locale.setDefault(locale);
 
@@ -80,7 +99,7 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
-    @SuppressWarnings("PMD.CompareObjectsWithEquals")
+    @SuppressWarnings({ "PMD.CompareObjectsWithEquals", "PMD.SetDefaultLocale" })
     public void testNoConversion(Locale locale) {
         Locale.setDefault(locale);
 
@@ -88,11 +107,12 @@ public class ItemStateConverterImplTest {
         State originalState = new DecimalType(12.34);
         State state = itemStateConverter.convertToAcceptedState(originalState, item);
 
-        assertTrue(originalState == state);
+        assertSame(originalState, state);
     }
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void testStateConversion(Locale locale) {
         Locale.setDefault(locale);
 
@@ -105,6 +125,7 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void numberItemWithoutDimensionShouldConvertToDecimalType(Locale locale) {
         Locale.setDefault(locale);
 
@@ -117,6 +138,7 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void numberItemWitDimensionShouldConvertToItemStateDescriptionUnit(Locale locale) {
         Locale.setDefault(locale);
 
@@ -134,6 +156,25 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
+    public void numberItemMiredConversion(Locale locale) {
+        Locale.setDefault(locale);
+
+        NumberItem item = mock(NumberItem.class);
+        StateDescription stateDescription = mock(StateDescription.class);
+        when(item.getStateDescription()).thenReturn(stateDescription);
+        doReturn(Temperature.class).when(item).getDimension();
+        when(stateDescription.getPattern()).thenReturn("%.1f K");
+
+        State originalState = new QuantityType<>("153 mired");
+        State convertedState = itemStateConverter.convertToAcceptedState(originalState, item);
+
+        assertThat(((QuantityType<?>) convertedState).intValue(), is(6535));
+    }
+
+    @ParameterizedTest
+    @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void numberItemWitDimensionShouldConvertToLocaleBasedUnit(Locale locale) {
         Locale.setDefault(locale);
 
@@ -148,6 +189,7 @@ public class ItemStateConverterImplTest {
 
     @ParameterizedTest
     @MethodSource("locales")
+    @SuppressWarnings("PMD.SetDefaultLocale")
     public void numberItemShouldNotConvertUnitsWhereMeasurmentSystemEquals(Locale locale) {
         Locale.setDefault(locale);
 

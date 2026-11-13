@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,7 +13,6 @@
 package org.openhab.core.config.discovery.inbox;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.util.Map;
@@ -108,7 +107,7 @@ public class DynamicThingUpdateOSGiTest extends JavaOSGiTest {
     }
 
     private ThingHandlerFactory createThingHandlerFactory() {
-        ThingHandlerFactory thingHandlerFactory = new BaseThingHandlerFactory() {
+        return new BaseThingHandlerFactory() {
 
             @Override
             public boolean supportsThingType(ThingTypeUID thingTypeUID) {
@@ -121,7 +120,6 @@ public class DynamicThingUpdateOSGiTest extends JavaOSGiTest {
                 return thingHandler;
             }
         };
-        return thingHandlerFactory;
     }
 
     @Test

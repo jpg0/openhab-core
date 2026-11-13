@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -50,9 +50,9 @@ public class ItemRegistryDelegate implements Map<String, State> {
 
     @Override
     public boolean containsKey(@Nullable Object key) {
-        if (key instanceof String) {
+        if (key instanceof String string) {
             try {
-                itemRegistry.getItem((String) key);
+                itemRegistry.getItem(string);
                 return true;
             } catch (ItemNotFoundException e) {
                 return false;

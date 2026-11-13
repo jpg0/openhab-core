@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,6 +13,7 @@
 package org.openhab.core.model.script.jvmmodel
 
 import com.google.inject.Inject
+import java.time.ZonedDateTime
 import java.util.Set
 import org.openhab.core.items.ItemRegistry
 import org.openhab.core.model.script.scoping.StateAndCommandProvider
@@ -25,6 +26,8 @@ import org.slf4j.LoggerFactory
 import org.openhab.core.items.Item
 import org.openhab.core.types.Command
 import org.openhab.core.types.State
+import org.openhab.core.automation.module.script.rulesupport.shared.ValueCache
+import java.util.Map
 import org.openhab.core.events.Event
 
 /**
@@ -38,7 +41,16 @@ import org.openhab.core.events.Event
  */
 class ScriptJvmModelInferrer extends AbstractModelInferrer {
 
-    static private final Logger logger = LoggerFactory.getLogger(ScriptJvmModelInferrer)
+    static final Logger logger = LoggerFactory.getLogger(ScriptJvmModelInferrer)
+
+    /** Variable name for the input string in a "script transformation" or "script profile" */
+    public static final String VAR_INPUT = "input";
+
+    /** Variable name for the group in a "member of state triggered" or "member of command triggered" rule */
+    public static final String VAR_TRIGGERING_GROUP = "triggeringGroup";
+
+    /** Variable name for the group in a "member of state triggered" or "member of command triggered" rule */
+    public static final String VAR_TRIGGERING_GROUP_NAME = "triggeringGroupName";
 
     /** Variable name for the item in a "state triggered" or "command triggered" rule */
     public static final String VAR_TRIGGERING_ITEM = "triggeringItem";
@@ -51,6 +63,12 @@ class ScriptJvmModelInferrer extends AbstractModelInferrer {
 
     /** Variable name for the new state of an item in a "changed state triggered" or "updated state triggered" rule */
     public static final String VAR_NEW_STATE = "newState";
+
+    /** Variable name for the last update time of an item in a "changed state triggered" or "updated state triggered" rule */
+    public static final String VAR_LAST_STATE_UPDATE = "lastStateUpdate";
+
+    /** Variable name for the last change time of an item in a "changed state triggered" rule */
+    public static final String VAR_LAST_STATE_CHANGE = "lastStateChange";
 
     /** Variable name for the received command in a "command triggered" rule */
     public static final String VAR_RECEIVED_COMMAND = "receivedCommand";
@@ -69,38 +87,43 @@ class ScriptJvmModelInferrer extends AbstractModelInferrer {
     
     /** Variable name for the new status of the triggering thing in a "thing status trigger" rule */
     public static final String VAR_NEW_STATUS = "newThingStatus";
+
+    /** Variable name for the cache */
+    public static final String VAR_PRIVATE_CACHE = "privateCache";
+    public static final String VAR_SHARED_CACHE = "sharedCache";
     
+    /** Variable names for the context objects */
+    public static final String VAR_EVENT_OBJECT = "eventObject";
+    public static final String VAR_CTX = "ctx";
+    public static final String VAR_INPUTS = "inputs";
+
     /**
-     * conveninence API to build and initialize JvmTypes and their members.
+     * convenience API to build and initialize JvmTypes and their members.
      */
     @Inject extension JvmTypesBuilder
 
     @Inject
     ItemRegistry itemRegistry
 
-    @Inject
-    StateAndCommandProvider stateAndCommandProvider
-
     /**
      * Is called for each instance of the first argument's type contained in a resource.
      * 
-     * @param element - the model to create one or more JvmDeclaredTypes from.
-     * @param acceptor - each created JvmDeclaredType without a container should be passed to the acceptor in order get attached to the
+     * @param script the model to create one or more JvmDeclaredTypes from.
+     * @param acceptor each created JvmDeclaredType without a container should be passed to the acceptor in order get attached to the
      *                   current resource.
-     * @param isPreLinkingPhase - whether the method is called in a pre linking phase, i.e. when the global index isn't fully updated. You
-     *        must not rely on linking using the index if iPrelinkingPhase is <code>true</code>
+     * @param isPreIndexingPhase whether the method is called in a pre linking phase, i.e. when the global index isn't fully updated. You
+     *        must not rely on linking using the index if isPreIndexingPhase is <code>true</code>
      */
     def dispatch void infer(Script script, IJvmDeclaredTypeAcceptor acceptor, boolean isPreIndexingPhase) {
         val className = script.eResource.URI.lastSegment.split("\\.").head.toFirstUpper + "Script"
-        acceptor.accept(script.toClass(className)).initializeLater [
+        acceptor.accept(script.toClass(className), [
 
             val Set<String> fieldNames = newHashSet()
 
-            val types = stateAndCommandProvider.allTypes
-            types.forEach [ type |
+            StateAndCommandProvider::allTypes.forEach [ type |
                 val name = type.toString
                 if (fieldNames.add(name)) {
-                    members += script.toField(name, script.newTypeRef(type.class)) [
+                    members += script.toField(name, typeRef(type.class)) [
                         static = true
                     ]
                 } else {
@@ -111,7 +134,7 @@ class ScriptJvmModelInferrer extends AbstractModelInferrer {
             itemRegistry?.items?.forEach [ item |
                 val name = item.name
                 if (fieldNames.add(name)) {
-                    members += script.toField(item.name, script.newTypeRef(item.class)) [
+                    members += script.toField(item.name, typeRef(item.class)) [
                         static = true
                     ]
                 } else {
@@ -121,28 +144,45 @@ class ScriptJvmModelInferrer extends AbstractModelInferrer {
 
             members += script.toMethod("_script", null) [
                 static = true
-                val itemTypeRef = script.newTypeRef(Item)
+                parameters += script.toParameter(VAR_EVENT_OBJECT, typeRef(Event))
+                parameters += script.toParameter(VAR_CTX, typeRef(Map, typeRef(String), typeRef(Object)))
+                parameters += script.toParameter(VAR_INPUTS, typeRef(Map, typeRef(String), typeRef(Map, typeRef(String), typeRef(Object))))
+                val inputTypeRef = typeRef(String)
+                parameters += script.toParameter(VAR_INPUT, inputTypeRef)
+                val groupTypeRef = typeRef(Item)
+                parameters += script.toParameter(VAR_TRIGGERING_GROUP, groupTypeRef)
+                val groupNameRef = typeRef(String)
+                parameters += script.toParameter(VAR_TRIGGERING_GROUP_NAME, groupNameRef)
+                val itemTypeRef = typeRef(Item)
                 parameters += script.toParameter(VAR_TRIGGERING_ITEM, itemTypeRef)
-                val itemNameRef = script.newTypeRef(String)
+                val itemNameRef = typeRef(String)
                 parameters += script.toParameter(VAR_TRIGGERING_ITEM_NAME, itemNameRef)
-                val commandTypeRef = script.newTypeRef(Command)
+                val commandTypeRef = typeRef(Command)
                 parameters += script.toParameter(VAR_RECEIVED_COMMAND, commandTypeRef)
-                val stateTypeRef = script.newTypeRef(State)
+                val stateTypeRef = typeRef(State)
                 parameters += script.toParameter(VAR_PREVIOUS_STATE, stateTypeRef)
-                val eventTypeRef = script.newTypeRef(String)
+                val eventTypeRef = typeRef(String)
                 parameters += script.toParameter(VAR_RECEIVED_EVENT, eventTypeRef)
-                val channelRef = script.newTypeRef(String)
+                val channelRef = typeRef(String)
                 parameters += script.toParameter(VAR_TRIGGERING_CHANNEL, channelRef)
-                val thingRef = script.newTypeRef(String)
+                val thingRef = typeRef(String)
                 parameters += script.toParameter(VAR_TRIGGERING_THING, thingRef)
-                val oldThingStatusRef = script.newTypeRef(String)
+                val oldThingStatusRef = typeRef(String)
                 parameters += script.toParameter(VAR_PREVIOUS_STATUS, oldThingStatusRef)
-                val newThingStatusRef = script.newTypeRef(String)
+                val newThingStatusRef = typeRef(String)
                 parameters += script.toParameter(VAR_NEW_STATUS, newThingStatusRef)
-                val stateTypeRef2 = script.newTypeRef(State)
+                val stateTypeRef2 = typeRef(State)
                 parameters += script.toParameter(VAR_NEW_STATE, stateTypeRef2)
+                val lastStateUpdateTypeRef = typeRef(ZonedDateTime)
+                parameters += script.toParameter(VAR_LAST_STATE_UPDATE, lastStateUpdateTypeRef)
+                val lastStateChangeTypeRef = typeRef(ZonedDateTime)
+                parameters += script.toParameter(VAR_LAST_STATE_CHANGE, lastStateChangeTypeRef)
+                val privateCacheTypeRef = typeRef(ValueCache)
+                parameters += script.toParameter(VAR_PRIVATE_CACHE, privateCacheTypeRef)
+                val sharedCacheTypeRef = typeRef(ValueCache)
+                parameters += script.toParameter(VAR_SHARED_CACHE, sharedCacheTypeRef)
                 body = script
             ]
-        ]
+        ])
     }
 }

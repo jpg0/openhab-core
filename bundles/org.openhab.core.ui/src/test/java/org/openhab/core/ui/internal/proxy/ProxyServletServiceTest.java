@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -13,15 +13,16 @@
 package org.openhab.core.ui.internal.proxy;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.net.URI;
 import java.util.Base64;
+import java.util.Map;
 
 import javax.servlet.http.HttpServletRequest;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.http.HttpHeader;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,19 +34,26 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.StringType;
-import org.openhab.core.model.sitemap.SitemapProvider;
-import org.openhab.core.model.sitemap.sitemap.Image;
-import org.openhab.core.model.sitemap.sitemap.Sitemap;
-import org.openhab.core.model.sitemap.sitemap.Switch;
-import org.openhab.core.model.sitemap.sitemap.Video;
+import org.openhab.core.sitemap.Image;
+import org.openhab.core.sitemap.Sitemap;
+import org.openhab.core.sitemap.Switch;
+import org.openhab.core.sitemap.Video;
+import org.openhab.core.sitemap.registry.SitemapRegistry;
 import org.openhab.core.types.UnDefType;
 import org.openhab.core.ui.items.ItemUIRegistry;
 import org.osgi.service.http.HttpService;
+import org.slf4j.LoggerFactory;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 
 /**
  * Unit tests for the {@link ProxyServletService} class.
  *
  * @author Kai Kreuzer - Initial contribution
+ * @author Mark Herwege - Implement sitemap registry
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -75,7 +83,7 @@ public class ProxyServletServiceTest {
 
     private @Mock @NonNullByDefault({}) ItemUIRegistry itemUIRegistryMock;
     private @Mock @NonNullByDefault({}) HttpService httpServiceMock;
-    private @Mock @NonNullByDefault({}) SitemapProvider sitemapProviderMock;
+    private @Mock @NonNullByDefault({}) SitemapRegistry sitemapRegistryMock;
     private @Mock @NonNullByDefault({}) Sitemap sitemapMock;
     private @Mock @NonNullByDefault({}) HttpServletRequest requestMock;
     private @Mock @NonNullByDefault({}) Switch switchWidgetMock;
@@ -84,11 +92,10 @@ public class ProxyServletServiceTest {
 
     @BeforeEach
     public void setUp() {
-        service = new ProxyServletService(itemUIRegistryMock, httpServiceMock);
-        service.sitemapProviders.add(sitemapProviderMock);
+        service = new ProxyServletService(httpServiceMock, itemUIRegistryMock, sitemapRegistryMock, Map.of());
 
         sitemapMock = mock(Sitemap.class);
-        when(sitemapProviderMock.getSitemap(eq(SITEMAP_NAME))).thenReturn(sitemapMock);
+        when(sitemapRegistryMock.get(eq(SITEMAP_NAME))).thenReturn(sitemapMock);
 
         when(itemUIRegistryMock.getWidget(eq(sitemapMock), eq(SWITCH_WIDGET_ID))).thenReturn(switchWidgetMock);
         when(itemUIRegistryMock.getWidget(eq(sitemapMock), eq(IMAGE_WIDGET_ID))).thenReturn(imageWidgetMock);
@@ -146,7 +153,7 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(null);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
     }
 
     @Test
@@ -165,7 +172,7 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_UNDEF_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
     }
 
     @Test
@@ -175,7 +182,7 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_NULL_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
     }
 
     @Test
@@ -185,7 +192,7 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_ON_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
     }
 
     @Test
@@ -195,7 +202,7 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_INVALID_URL);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
     }
 
     @Test
@@ -205,7 +212,110 @@ public class ProxyServletServiceTest {
         when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_VALID_IMAGE_URL);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), ITEM_VALID_IMAGE_URL);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testMaxProxyThreadsPassedToJettyAsMaxThreads() {
+        ProxyServletService svc = new ProxyServletService(httpServiceMock, itemUIRegistryMock, sitemapRegistryMock,
+                Map.of("maxProxyThreads", "20", "allowedHosts", "openHAB.org", "groupMembersSorting", "NAME"));
+        var props = svc.propsFromConfig(Map.of("maxProxyThreads", 20, "allowedHosts", "openHAB.org"),
+                mock(javax.servlet.Servlet.class));
+        assertEquals("20", props.get("maxThreads"));
+        assertNull(props.get("maxProxyThreads"));
+        assertNull(props.get("allowedHosts"));
+    }
+
+    @Test
+    public void testMaxThreadsDefaultAndInvalidValues() {
+        ProxyServletService svc = serviceWithAllowedHosts("");
+        int expected = Math.max(8, Runtime.getRuntime().availableProcessors());
+        for (Map<String, Object> config : java.util.List.<Map<String, Object>> of(Map.of(),
+                Map.of("maxProxyThreads", "abc"), Map.of("maxProxyThreads", "0"), Map.of("maxProxyThreads", -3))) {
+            var props = svc.propsFromConfig(config, mock(javax.servlet.Servlet.class));
+            assertEquals(String.valueOf(expected), props.get("maxThreads"));
+        }
+    }
+
+    private ProxyServletService serviceWithAllowedHosts(String allowedHosts) {
+        return new ProxyServletService(httpServiceMock, itemUIRegistryMock, sitemapRegistryMock,
+                Map.of("allowedHosts", allowedHosts));
+    }
+
+    private @Nullable URI imageUriWithItemState(ProxyServletService svc, String state) {
+        when(requestMock.getParameter(eq("widgetId"))).thenReturn(IMAGE_WIDGET_ID);
+        when(imageWidgetMock.getUrl()).thenReturn(VALID_IMAGE_URL);
+        when(imageWidgetMock.getItem()).thenReturn(ITEM_NAME_VALID_IMAGE_URL);
+        when(itemUIRegistryMock.getItemState(eq(ITEM_NAME_VALID_IMAGE_URL))).thenReturn(new StringType(state));
+        return svc.uriFromRequest(requestMock);
+    }
+
+    @Test
+    public void testItemStateUrlUsedWhenHostAllowed() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("openHAB.org"), ITEM_VALID_IMAGE_URL);
+        assertNotNull(uri);
+        assertEquals(ITEM_VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testItemStateUrlUsedWhenHostAndPortAllowed() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("other.local, 192.168.1.20:8080"),
+                "http://192.168.1.20:8080/cam.jpg");
+        assertNotNull(uri);
+        assertEquals("http://192.168.1.20:8080/cam.jpg", uri.toString());
+    }
+
+    @Test
+    public void testItemStateUrlIgnoredWhenPortNotAllowed() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("192.168.1.20:8080"),
+                "http://192.168.1.20:9090/cam.jpg");
+        assertNotNull(uri);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testItemStateUrlIgnoredWhenHostNotAllowed() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("openHAB.org"), "http://169.254.169.254/latest");
+        assertNotNull(uri);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testItemStateUrlIgnoredWhenContainingCredentials() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("openHAB.org"), "https://user:pw@openhab.org/x.jpg");
+        assertNotNull(uri);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testItemStateUrlIgnoredForNonHttpScheme() {
+        URI uri = imageUriWithItemState(serviceWithAllowedHosts("openHAB.org"), "file://openhab.org/etc/passwd");
+        assertNotNull(uri);
+        assertEquals(VALID_IMAGE_URL, uri.toString());
+    }
+
+    @Test
+    public void testEmptyAllowedHostsLogsOnceAndUsesSitemapUrl() {
+        Logger logger = (Logger) LoggerFactory.getLogger(ProxyServletService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            URI firstUri = imageUriWithItemState(service, ITEM_VALID_IMAGE_URL);
+            URI secondUri = imageUriWithItemState(service, ITEM_VALID_IMAGE_URL);
+
+            assertNotNull(firstUri);
+            assertEquals(VALID_IMAGE_URL, firstUri.toString());
+            assertNotNull(secondUri);
+            assertEquals(VALID_IMAGE_URL, secondUri.toString());
+            assertEquals(1,
+                    appender.list.stream()
+                            .filter(event -> event.getLevel().equals(Level.WARN)
+                                    && event.getFormattedMessage().contains("URLs from item states are disabled"))
+                            .count());
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     @Test
@@ -215,7 +325,7 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(null);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 
     @Test
@@ -234,7 +344,7 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(ITEM_NAME_UNDEF_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 
     @Test
@@ -244,7 +354,7 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(ITEM_NAME_NULL_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 
     @Test
@@ -254,7 +364,7 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(ITEM_NAME_ON_STATE);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 
     @Test
@@ -264,7 +374,7 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(ITEM_NAME_INVALID_URL);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 
     @Test
@@ -274,6 +384,6 @@ public class ProxyServletServiceTest {
         when(videoWidgetMock.getItem()).thenReturn(ITEM_NAME_VALID_VIDEO_URL);
         URI uri = service.uriFromRequest(requestMock);
         assertNotNull(uri);
-        assertEquals(uri.toString(), ITEM_VALID_VIDEO_URL);
+        assertEquals(VALID_VIDEO_URL, uri.toString());
     }
 }

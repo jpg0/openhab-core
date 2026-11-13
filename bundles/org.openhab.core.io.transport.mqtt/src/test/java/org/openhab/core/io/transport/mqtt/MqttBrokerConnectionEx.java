@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -26,8 +26,8 @@ import org.openhab.core.io.transport.mqtt.internal.client.MqttAsyncClientWrapper
 import com.hivemq.client.mqtt.MqttClientState;
 
 /**
- * We need an extended MqttBrokerConnection to overwrite the protected `connectionCallbacks` with
- * an instance that takes the mocked version of `MqttBrokerConnection` and overwrite the connection state.
+ * We need an extended MqttBrokerConnection to overwrite the protected {@link #connectionCallback} with
+ * an instance that takes the mocked version of {@link MqttBrokerConnection} and overwrite the connection state.
  *
  * We also mock the internal Mqtt3AsyncClient that in respect to the success flags
  * immediately succeed or fail with publish, subscribe, unsubscribe, connect, disconnect.
@@ -69,7 +69,7 @@ public class MqttBrokerConnectionEx extends MqttBrokerConnection {
                 return CompletableFuture.completedFuture(null);
             }
             return new CompletableFuture<Boolean>();
-        }).when(mockedClient).connect(any(), anyInt(), any(), any());
+        }).when(mockedClient).connect(any(), anyInt(), any(), any(), any());
         doAnswer(i -> {
             if (disconnectSuccess) {
                 connectionCallback.onDisconnected(new Throwable("disconnect"));
@@ -99,9 +99,7 @@ public class MqttBrokerConnectionEx extends MqttBrokerConnection {
             }
         }).when(mockedClient).unsubscribe(any());
         // state
-        doAnswer(i -> {
-            return MqttClientState.CONNECTED;
-        }).when(mockedClient).getState();
+        doAnswer(i -> MqttClientState.CONNECTED).when(mockedClient).getState();
         return mockedClient;
     }
 

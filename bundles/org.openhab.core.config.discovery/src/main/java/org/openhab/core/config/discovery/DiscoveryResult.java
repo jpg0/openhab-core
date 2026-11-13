@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,13 +12,12 @@
  */
 package org.openhab.core.config.discovery;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
-import org.openhab.core.thing.Bridge;
-import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.ThingUID;
 
@@ -57,8 +56,8 @@ public interface DiscoveryResult {
     /**
      * Returns the unique {@code Thing} type ID of this result object.
      * <p>
-     * A {@code Thing} type ID could be a product number which identifies the same type of {@link Thing}s. It's usually
-     * <i>not</i> a serial number.
+     * A {@code Thing} type ID could be a product number which identifies the same type of
+     * {@link org.openhab.core.thing.Thing}s. It's usually <i>not</i> a serial number.
      *
      * @return the unique Thing type
      */
@@ -86,7 +85,7 @@ public interface DiscoveryResult {
     /**
      * Returns the representation property of this result object.
      * <p>
-     * The representation property represents an unique human and/or machine readable identifier of the thing that was
+     * The representation property represents a unique human and/or machine readable identifier of the thing that was
      * discovered. Its actual value can be retrieved from the {@link DiscoveryResult#getProperties()} map. Such unique
      * identifiers are typically the <code>ipAddress</code>, the <code>macAddress</code> or the
      * <code>serialNumber</code> of the discovered thing.
@@ -115,7 +114,7 @@ public interface DiscoveryResult {
     String getLabel();
 
     /**
-     * Returns the unique {@link Bridge} ID of this result object.
+     * Returns the unique {@link org.openhab.core.thing.Bridge} ID of this result object.
      *
      * @return the unique Bridge ID
      */
@@ -123,11 +122,11 @@ public interface DiscoveryResult {
     ThingUID getBridgeUID();
 
     /**
-     * Returns the timestamp of this result object.
+     * Returns the creation time of this result object.
      *
-     * @return timestamp as long
+     * @return timestamp
      */
-    long getTimestamp();
+    Instant getCreationTime();
 
     /**
      * Returns the time to live in seconds for this entry.

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Test;
  * Tests for class {@link ChannelUID}.
  *
  * @author Simon Kaufmann - Initial contribution
- * @author Christoph Weitkamp - Changed pattern for validating last segment to contain either a single `#` or none
+ * @author Christoph Weitkamp - Changed pattern for validating last segment to contain either a single {@code #} or none
  */
 @NonNullByDefault
 public class ChannelUIDTest {
@@ -69,5 +69,11 @@ public class ChannelUIDTest {
         assertEquals(CHANNEL_ID, channelUID.getIdWithoutGroup());
         assertEquals(GROUP_ID, channelUID.getGroupId());
         assertEquals(THING_UID, channelUID.getThingUID());
+    }
+
+    @Test
+    public void testThingUIDPart() {
+        assertThrows(IllegalArgumentException.class, () -> new ChannelUID("binding:thing-type::channel"));
+        assertThrows(IllegalArgumentException.class, () -> new ChannelUID("binding:thing-type:bridge::channel"));
     }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -25,6 +25,7 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.Visibility;
 import org.openhab.core.automation.module.script.ScriptEngineFactory;
+import org.openhab.core.automation.module.script.internal.ScriptEngineFactoryHelper;
 import org.openhab.core.automation.module.script.internal.handler.AbstractScriptModuleHandler;
 import org.openhab.core.automation.module.script.internal.handler.ScriptActionHandler;
 import org.openhab.core.automation.module.script.internal.handler.ScriptConditionHandler;
@@ -67,12 +68,12 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
 
     @SuppressWarnings("unchecked")
     @Override
-    public @Nullable ModuleType getModuleType(String UID, @Nullable Locale locale) {
+    public @Nullable ModuleType getModuleType(String uid, @Nullable Locale locale) {
         if (parameterOptions.isEmpty()) {
             return null;
-        } else if (ScriptActionHandler.TYPE_ID.equals(UID)) {
+        } else if (ScriptActionHandler.TYPE_ID.equals(uid)) {
             return getScriptActionType(locale);
-        } else if (ScriptConditionHandler.TYPE_ID.equals(UID)) {
+        } else if (ScriptConditionHandler.TYPE_ID.equals(uid)) {
             return getScriptConditionType(locale);
         } else {
             return null;
@@ -83,13 +84,13 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
         List<Output> outputs = new ArrayList<>();
         Output result = new Output("result", "java.lang.Object", "result", "the script result", null, null, null);
         outputs.add(result);
-        return new ActionType(ScriptActionHandler.TYPE_ID, getConfigDescriptions(locale), "execute a given script",
-                "Allows the execution of a user-defined script.", null, Visibility.VISIBLE, null, outputs);
+        return new ActionType(ScriptActionHandler.TYPE_ID, getConfigDescriptions(locale), "Execute an inline script",
+                "Executes a user-defined script", null, Visibility.VISIBLE, null, outputs);
     }
 
     private ModuleType getScriptConditionType(@Nullable Locale locale) {
         return new ConditionType(ScriptConditionHandler.TYPE_ID, getConfigDescriptions(locale),
-                "a given script evaluates to true", "Allows the definition of a condition through a script.", null,
+                "An inline script evaluates to true", "Allows the definition of a condition through a script", null,
                 Visibility.VISIBLE, null);
     }
 
@@ -98,7 +99,7 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
     }
 
     /**
-     * This method creates the {@link ConfigurationDescriptionParameter}s used by the generated ScriptActionType and
+     * This method creates the {@link ConfigDescriptionParameter}s used by the generated ScriptActionType and
      * ScriptConditionType. {@link AbstractScriptModuleHandler} requires that the names of these be 'type' and 'script'.
      *
      * @return a list of {#link ConfigurationDescriptionParameter}s
@@ -110,11 +111,11 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
         }
         final ConfigDescriptionParameter scriptType = ConfigDescriptionParameterBuilder.create("type", Type.TEXT)
                 .withRequired(true).withMultiple(false).withLabel("Script Type")
-                .withDescription("the scripting language used").withOptions(parameterOptionsList)
+                .withDescription("The scripting language used").withOptions(parameterOptionsList)
                 .withLimitToOptions(true).build();
         final ConfigDescriptionParameter script = ConfigDescriptionParameterBuilder.create("script", Type.TEXT)
                 .withRequired(true).withReadOnly(false).withMultiple(false).withLabel("Script").withContext("script")
-                .withDescription("the script to execute").build();
+                .withDescription("The script to execute").build();
         return List.of(scriptType, script);
     }
 
@@ -146,30 +147,23 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
      */
     @Reference(cardinality = ReferenceCardinality.MULTIPLE, policy = ReferencePolicy.DYNAMIC)
     public void setScriptEngineFactory(ScriptEngineFactory engineFactory) {
-        List<String> scriptTypes = engineFactory.getScriptTypes();
-        if (!scriptTypes.isEmpty()) {
-            ScriptEngine scriptEngine = engineFactory.createScriptEngine(scriptTypes.get(0));
-            if (scriptEngine != null) {
-                boolean notifyListeners = parameterOptions.isEmpty();
-                parameterOptions.put(getPreferredMimeType(engineFactory), getLanguageName(scriptEngine.getFactory()));
-                logger.trace("ParameterOptions: {}", parameterOptions);
-                if (notifyListeners) {
-                    notifyModuleTypesAdded();
-                }
-            } else {
-                logger.trace("setScriptEngineFactory: engine was null");
+        Map.Entry<String, String> parameterOption = ScriptEngineFactoryHelper.getParameterOption(engineFactory);
+        if (parameterOption != null) {
+            boolean notifyListeners = parameterOptions.isEmpty();
+            parameterOptions.put(parameterOption.getKey(), parameterOption.getValue());
+            logger.trace("ParameterOptions: {}", parameterOptions);
+            if (notifyListeners) {
+                notifyModuleTypesAdded();
             }
-        } else {
-            logger.trace("addScriptEngineFactory: scriptTypes was empty");
         }
     }
 
     public void unsetScriptEngineFactory(ScriptEngineFactory engineFactory) {
         List<String> scriptTypes = engineFactory.getScriptTypes();
         if (!scriptTypes.isEmpty()) {
-            ScriptEngine scriptEngine = engineFactory.createScriptEngine(scriptTypes.get(0));
+            ScriptEngine scriptEngine = engineFactory.createScriptEngine(scriptTypes.getFirst());
             if (scriptEngine != null) {
-                parameterOptions.remove(getPreferredMimeType(engineFactory));
+                parameterOptions.remove(ScriptEngineFactoryHelper.getPreferredMimeType(engineFactory));
                 logger.trace("ParameterOptions: {}", parameterOptions);
                 if (parameterOptions.isEmpty()) {
                     notifyModuleTypesRemoved();
@@ -180,17 +174,5 @@ public class ScriptModuleTypeProvider extends AbstractProvider<ModuleType> imple
         } else {
             logger.trace("unsetScriptEngineFactory: scriptTypes was empty");
         }
-    }
-
-    private String getPreferredMimeType(ScriptEngineFactory factory) {
-        List<String> mimeTypes = new ArrayList<>(factory.getScriptTypes());
-        mimeTypes.removeIf(mimeType -> !mimeType.contains("application") || "application/python".equals(mimeType));
-        return mimeTypes.isEmpty() ? factory.getScriptTypes().get(0) : mimeTypes.get(0);
-    }
-
-    private String getLanguageName(javax.script.ScriptEngineFactory factory) {
-        return String.format("%s (%s)",
-                factory.getLanguageName().substring(0, 1).toUpperCase() + factory.getLanguageName().substring(1),
-                factory.getLanguageVersion());
     }
 }

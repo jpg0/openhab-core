@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -10,8 +10,10 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-@Grab('com.xlson.groovycsv:groovycsv:1.1')
-import static com.xlson.groovycsv.CsvParser.parseCsv
+@Grab('tools.jackson.dataformat:jackson-dataformat-csv:3.0.4')
+import tools.jackson.dataformat.csv.CsvMapper
+import tools.jackson.dataformat.csv.CsvSchema
+import static java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Year
@@ -20,235 +22,268 @@ import java.util.stream.Collectors
 
 baseDir = Paths.get(getClass().protectionDomain.codeSource.location.toURI()).getParent().getParent().toAbsolutePath()
 header = header()
+tagTypes = ["Location": 1, "Point": 2, "Property": 3, "Equipment": 4] // determines the order of the types in the file
+tagsByType = tagTypes.keySet().collectEntries { [(it): []] }
+tagsLabelsSynonyms = []
 
 def tagSets = new TreeMap<String, String>()
-def locations = new TreeSet<String>()
-def equipments = new TreeSet<String>()
-def points = new TreeSet<String>()
-def properties = new TreeSet<String>()
 
-def labelsFile = new FileWriter("${baseDir}/src/main/resources/tags.properties")
-labelsFile.write("# Generated content - do not edit!\n")
+tags = loadCsv("${baseDir}/model/SemanticTags.csv")
 
-for (line in parseCsv(new FileReader("${baseDir}/model/SemanticTags.csv"), separator: ',')) {
+tags.each { line ->
     println "Processing Tag $line.Tag"
 
+    checkDuplicates(line)
+
     def tagSet = (line.Parent ? tagSets.get(line.Parent) : line.Type) + "_" + line.Tag
-    tagSets.put(line.Tag,tagSet)
+    tagSets.put(line.Tag, tagSet)
 
-    createTagSetClass(line, tagSet)
-    appendLabelsFile(labelsFile, line, tagSet)
-
-    switch(line.Type) {
-        case "Location"            : locations.add(line.Tag); break;
-        case "Equipment"           : equipments.add(line.Tag); break;
-        case "Point"               : points.add(line.Tag); break;
-        case "Property"            : properties.add(line.Tag); break;
-        default : println "Unrecognized type " + line.Type
+    if (!tagTypes.containsKey(line.Type)) {
+        println "Unrecognized type " + line.Type
+        return
     }
+    tagsByType[line.Type].add(line)
 }
 
-labelsFile.close()
-
-createLocationsFile(locations)
-createEquipmentsFile(equipments)
-createPointsFile(points)
-createPropertiesFile(properties)
+createLabelsFile(tags, tagSets)
+createDefaultSemanticTags(tagSets)
+createDefaultProviderFile(tagSets)
+updateThingDescriptionXsd()
 
 println "\n\nTagSets:"
 for (String tagSet : tagSets) {
     println tagSet
 }
 
-def createTagSetClass(def line, String tagSet) {
-    def tag = line.Tag
-    def type = line.Type
-    def label = line.Label
-    def synonyms = line.Synonyms
-    def desc = line.Description
-    def parent = line.Parent
-    def parentClass = parent ? parent : type
-    def pkg = type.toLowerCase()
-    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/${pkg}/${tag}.java")
-    file.write(header)
-    file.write("package org.openhab.core.semantics.model." + pkg + ";\n\n")
-    file.write("import org.eclipse.jdt.annotation.NonNullByDefault;\n")
-    if (!parent) {
-            file.write("import org.openhab.core.semantics." + type + ";\n")
+def loadCsv(def semanticTagsCsv) {
+    def mapper = new CsvMapper()
+    def schema = CsvSchema.emptySchema().withHeader()
+
+    def reader = mapper.readerFor(Map).with(schema)
+    def tags = reader.readValues(new File(semanticTagsCsv)).withCloseable { it ->
+        it.readAll()
     }
-    file.write("""import org.openhab.core.semantics.TagInfo;
 
-/**
- * This class defines a ${label}.
- *
- * @author Generated from generateTagClasses.groovy - Initial contribution
- */
-@NonNullByDefault
-@TagInfo(id = "${tagSet}", label = "${label}", synonyms = "${synonyms}", description = "${desc}")
-public interface ${tag} extends ${parentClass} {
-}
-""")
-    file.close()
+    def sorted = sortAndGroupByHierarchy(tags)
+    if (tags == sorted) {
+        return tags
+    }
+
+    def sortedTagsFile = new FileWriter(semanticTagsCsv)
+    def headerKeys = tags[0].keySet().toList()
+    def schemaBuilder = CsvSchema.builder()
+    headerKeys.each { k -> schemaBuilder.addColumn(k) }
+    def outSchema = schemaBuilder.build().withHeader()
+
+    def seqWriter = mapper.writer(outSchema).writeValues(sortedTagsFile)
+    seqWriter.writeAll(sorted)
+    seqWriter.close()
+
+    return sorted
 }
 
-def appendLabelsFile(FileWriter file, def line, String tagSet) {
-    file.write(tagSet + "=" + line.Label)
+def sortAndGroupByHierarchy(def tags) {
+    result = tags.collect().sort { a, b -> tagTypes[a.Type] <=> tagTypes[b.Type] ?: a.Parent <=> b.Parent ?: a.Tag <=> b.Tag }
+    for (i = 0; i < result.size(); i++) {
+        (children, result) = result.split { it.Parent == result[i].Tag }
+        result.addAll(i + 1, children)
+    }
+    return result
+}
+
+def checkDuplicates(def line) {
+    if (line.Tag in tagsLabelsSynonyms) {
+        throw new Exception("Duplicate tag found: " + line.Tag)
+    }
+
+    if (line.Label) {
+        label = line.Label.trim()
+        if (label in tagsLabelsSynonyms) {
+            throw new Exception("Duplicate label found: " + label)
+        } else {
+            tagsLabelsSynonyms.add(label)
+        }
+    }
+
+    tagsLabelsSynonyms.add(line.Tag)
+
     if (line.Synonyms) {
-        file.write("," + line.Synonyms.replaceAll(", ", ","))
+        line.Synonyms.split(",").each { synonym ->
+            synonym = synonym.trim()
+            if (synonym in tagsLabelsSynonyms) {
+                throw new Exception("Duplicate synonym found: " + synonym)
+            } else {
+                tagsLabelsSynonyms.add(synonym)
+            }
+        }
     }
-    file.write("\n")
 }
 
-def createLocationsFile(Set<String> locations) {
-    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/location/Locations.java")
-    file.write(header)
-    file.write("""package org.openhab.core.semantics.model.location;
+def createLabelsFile(def tags, def tagSets) {
+    def file = new FileWriter("${baseDir}/src/main/resources/tags.properties")
+    file.write("# Generated content - do not edit!\n")
 
-import java.util.HashSet;
-import java.util.Set;
-import java.util.stream.Stream;
+    for (line in tags) {
+        tagSet = tagSets[line.Tag]
+        file.write(tagSet + "=" + line.Label)
+        if (line.Synonyms) {
+            file.write("," + line.Synonyms.replaceAll(", ", ","))
+        }
+        file.write("\n")
+        if (line.Description) {
+            file.write(tagSet + "__description=" + line.Description)
+            file.write("\n")
+        }
+    }
+
+    file.close()
+}
+
+def camelToUpperCasedSnake(def tag) {
+    return tag.split(/(?=[A-Z][a-z])/).join("_").toUpperCase()
+}
+
+def createDefaultSemanticTags(def tagSets) {
+    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/DefaultSemanticTags.java")
+    file.write(header)
+    file.write("""package org.openhab.core.semantics.model;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.openhab.core.semantics.Location;
+import org.openhab.core.semantics.SemanticTag;
+import org.openhab.core.semantics.SemanticTagImpl;
 
 /**
- * This class provides a stream of all defined locations.
+ * This class defines all the default semantic tags.
  *
  * @author Generated from generateTagClasses.groovy - Initial contribution
  */
 @NonNullByDefault
-public class Locations {
+public class DefaultSemanticTags {
 
-    static final Set<Class<? extends Location>> LOCATIONS = new HashSet<>();
+    public static final SemanticTag EQUIPMENT = new SemanticTagImpl("Equipment", "", "", "");
+    public static final SemanticTag LOCATION = new SemanticTagImpl("Location", "", "", "");
+    public static final SemanticTag POINT = new SemanticTagImpl("Point", "", "", "");
+    public static final SemanticTag PROPERTY = new SemanticTagImpl("Property", "", "", "");
+""")
 
-    static {
-        LOCATIONS.add(Location.class);
-""")    
-    for (String location : locations) {
-        file.write("        LOCATIONS.add(${location}.class);\n")
+    for (type in tagsByType.keySet()) {
+        file.write("""
+    public static class ${type} {""")
+        for (line in tagsByType[type]) {
+            def tagId = (line.Parent ? tagSets.get(line.Parent) : line.Type) + "_" + line.Tag
+            def constantName = camelToUpperCasedSnake(line.Tag)
+            file.write("""
+        public static final SemanticTag ${constantName} = new SemanticTagImpl( //
+                "${tagId}", //
+                "${line.Label}", //
+                "${line.Description}", //
+                "${line.Synonyms}");""")
+        }
+        file.write("""
+    }
+""")
+    }
+        file.write("""}
+""")
+    file.close()
+}
+
+def createDefaultProviderFile(def tagSets) {
+    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/DefaultSemanticTagProvider.java")
+    file.write(header)
+    file.write("""package org.openhab.core.semantics.model;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.openhab.core.common.registry.ProviderChangeListener;
+import org.openhab.core.semantics.SemanticTag;
+import org.openhab.core.semantics.SemanticTagProvider;
+import org.osgi.service.component.annotations.Component;
+
+/**
+ * This class defines a provider of all default semantic tags.
+ *
+ * @author Generated from generateTagClasses.groovy - Initial contribution
+ */
+@NonNullByDefault
+@Component(immediate = true, service = { SemanticTagProvider.class, DefaultSemanticTagProvider.class })
+public class DefaultSemanticTagProvider implements SemanticTagProvider {
+
+    private List<SemanticTag> defaultTags;
+
+    public DefaultSemanticTagProvider() {
+        this.defaultTags = new ArrayList<>();
+        defaultTags.add(DefaultSemanticTags.LOCATION);
+        defaultTags.add(DefaultSemanticTags.POINT);
+        defaultTags.add(DefaultSemanticTags.PROPERTY);
+        defaultTags.add(DefaultSemanticTags.EQUIPMENT);
+""")
+    // these must be created in the hierarchy order
+    // because the parents must exist before the children are added
+    tags.each { line ->
+        def constantName = line.Type + "." + camelToUpperCasedSnake(line.Tag)
+        file.write("""        defaultTags.add(DefaultSemanticTags.${constantName});
+""")
     }
     file.write("""    }
 
-    public static Stream<Class<? extends Location>> stream() {
-        return LOCATIONS.stream();
+    @Override
+    public Collection<SemanticTag> getAll() {
+        return defaultTags;
+    }
+
+    @Override
+    public void addProviderChangeListener(ProviderChangeListener<SemanticTag> listener) {
+    }
+
+    @Override
+    public void removeProviderChangeListener(ProviderChangeListener<SemanticTag> listener) {
     }
 }
 """)
     file.close()
 }
 
-def createEquipmentsFile(Set<String> equipments) {
-    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/equipment/Equipments.java")
-    file.write(header)
-    file.write("""package org.openhab.core.semantics.model.equipment;
+def updateThingDescriptionXsd() {
+    def xsdPath = baseDir.resolveSibling("org.openhab.core.thing/schema/thing/thing-description-1.0.0.xsd")
+    def tempPath = xsdPath.resolveSibling("thing-description.xsd.tmp")
+    def xsdFile = new File(xsdPath.toString()).text
+    def tempFile = new FileWriter(tempPath.toString())
+    def tagSection = ""
+    def beginEquipment = "<!-- Begin Allowed Semantic Equipment Tag Values -->"
+    def beginProperty = "<!-- Begin Allowed Semantic Property Tag Values -->"
+    def beginPoint = "<!-- Begin Allowed Semantic Point Tag Values -->"
+    def endTag = "<!-- End Allowed Semantic "
+    def doNotEdit = "\t\t\t<!-- DO NOT EDIT THIS LIST - Generated by generateTagClasses.groovy -->"
+    xsdFile.eachLine { sourceLine, lineNumber ->
+        if (tagSection && !sourceLine.contains(endTag)) {
+            return
+        } else {
+            tempFile.write(sourceLine + "\n")
 
-import java.util.HashSet;
-import java.util.Set;
-import java.util.stream.Stream;
+            if (sourceLine.contains(endTag)) {
+                tagSection = ""
+            } else if (sourceLine.contains(beginEquipment)) {
+                tagSection = "Equipment"
+            } else if (sourceLine.contains(beginPoint)) {
+                tagSection = "Point"
+            } else if (sourceLine.contains(beginProperty)) {
+                tagSection = "Property"
+            }
 
-import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.openhab.core.semantics.Equipment;
-
-/**
- * This class provides a stream of all defined equipments.
- *
- * @author Generated from generateTagClasses.groovy - Initial contribution
- */
-@NonNullByDefault
-public class Equipments {
-
-    static final Set<Class<? extends Equipment>> EQUIPMENTS = new HashSet<>();
-
-    static {
-        EQUIPMENTS.add(Equipment.class);
-""")    
-    for (String equipment : equipments) {
-        file.write("        EQUIPMENTS.add(${equipment}.class);\n")
+            if (tagSection) {
+                tempFile.write(doNotEdit + "\n")
+                tagsByType[tagSection].collect().sort { a, b -> a.Tag.toUpperCase() <=> b.Tag.toUpperCase() }.each { tag ->
+                    tempFile.write("""\t\t\t<xs:enumeration value="${tag.Tag}"/>\n""")
+                }
+            }
+        }
     }
-    file.write("""    }
-
-    public static Stream<Class<? extends Equipment>> stream() {
-        return EQUIPMENTS.stream();
-    }
-}
-""")
-    file.close()
-}
-
-def createPointsFile(Set<String> points) {
-    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/point/Points.java")
-    file.write(header)
-    file.write("""package org.openhab.core.semantics.model.point;
-
-import java.util.HashSet;
-import java.util.Set;
-import java.util.stream.Stream;
-
-import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.openhab.core.semantics.Point;
-
-/**
- * This class provides a stream of all defined points.
- *
- * @author Generated from generateTagClasses.groovy - Initial contribution
- */
-@NonNullByDefault
-public class Points {
-
-    static final Set<Class<? extends Point>> POINTS = new HashSet<>();
-
-    static {
-        POINTS.add(Point.class);
-""")    
-    for (String point : points) {
-        file.write("        POINTS.add(${point}.class);\n")
-    }
-    file.write("""    }
-
-    public static Stream<Class<? extends Point>> stream() {
-        return POINTS.stream();
-    }
-}
-""")
-    file.close()
-}
-
-def createPropertiesFile(Set<String> properties) {
-    def file = new FileWriter("${baseDir}/src/main/java/org/openhab/core/semantics/model/property/Properties.java")
-    file.write(header)
-    file.write("""package org.openhab.core.semantics.model.property;
-
-import java.util.HashSet;
-import java.util.Set;
-import java.util.stream.Stream;
-
-import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.openhab.core.semantics.Property;
-
-/**
- * This class provides a stream of all defined properties.
- *
- * @author Generated from generateTagClasses.groovy - Initial contribution
- */
-@NonNullByDefault
-public class Properties {
-
-    static final Set<Class<? extends Property>> PROPERTIES = new HashSet<>();
-
-    static {
-        PROPERTIES.add(Property.class);
-""")    
-    for (String property : properties) {
-        file.write("        PROPERTIES.add(${property}.class);\n")
-    }
-    file.write("""    }
-
-    public static Stream<Class<? extends Property>> stream() {
-        return PROPERTIES.stream();
-    }
-}
-""")
-    file.close()
+    tempFile.close()
+    Files.move(tempPath, xsdPath, REPLACE_EXISTING)
 }
 
 def header() {
@@ -261,7 +296,7 @@ def header() {
         line.isBlank() ? " *" : " * " + line.replace("\${year}", year)
     }).collect(Collectors.toList())
 
-    headerLines.add(0, "/**")
+    headerLines.add(0, "/*")
     headerLines.add(" */")
     headerLines.add("")
 

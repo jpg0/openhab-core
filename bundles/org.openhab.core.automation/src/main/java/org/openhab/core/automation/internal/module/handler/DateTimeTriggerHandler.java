@@ -1,5 +1,5 @@
-/**
- * Copyright (c) 2010-2022 Contributors to the openHAB project
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
  *
  * See the NOTICE file(s) distributed with this work for additional
  * information.
@@ -12,15 +12,18 @@
  */
 package org.openhab.core.automation.internal.module.handler;
 
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Dictionary;
-import java.util.Hashtable;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.core.automation.ModuleHandlerCallback;
 import org.openhab.core.automation.Trigger;
+import org.openhab.core.automation.events.AutomationEventFactory;
+import org.openhab.core.automation.events.TimerEvent;
 import org.openhab.core.automation.handler.BaseTriggerModuleHandler;
 import org.openhab.core.automation.handler.TimeBasedTriggerHandler;
 import org.openhab.core.automation.handler.TriggerHandlerCallback;
@@ -28,11 +31,10 @@ import org.openhab.core.config.core.ConfigParser;
 import org.openhab.core.events.Event;
 import org.openhab.core.events.EventFilter;
 import org.openhab.core.events.EventSubscriber;
+import org.openhab.core.events.TopicPrefixEventFilter;
 import org.openhab.core.items.ItemNotFoundException;
 import org.openhab.core.items.ItemRegistry;
-import org.openhab.core.items.events.ItemCommandEvent;
-import org.openhab.core.items.events.ItemEvent;
-import org.openhab.core.items.events.ItemStateEvent;
+import org.openhab.core.items.events.ItemStateChangedEvent;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.scheduler.CronAdjuster;
 import org.openhab.core.scheduler.CronScheduler;
@@ -46,25 +48,32 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * This is an ModuleHandler implementation for Triggers which trigger the rule
+ * This is a ModuleHandler implementation for Triggers which trigger the rule
  * based on a {@link org.openhab.core.library.types.DateTimeType} stored in an item
  *
  * @author Jan N. Klug - Initial contribution
+ * @author Jimmy Tanagra - Add offset support
  */
 @NonNullByDefault
 public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
-        implements SchedulerRunnable, TimeBasedTriggerHandler, EventSubscriber, EventFilter {
+        implements SchedulerRunnable, TimeBasedTriggerHandler, EventSubscriber {
 
     public static final String MODULE_TYPE_ID = "timer.DateTimeTrigger";
     public static final String CONFIG_ITEM_NAME = "itemName";
+    public static final String CONFIG_TIME_ONLY = "timeOnly";
+    public static final String CONFIG_OFFSET = "offset";
 
     private static final DateTimeFormatter CRON_FORMATTER = DateTimeFormatter.ofPattern("s m H d M * uuuu");
+    private static final DateTimeFormatter CRON_TIMEONLY_FORMATTER = DateTimeFormatter.ofPattern("s m H * * * *");
 
     private final Logger logger = LoggerFactory.getLogger(DateTimeTriggerHandler.class);
 
     private final CronScheduler scheduler;
     private final String itemName;
+    private final @Nullable EventFilter eventFilter;
     private String cronExpression = CronAdjuster.REBOOT;
+    private Boolean timeOnly = false;
+    private Long offset = 0L;
 
     private @Nullable ScheduledCompletableFuture<?> schedule;
     private @Nullable ServiceRegistration<?> eventSubscriberRegistration;
@@ -76,11 +85,14 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
         this.itemName = ConfigParser.valueAsOrElse(module.getConfiguration().get(CONFIG_ITEM_NAME), String.class, "");
         if (this.itemName.isBlank()) {
             logger.warn("itemName is blank in module '{}', trigger will not work", module.getId());
+            eventFilter = null;
             return;
         }
-        Dictionary<String, Object> properties = new Hashtable<>();
-        properties.put("event.topics", "openhab/items/" + itemName + "/*");
-        eventSubscriberRegistration = bundleContext.registerService(EventSubscriber.class.getName(), this, properties);
+        this.eventFilter = new TopicPrefixEventFilter("openhab/items/" + itemName + "/");
+        this.timeOnly = ConfigParser.valueAsOrElse(module.getConfiguration().get(CONFIG_TIME_ONLY), Boolean.class,
+                false);
+        this.offset = ConfigParser.valueAsOrElse(module.getConfiguration().get(CONFIG_OFFSET), Long.class, 0L);
+        eventSubscriberRegistration = bundleContext.registerService(EventSubscriber.class.getName(), this, null);
         try {
             process(itemRegistry.getItem(itemName).getState());
         } catch (ItemNotFoundException e) {
@@ -109,8 +121,11 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
     @Override
     public void run() {
         ModuleHandlerCallback callback = this.callback;
-        if (callback instanceof TriggerHandlerCallback) {
-            ((TriggerHandlerCallback) callback).triggered(module);
+        if (callback instanceof TriggerHandlerCallback triggerHandlerCallback) {
+            TimerEvent event = AutomationEventFactory.createTimerEvent(module.getTypeUID(),
+                    Objects.requireNonNullElse(module.getLabel(), module.getId()),
+                    Map.of(CONFIG_ITEM_NAME, itemName, CONFIG_TIME_ONLY, timeOnly, CONFIG_OFFSET, offset));
+            triggerHandlerCallback.triggered(module, Map.of("event", event));
         } else {
             logger.debug("Tried to trigger, but callback isn't available!");
         }
@@ -123,39 +138,28 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
 
     @Override
     public Set<String> getSubscribedEventTypes() {
-        return Set.of(ItemStateEvent.TYPE, ItemCommandEvent.TYPE);
+        return Set.of(ItemStateChangedEvent.TYPE);
     }
 
     @Override
     public @Nullable EventFilter getEventFilter() {
-        return this;
+        return eventFilter;
     }
 
     @Override
     public void receive(Event event) {
-        if (event instanceof ItemEvent && (((ItemEvent) event).getItemName().equals(itemName))) {
-            if (event instanceof ItemStateEvent) {
-                process(((ItemStateEvent) event).getItemState());
-            } else if (event instanceof ItemCommandEvent) {
-                process(((ItemCommandEvent) event).getItemCommand());
-            } else {
-                logger.debug("Don't know how to process event {}, discarding", event);
-            }
+        if (event instanceof ItemStateChangedEvent itemStateChangedEvent
+                && (itemStateChangedEvent.getItemName().equals(itemName))) {
+            process(itemStateChangedEvent.getItemState());
         }
-    }
-
-    @Override
-    public boolean apply(Event event) {
-        logger.trace("->FILTER: {}:{}", event.getTopic(), itemName);
-        return event.getTopic().contains("openhab/items/" + itemName + "/");
     }
 
     private synchronized void startScheduler() {
         cancelScheduler();
         if (!CronAdjuster.REBOOT.equals(cronExpression)) {
             schedule = scheduler.schedule(this, cronExpression);
-            logger.debug("Scheduled cron job '{}' for trigger '{}'.", module.getConfiguration().get(CONFIG_ITEM_NAME),
-                    module.getId());
+            logger.debug("Scheduled cron job '{}' from item '{}' for trigger '{}'.", cronExpression,
+                    module.getConfiguration().get(CONFIG_ITEM_NAME), module.getId());
         }
     }
 
@@ -172,8 +176,10 @@ public class DateTimeTriggerHandler extends BaseTriggerModuleHandler
         cancelScheduler();
         if (value instanceof UnDefType) {
             cronExpression = CronAdjuster.REBOOT;
-        } else if (value instanceof DateTimeType) {
-            cronExpression = ((DateTimeType) value).getZonedDateTime().format(CRON_FORMATTER);
+        } else if (value instanceof DateTimeType dateTimeType) {
+            boolean itemIsTimeOnly = dateTimeType.toString().startsWith("1970-01-01T");
+            cronExpression = dateTimeType.getZonedDateTime(ZoneId.systemDefault()).plusSeconds(offset.longValue())
+                    .format(timeOnly || itemIsTimeOnly ? CRON_TIMEONLY_FORMATTER : CRON_FORMATTER);
             startScheduler();
         } else {
             logger.warn("Received {} which is not an accepted value for trigger of type '{}", value, MODULE_TYPE_ID);
